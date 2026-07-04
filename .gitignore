@@ -22,3 +22,8 @@ logs/*
 .vscode/
 /.terminals/
 /.mcp_terminal/
+
+# Code-analysis/editor generated files
+*.tree
+*.lock
+old_code/
