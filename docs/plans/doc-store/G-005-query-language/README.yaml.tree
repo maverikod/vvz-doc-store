@@ -1,0 +1,212 @@
+---CHECKSUMS---
+source_sha256: ede18a2563cff51d2cd6a8292b34836961cc39e46054cac341b51c23bad7114e
+---MAP---
+next_free: 25
+entries:
+- short_id: 1
+  uuid: a94bc1c8-264a-4cc1-8743-bcf27317d451
+  content_fingerprint: ede18a2563cff51d2cd6a8292b34836961cc39e46054cac341b51c23bad7114e
+  kind: mapping
+  attributes:
+    key_path: ''
+- short_id: 2
+  uuid: 3b5d5925-fabe-453d-a329-b85dc4afa00e
+  content_fingerprint: b4f87abcb772450bedbc0c12289137c3d3997266f4739524c861a26dd724abfb
+  kind: scalar
+  attributes:
+    key_path: step_id
+- short_id: 3
+  uuid: 593c443a-1496-4fb3-b0e1-e7fc9bf2ec23
+  content_fingerprint: 6eb6ddc10e457e634d849a13581db2125436cfb2f672100609929210f9150a71
+  kind: scalar
+  attributes:
+    key_path: name
+- short_id: 4
+  uuid: 24a27aa0-776e-4e41-8c87-e03cd8c7b699
+  content_fingerprint: ffdd5eba3303a9b1555c4a599be6c940803e18b50343439b708e9f4a2be6b62c
+  kind: scalar
+  attributes:
+    key_path: description
+- short_id: 5
+  uuid: cf948899-32e4-4ff2-80ae-e407d14ded45
+  content_fingerprint: 92e3da44877eebf854d7c7fd6f5a195fb4f835256fab6cae9e6f3679deb5e1f2
+  kind: scalar
+  attributes:
+    key_path: concepts[0]
+- short_id: 6
+  uuid: 3c6bd622-c3da-4643-bc5b-c4e0e0769005
+  content_fingerprint: 5f21123f9582af33a777b78038f3f14395fcf0e32e494278c622e52f362ecea7
+  kind: scalar
+  attributes:
+    key_path: concepts[1]
+- short_id: 7
+  uuid: dea66d7e-7026-4944-bec3-dfcc4d1ad9d7
+  content_fingerprint: 775e980b9418f10582b5f7ee3c03af0d224da7a6dbcac7b01b46d8b65fa853a6
+  kind: scalar
+  attributes:
+    key_path: concepts[2]
+- short_id: 8
+  uuid: 0b6b1839-9797-4faa-826b-7c0ed13dd932
+  content_fingerprint: 79fddbc00f7a85a1cad800a7d6893b29eb01b96252438759bc077f7aeed9b0f7
+  kind: scalar
+  attributes:
+    key_path: depends_on[0]
+- short_id: 9
+  uuid: 592de5bc-2b96-4507-88b6-143e8876e9dc
+  content_fingerprint: af0c1a3be9dfca41aa08261a84f608c95310807708c50b1574a0df302c38212a
+  kind: scalar
+  attributes:
+    key_path: tactical_steps[0]
+- short_id: 10
+  uuid: f4159c4c-a2e7-4046-994b-dcae18332af2
+  content_fingerprint: 8a4a3330f9893f8afcb3670ed218ed90de4d9ecb53078da1a02803a43cfe0847
+  kind: scalar
+  attributes:
+    key_path: tactical_steps[1]
+- short_id: 11
+  uuid: 195e6e47-a4f1-486c-877e-54b47278c392
+  content_fingerprint: 1065dc1ad6ee2affcd18faec07e944644e56f75c73b47319e8d1cb5d77ca55f7
+  kind: scalar
+  attributes:
+    key_path: status
+- short_id: 12
+  uuid: bc1f137d-a41e-4618-9f17-d60a71527f2d
+  content_fingerprint: 7eb3475de4d021fb76daa5a06292b670d2fb1349064be11082402ace495f5b57
+  kind: mapping
+  attributes:
+    key_path: relations[0]
+- short_id: 13
+  uuid: 4e6ba107-b4b8-4be1-af95-acfb4e5f9e29
+  content_fingerprint: 92e3da44877eebf854d7c7fd6f5a195fb4f835256fab6cae9e6f3679deb5e1f2
+  kind: scalar
+  attributes:
+    key_path: relations[0].from_concept
+- short_id: 14
+  uuid: 3897466d-f3d3-4eae-8d1f-c7bf9d86f147
+  content_fingerprint: 5f21123f9582af33a777b78038f3f14395fcf0e32e494278c622e52f362ecea7
+  kind: scalar
+  attributes:
+    key_path: relations[0].to_concept
+- short_id: 15
+  uuid: 425d1eaa-fbec-4daa-aaca-a58e567df748
+  content_fingerprint: 14cb110972358e196aa78cd4f81881fd00f76ec838abf99138502bab68788ace
+  kind: scalar
+  attributes:
+    key_path: relations[0].type
+- short_id: 16
+  uuid: b90fe9ad-e0f1-42d1-9c5f-282c6c2961c3
+  content_fingerprint: e6700488f9cb62f2be6fcd04d0939d6cc595b80293448550406687468ceab6c9
+  kind: mapping
+  attributes:
+    key_path: relations[1]
+- short_id: 17
+  uuid: e7ea0d46-5e1c-4e97-be66-37e0d7902c7f
+  content_fingerprint: 92e3da44877eebf854d7c7fd6f5a195fb4f835256fab6cae9e6f3679deb5e1f2
+  kind: scalar
+  attributes:
+    key_path: relations[1].from_concept
+- short_id: 18
+  uuid: 7d13977b-d27d-4a69-b087-57e8cef8cd6f
+  content_fingerprint: 775e980b9418f10582b5f7ee3c03af0d224da7a6dbcac7b01b46d8b65fa853a6
+  kind: scalar
+  attributes:
+    key_path: relations[1].to_concept
+- short_id: 19
+  uuid: ff18d2d3-b821-4c82-b459-eeaeb543c291
+  content_fingerprint: 14cb110972358e196aa78cd4f81881fd00f76ec838abf99138502bab68788ace
+  kind: scalar
+  attributes:
+    key_path: relations[1].type
+- short_id: 20
+  uuid: c1f2873b-7a78-409c-a4b0-971436d901da
+  content_fingerprint: d35b147d8715d15657d5e917cf1d74463ca8f1e67a171eb68d0fbe7fa14a17c5
+  kind: scalar
+  attributes:
+    key_path: source_labels[0]
+- short_id: 21
+  uuid: 17775ae5-2f2c-46a4-a985-df94b5cd357a
+  content_fingerprint: 58c8e312ad34386de1293d9bc1e00a7492312914c88079fb1bf7325e56fee7e2
+  kind: scalar
+  attributes:
+    key_path: source_labels[1]
+- short_id: 22
+  uuid: 7bad9f44-bfa9-4a96-9882-d6144f4b3c96
+  content_fingerprint: c2c6cd769ac1aedabf943547f3f6e883f873dcede8a04f48015aad8bda6cb8f9
+  kind: scalar
+  attributes:
+    key_path: source_labels[2]
+- short_id: 23
+  uuid: c85d8686-de62-4be9-940c-6e5464da6780
+  content_fingerprint: 4c75e3cb2592fc50519360f66bfd840222c9f72463992d7f35652e37e5fb54d1
+  kind: scalar
+  attributes:
+    key_path: source_labels[3]
+- short_id: 24
+  uuid: 2426414b-c4fb-4346-bc5c-07ad866ebe62
+  content_fingerprint: 69187bba6b3e40f2bd01af25c76c26240a8bc299acf7e0c2a36458c00d0faa3b
+  kind: scalar
+  attributes:
+    key_path: source_labels[4]
+---TREE---
+___id___: 1
+step_id:
+  ___id___: 2
+  v: G-005
+name:
+  ___id___: 3
+  v: SQL-like Lark query language
+description:
+  ___id___: 4
+  v: Define the SQL-like Lark query boundary and execution contract over canonical
+    entities and PostgreSQL metadata. This step covers grammar support, query execution
+    targets, result rows, and diagnostics.
+concepts:
+- ___id___: 5
+  v: C-017
+- ___id___: 6
+  v: C-013
+- ___id___: 7
+  v: C-008
+depends_on:
+- ___id___: 8
+  v: G-003
+tactical_steps:
+- ___id___: 9
+  v: T-001
+- ___id___: 10
+  v: T-002
+status:
+  ___id___: 11
+  v: draft
+relations:
+- ___id___: 12
+  from_concept:
+    ___id___: 13
+    v: C-017
+  to_concept:
+    ___id___: 14
+    v: C-013
+  type:
+    ___id___: 15
+    v: uses
+- ___id___: 16
+  from_concept:
+    ___id___: 17
+    v: C-017
+  to_concept:
+    ___id___: 18
+    v: C-008
+  type:
+    ___id___: 19
+    v: uses
+source_labels:
+- ___id___: 20
+  v: '{x9y0}'
+- ___id___: 21
+  v: '{z1a2}'
+- ___id___: 22
+  v: '{b3d4}'
+- ___id___: 23
+  v: '{j5k6}'
+- ___id___: 24
+  v: '{e5f6}'

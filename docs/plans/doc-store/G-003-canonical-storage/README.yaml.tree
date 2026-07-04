@@ -1,0 +1,412 @@
+---CHECKSUMS---
+source_sha256: 95e70f78fa48aba70026a02f85613a64a7fb19aef3bffb2dd10c8ce0ebb9ec20
+---MAP---
+next_free: 49
+entries:
+- short_id: 1
+  uuid: 7f66c597-7816-4cae-85f7-66ee9621a096
+  content_fingerprint: 95e70f78fa48aba70026a02f85613a64a7fb19aef3bffb2dd10c8ce0ebb9ec20
+  kind: mapping
+  attributes:
+    key_path: ''
+- short_id: 2
+  uuid: 8bad0644-e701-4bb8-84d7-fb47960ba297
+  content_fingerprint: 79fddbc00f7a85a1cad800a7d6893b29eb01b96252438759bc077f7aeed9b0f7
+  kind: scalar
+  attributes:
+    key_path: step_id
+- short_id: 3
+  uuid: 75a6998c-6c13-4679-ba9a-1f5cb8a077c4
+  content_fingerprint: abd655813d926eac0b567dee9162144b2492c1e59ab52f056f1c278e0dfcecbb
+  kind: scalar
+  attributes:
+    key_path: name
+- short_id: 4
+  uuid: 17ef8e95-d578-4c5b-8b15-861cc1cbfaa2
+  content_fingerprint: ccfd1b563b38cbe60ae38222f6e50db1cf6c4abf04df43a481d59190f81ce651
+  kind: scalar
+  attributes:
+    key_path: description
+- short_id: 5
+  uuid: 4cb4ce15-d49f-4538-b88a-2069d0fa9390
+  content_fingerprint: 775e980b9418f10582b5f7ee3c03af0d224da7a6dbcac7b01b46d8b65fa853a6
+  kind: scalar
+  attributes:
+    key_path: concepts[0]
+- short_id: 6
+  uuid: 5804ef03-07bc-4bd4-9988-6d901a651d20
+  content_fingerprint: b418fb5cc5e6449a7543524fe3c34b55d30594c4d8bd9f36f9ceaaf1098c8004
+  kind: scalar
+  attributes:
+    key_path: concepts[1]
+- short_id: 7
+  uuid: 888601e1-4d8d-4cc1-9d34-bad2657d2c54
+  content_fingerprint: 6b2b8271ecb687cc26f29cb095da7817e03925eb8d25e760d631e66a55141dd2
+  kind: scalar
+  attributes:
+    key_path: concepts[2]
+- short_id: 8
+  uuid: 23416208-e093-4ef1-b753-e134cd1bc5bf
+  content_fingerprint: eb6cd0b6b1e38d57b51b12ae67d8455cb588dd7140f35e96fa336f951e78bb2a
+  kind: scalar
+  attributes:
+    key_path: concepts[3]
+- short_id: 9
+  uuid: def4314b-0124-459e-a22c-1c030d23abc5
+  content_fingerprint: dde7dd6d73af1995cf9c9145c0fd77c596a9db00d78b88a502923e5dbf6fd4ce
+  kind: scalar
+  attributes:
+    key_path: concepts[4]
+- short_id: 10
+  uuid: 0bdb4f3e-552e-41eb-a173-7d2b36d5f020
+  content_fingerprint: 5f21123f9582af33a777b78038f3f14395fcf0e32e494278c622e52f362ecea7
+  kind: scalar
+  attributes:
+    key_path: concepts[5]
+- short_id: 11
+  uuid: 63f36b28-bf02-47b6-9745-1482d914dd1e
+  content_fingerprint: 41f4dec7c5c2273a720ab1d174893bb5f926faa83c2c31af8c38cd611bb80fa8
+  kind: scalar
+  attributes:
+    key_path: concepts[6]
+- short_id: 12
+  uuid: 184a4dac-7371-4020-b0de-1df0d0449b2d
+  content_fingerprint: 40de8ddd6e7748d52380d0253d5fe2cdd7f3ea915030ea3eb5c8e78730469fed
+  kind: scalar
+  attributes:
+    key_path: depends_on[0]
+- short_id: 13
+  uuid: baa84f42-6176-4fc5-b17c-363e7f957afc
+  content_fingerprint: af0c1a3be9dfca41aa08261a84f608c95310807708c50b1574a0df302c38212a
+  kind: scalar
+  attributes:
+    key_path: tactical_steps[0]
+- short_id: 14
+  uuid: 082db538-ff64-4dbf-96e7-f6a1dd3bcbc8
+  content_fingerprint: 8a4a3330f9893f8afcb3670ed218ed90de4d9ecb53078da1a02803a43cfe0847
+  kind: scalar
+  attributes:
+    key_path: tactical_steps[1]
+- short_id: 15
+  uuid: 84ad5322-4eb0-46ff-b9cc-b29f055e18f3
+  content_fingerprint: 1065dc1ad6ee2affcd18faec07e944644e56f75c73b47319e8d1cb5d77ca55f7
+  kind: scalar
+  attributes:
+    key_path: status
+- short_id: 16
+  uuid: 9084b5ea-2ee9-4472-a2ee-02ac876f2711
+  content_fingerprint: 6a9a451c4f61670d113775fb3d18b05f7bbddb955ab2449ce5aa65ea2600ebd4
+  kind: mapping
+  attributes:
+    key_path: relations[0]
+- short_id: 17
+  uuid: 630c6724-e54b-4d69-a073-53f063a59454
+  content_fingerprint: 4b18c08eb2b2cf032a74f3c2765bce430ef07fb3634d7862e490108a4f1e3f52
+  kind: scalar
+  attributes:
+    key_path: relations[0].from_concept
+- short_id: 18
+  uuid: 834ac3c5-90d8-43b6-a91e-60a641b2b499
+  content_fingerprint: 775e980b9418f10582b5f7ee3c03af0d224da7a6dbcac7b01b46d8b65fa853a6
+  kind: scalar
+  attributes:
+    key_path: relations[0].to_concept
+- short_id: 19
+  uuid: 168557be-d0d3-4d72-94e5-533e749d08e4
+  content_fingerprint: 7eece189e0bcaaab132f315cbff85bb3e32baf953b6a3500788931e59e1d9972
+  kind: scalar
+  attributes:
+    key_path: relations[0].type
+- short_id: 20
+  uuid: 7c72bee0-00b1-46ea-889e-c672c6c94ece
+  content_fingerprint: d357669e2e889d091fcc5e482734ac061381eede8e26c4114849d6f96c0a4448
+  kind: mapping
+  attributes:
+    key_path: relations[1]
+- short_id: 21
+  uuid: 25fafcc9-2627-47af-96f1-3a32e2f56168
+  content_fingerprint: b418fb5cc5e6449a7543524fe3c34b55d30594c4d8bd9f36f9ceaaf1098c8004
+  kind: scalar
+  attributes:
+    key_path: relations[1].from_concept
+- short_id: 22
+  uuid: cd7f69f2-9a9e-406f-b3c8-90b7cb3ec628
+  content_fingerprint: 6b2b8271ecb687cc26f29cb095da7817e03925eb8d25e760d631e66a55141dd2
+  kind: scalar
+  attributes:
+    key_path: relations[1].to_concept
+- short_id: 23
+  uuid: 88c6b6f3-0c10-4f6b-8e1a-129591313634
+  content_fingerprint: 205c3a98edd61d134f3b3875e665849f50e6c0f981a54d6ab296b9dc6533476c
+  kind: scalar
+  attributes:
+    key_path: relations[1].type
+- short_id: 24
+  uuid: 4dc9978b-dd6c-4db4-b6ed-0c1d083a53f4
+  content_fingerprint: f24b0b228392dee2bda2293c3fa3eae92197a85c9965b88d8c318d9662e0e542
+  kind: mapping
+  attributes:
+    key_path: relations[2]
+- short_id: 25
+  uuid: ae13351c-b3b7-4186-a71d-4422e7385687
+  content_fingerprint: 6b2b8271ecb687cc26f29cb095da7817e03925eb8d25e760d631e66a55141dd2
+  kind: scalar
+  attributes:
+    key_path: relations[2].from_concept
+- short_id: 26
+  uuid: 6e2fdf91-7783-4eee-a420-b076a7eb639c
+  content_fingerprint: eb6cd0b6b1e38d57b51b12ae67d8455cb588dd7140f35e96fa336f951e78bb2a
+  kind: scalar
+  attributes:
+    key_path: relations[2].to_concept
+- short_id: 27
+  uuid: e48c9d21-dae9-4b30-b32d-db272beba640
+  content_fingerprint: 205c3a98edd61d134f3b3875e665849f50e6c0f981a54d6ab296b9dc6533476c
+  kind: scalar
+  attributes:
+    key_path: relations[2].type
+- short_id: 28
+  uuid: 76241794-61ea-4e2e-b99a-a5f5c6cb519f
+  content_fingerprint: 9dcd5185fc852444f13d4ac0a528fd83234456e9ba386fe19b882839caf56e97
+  kind: mapping
+  attributes:
+    key_path: relations[3]
+- short_id: 29
+  uuid: 4b46a6f8-8784-473c-9667-55ff49b96da3
+  content_fingerprint: eb6cd0b6b1e38d57b51b12ae67d8455cb588dd7140f35e96fa336f951e78bb2a
+  kind: scalar
+  attributes:
+    key_path: relations[3].from_concept
+- short_id: 30
+  uuid: e0021821-2063-45e2-a2b8-3252f7d5f9de
+  content_fingerprint: dde7dd6d73af1995cf9c9145c0fd77c596a9db00d78b88a502923e5dbf6fd4ce
+  kind: scalar
+  attributes:
+    key_path: relations[3].to_concept
+- short_id: 31
+  uuid: 228e5306-7637-4d84-8687-4d0edcadcf5d
+  content_fingerprint: 205c3a98edd61d134f3b3875e665849f50e6c0f981a54d6ab296b9dc6533476c
+  kind: scalar
+  attributes:
+    key_path: relations[3].type
+- short_id: 32
+  uuid: 21e65d26-4d0f-4c77-a43a-0e479e6e9c1e
+  content_fingerprint: ae3da76ebc2ecf649dea70afdc9c5d3a2dc476bf3d32d9c6ae3733a25924d5a7
+  kind: mapping
+  attributes:
+    key_path: relations[4]
+- short_id: 33
+  uuid: 96117264-5672-44a1-95c6-2b3e0348e543
+  content_fingerprint: 5f21123f9582af33a777b78038f3f14395fcf0e32e494278c622e52f362ecea7
+  kind: scalar
+  attributes:
+    key_path: relations[4].from_concept
+- short_id: 34
+  uuid: 19bfae9e-60f9-4ee1-8bd5-decd7de29355
+  content_fingerprint: 775e980b9418f10582b5f7ee3c03af0d224da7a6dbcac7b01b46d8b65fa853a6
+  kind: scalar
+  attributes:
+    key_path: relations[4].to_concept
+- short_id: 35
+  uuid: 5ae05844-9078-45ac-9470-c11282abb8d2
+  content_fingerprint: 205c3a98edd61d134f3b3875e665849f50e6c0f981a54d6ab296b9dc6533476c
+  kind: scalar
+  attributes:
+    key_path: relations[4].type
+- short_id: 36
+  uuid: e8de736c-aa3e-47ce-bcd0-7c6ed14468b6
+  content_fingerprint: 5292f6c05a08483a8b69abcf0df3f831005bace36c455175121201694c063eb8
+  kind: mapping
+  attributes:
+    key_path: relations[5]
+- short_id: 37
+  uuid: 4f9d7928-aa17-4d51-8244-90c830640191
+  content_fingerprint: 41f4dec7c5c2273a720ab1d174893bb5f926faa83c2c31af8c38cd611bb80fa8
+  kind: scalar
+  attributes:
+    key_path: relations[5].from_concept
+- short_id: 38
+  uuid: a4140d2a-4968-4e56-b3bb-744d0687b575
+  content_fingerprint: 775e980b9418f10582b5f7ee3c03af0d224da7a6dbcac7b01b46d8b65fa853a6
+  kind: scalar
+  attributes:
+    key_path: relations[5].to_concept
+- short_id: 39
+  uuid: 8ff84a8e-4900-4568-b1d8-a0456df189cc
+  content_fingerprint: e60d00ad7c6638f6beeda244cdbb7f210acc592b7d9e1ba51f4942a1d9d167c2
+  kind: scalar
+  attributes:
+    key_path: relations[5].type
+- short_id: 40
+  uuid: 2158a39f-72e3-4072-a4b7-db63f4fd5adc
+  content_fingerprint: 742aea647b27db404dc3e76a6aa7123255590a021ac61dfed1822823f81833ae
+  kind: scalar
+  attributes:
+    key_path: source_labels[0]
+- short_id: 41
+  uuid: 13e11710-b1f4-4edf-8391-3b73c3051559
+  content_fingerprint: 2f858fc217211b1888511989c57e4d3a2f69a8d84d524aa731d579bc002485ee
+  kind: scalar
+  attributes:
+    key_path: source_labels[1]
+- short_id: 42
+  uuid: 2f3a185b-9f93-49b9-a1b0-68ea3894fbdd
+  content_fingerprint: b1996caa31f2328798615a4da0ead8482336ee7d8c7be6b4f3ba714f2fe2f9bd
+  kind: scalar
+  attributes:
+    key_path: source_labels[2]
+- short_id: 43
+  uuid: 3894ee77-d656-4ff5-bd9b-19e4c47dfa98
+  content_fingerprint: c08ba35b416f8960fa0d4a2853063a4281fbcd4be0480ec5999f54f78c6fd056
+  kind: scalar
+  attributes:
+    key_path: source_labels[3]
+- short_id: 44
+  uuid: 8414d643-c612-4999-988b-fd378b6eed97
+  content_fingerprint: 6beaf2b81ef8418e28d98e70a93258394f610aac1e66f381354bdf3e73c66d1e
+  kind: scalar
+  attributes:
+    key_path: source_labels[4]
+- short_id: 45
+  uuid: adecf1ab-8aaf-4bfb-9e4f-7274aac7f057
+  content_fingerprint: 4c75e3cb2592fc50519360f66bfd840222c9f72463992d7f35652e37e5fb54d1
+  kind: scalar
+  attributes:
+    key_path: source_labels[5]
+- short_id: 46
+  uuid: 384801d9-10c7-4d7f-9073-c204c752337f
+  content_fingerprint: ca38d1a26d262efa0898c436082125a5f06e927bb43c421e8264db28a73b0100
+  kind: scalar
+  attributes:
+    key_path: source_labels[6]
+- short_id: 47
+  uuid: 4ea9ec72-1830-4276-a1e3-7ef8a5c414a5
+  content_fingerprint: 50c48ed15e130435d8abc582f59ccc0887e5ba9ae682f9048d08e00b908f60e1
+  kind: scalar
+  attributes:
+    key_path: source_labels[7]
+- short_id: 48
+  uuid: 469fe3c8-995b-4254-af33-8457dd4f7467
+  content_fingerprint: d58cc5004bfd9d65caea091214840470fa997557f441521b9629abb092c9426b
+  kind: scalar
+  attributes:
+    key_path: source_labels[8]
+---TREE---
+___id___: 1
+step_id:
+  ___id___: 2
+  v: G-003
+name:
+  ___id___: 3
+  v: Canonical tree, PostgreSQL storage and traceability
+description:
+  ___id___: 4
+  v: Define canonical document tree storage and traceability. This step covers Project,
+    Chapter, Paragraph, and Sentence hierarchy, PostgreSQL persistence, migrations,
+    and source-to-node traceability.
+concepts:
+- ___id___: 5
+  v: C-008
+- ___id___: 6
+  v: C-009
+- ___id___: 7
+  v: C-010
+- ___id___: 8
+  v: C-011
+- ___id___: 9
+  v: C-012
+- ___id___: 10
+  v: C-013
+- ___id___: 11
+  v: C-014
+depends_on:
+- ___id___: 12
+  v: G-002
+tactical_steps:
+- ___id___: 13
+  v: T-001
+- ___id___: 14
+  v: T-002
+status:
+  ___id___: 15
+  v: draft
+relations:
+- ___id___: 16
+  from_concept:
+    ___id___: 17
+    v: C-007
+  to_concept:
+    ___id___: 18
+    v: C-008
+  type:
+    ___id___: 19
+    v: produces
+- ___id___: 20
+  from_concept:
+    ___id___: 21
+    v: C-009
+  to_concept:
+    ___id___: 22
+    v: C-010
+  type:
+    ___id___: 23
+    v: owns
+- ___id___: 24
+  from_concept:
+    ___id___: 25
+    v: C-010
+  to_concept:
+    ___id___: 26
+    v: C-011
+  type:
+    ___id___: 27
+    v: owns
+- ___id___: 28
+  from_concept:
+    ___id___: 29
+    v: C-011
+  to_concept:
+    ___id___: 30
+    v: C-012
+  type:
+    ___id___: 31
+    v: owns
+- ___id___: 32
+  from_concept:
+    ___id___: 33
+    v: C-013
+  to_concept:
+    ___id___: 34
+    v: C-008
+  type:
+    ___id___: 35
+    v: owns
+- ___id___: 36
+  from_concept:
+    ___id___: 37
+    v: C-014
+  to_concept:
+    ___id___: 38
+    v: C-008
+  type:
+    ___id___: 39
+    v: depends_on
+source_labels:
+- ___id___: 40
+  v: '{y5z6}'
+- ___id___: 41
+  v: '{b7c8}'
+- ___id___: 42
+  v: '{d9e0}'
+- ___id___: 43
+  v: '{f1g2}'
+- ___id___: 44
+  v: '{h3i4}'
+- ___id___: 45
+  v: '{j5k6}'
+- ___id___: 46
+  v: '{l7m8}'
+- ___id___: 47
+  v: '{n9o0}'
+- ___id___: 48
+  v: '{u1v2}'

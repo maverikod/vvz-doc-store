@@ -1,0 +1,147 @@
+---CHECKSUMS---
+source_sha256: 56fbbfa47b6cd6b22c73094efcb7097c5cbcc635479fe7f4c80ad950fa678b30
+---MAP---
+next_free: 17
+entries:
+- short_id: 1
+  uuid: bec57aa5-feee-471e-9809-13505ee57b95
+  content_fingerprint: 56fbbfa47b6cd6b22c73094efcb7097c5cbcc635479fe7f4c80ad950fa678b30
+  kind: mapping
+  attributes:
+    key_path: ''
+- short_id: 2
+  uuid: 9e566914-8773-4a06-81fe-4d38e8507327
+  content_fingerprint: af0c1a3be9dfca41aa08261a84f608c95310807708c50b1574a0df302c38212a
+  kind: scalar
+  attributes:
+    key_path: step_id
+- short_id: 3
+  uuid: 202941ab-c82a-4760-9ecf-46e658eeb741
+  content_fingerprint: 40de8ddd6e7748d52380d0253d5fe2cdd7f3ea915030ea3eb5c8e78730469fed
+  kind: scalar
+  attributes:
+    key_path: parent_global_step
+- short_id: 4
+  uuid: 20a8908d-4937-4b17-aa75-5d4a75dccaef
+  content_fingerprint: 812eaac53b04de911b3b3397e93bcc575f7187a173245114d179e44e8bb7880c
+  kind: scalar
+  attributes:
+    key_path: name
+- short_id: 5
+  uuid: 6c3b8d5b-f236-4c7b-a2dc-f275a74d9438
+  content_fingerprint: 497453a8f839b608b5d9cf017cf5fbc16db24668027c0568dd274a7b31bdc610
+  kind: scalar
+  attributes:
+    key_path: description
+- short_id: 6
+  uuid: caa8c214-1254-4d4d-b995-8cb5e4965f31
+  content_fingerprint: 36b6d0e937a02a79bc04615f003e11dda2afd0480195e1cb3a1151dfb51f3a8e
+  kind: scalar
+  attributes:
+    key_path: concepts[0]
+- short_id: 7
+  uuid: e215cfce-3f30-4e33-a7c0-499e3b648e9a
+  content_fingerprint: 59b7711e1c24a48641d794eb715be8b5cee9ddd17cc3c8d213e840139fc2d864
+  kind: scalar
+  attributes:
+    key_path: concepts[1]
+- short_id: 8
+  uuid: be1ce1ec-9a36-4615-9ca5-ae737abfa5cc
+  content_fingerprint: b479dfb7651a529f4ed110eefc9942d357bad9a27d8dd10e32e8c392d1c1241b
+  kind: mapping
+  attributes:
+    key_path: inputs[0]
+- short_id: 9
+  uuid: 85ed7c2b-b968-4681-b1e4-9c19bf5d2758
+  content_fingerprint: 19caa9d73ebff70f261321171ecc175979142a9116632b389b98c8f5518ecd45
+  kind: scalar
+  attributes:
+    key_path: inputs[0].name
+- short_id: 10
+  uuid: c712cf4a-cbda-4602-9ee5-4063c9c39eff
+  content_fingerprint: 8211eb3559383278e8a1c1549ae3dc94e7af304a457912dc8e8cc14c43509aba
+  kind: scalar
+  attributes:
+    key_path: inputs[0].type
+- short_id: 11
+  uuid: 73f79d9f-b8ac-4c9a-a854-ddd1a96cb6cc
+  content_fingerprint: 45e91f2944101d21f9018d3846afe222000868449cf6776c3d0e54a0fcbb5615
+  kind: scalar
+  attributes:
+    key_path: inputs[0].description
+- short_id: 12
+  uuid: 12b08596-4788-4e2e-b6a5-11b1aa9e2166
+  content_fingerprint: 612a8d007c3345fdc0aa8e802334d7397067c4e05c00c6ffdad5100128f39bfc
+  kind: mapping
+  attributes:
+    key_path: outputs[0]
+- short_id: 13
+  uuid: 77f3c340-2a82-4333-9913-9d3aa4f6174b
+  content_fingerprint: 54d5a209ac23f8b7139cd6031ac2e3c635bbccb7f70f363b4da2d165f5c5ba5a
+  kind: scalar
+  attributes:
+    key_path: outputs[0].name
+- short_id: 14
+  uuid: 336e1c2a-8018-47fa-85c5-d34d276441e4
+  content_fingerprint: 20010260d219e45f5ab10ffa1186c54ad2098d3a163a172a110c36c09db5a044
+  kind: scalar
+  attributes:
+    key_path: outputs[0].type
+- short_id: 15
+  uuid: 44061fae-5c61-463c-a0a0-23009f08d37d
+  content_fingerprint: 8a55c26a053cccb3db149fec246a03db2184da0a20b2992c3b52505db205b203
+  kind: scalar
+  attributes:
+    key_path: outputs[0].description
+- short_id: 16
+  uuid: 1651ebee-2b2b-4d4f-a04c-d8bdddcf5728
+  content_fingerprint: 1065dc1ad6ee2affcd18faec07e944644e56f75c73b47319e8d1cb5d77ca55f7
+  kind: scalar
+  attributes:
+    key_path: status
+---TREE---
+___id___: 1
+step_id:
+  ___id___: 2
+  v: T-001
+parent_global_step:
+  ___id___: 3
+  v: G-002
+name:
+  ___id___: 4
+  v: client api contract
+description:
+  ___id___: 5
+  v: Tactical domain step derived from parent GS and MRS. Code file details are deferred
+    to AS layer.
+concepts:
+- ___id___: 6
+  v: C-002
+- ___id___: 7
+  v: C-004
+inputs:
+- ___id___: 8
+  name:
+    ___id___: 9
+    v: parent_context
+  type:
+    ___id___: 10
+    v: planning_artifact
+  description:
+    ___id___: 11
+    v: MRS plus parent GS context.
+outputs:
+- ___id___: 12
+  name:
+    ___id___: 13
+    v: tactical_contract
+  type:
+    ___id___: 14
+    v: planning_contract
+  description:
+    ___id___: 15
+    v: Autonomous tactical contract for later AS decomposition.
+atomic_steps: []
+status:
+  ___id___: 16
+  v: draft

@@ -1,0 +1,179 @@
+---CHECKSUMS---
+source_sha256: b00b60bcc66df7b569c82a3ce6b87445e6731df5078719a09d378a8031d609c3
+---MAP---
+next_free: 21
+entries:
+- short_id: 1
+  uuid: 3250c737-6bce-4e6e-912f-1e4fe0198c73
+  content_fingerprint: b00b60bcc66df7b569c82a3ce6b87445e6731df5078719a09d378a8031d609c3
+  kind: mapping
+  attributes:
+    key_path: ''
+- short_id: 2
+  uuid: 2cc71d5f-f168-4c33-a6fe-ef5c16a0bd45
+  content_fingerprint: 72b948c7cb92c99a860b780999f373461a9b24e65e7999dc461cd9843210328c
+  kind: scalar
+  attributes:
+    key_path: step_id
+- short_id: 3
+  uuid: 190fb406-c0f7-4b60-aa1d-e67c8ab72988
+  content_fingerprint: 4e35041caeba1ee68025aa7baeb441c491020b4d4359661d8b47b01f05995354
+  kind: scalar
+  attributes:
+    key_path: name
+- short_id: 4
+  uuid: fe13d866-65a3-4bf3-9522-c7f71bf75685
+  content_fingerprint: 9700ec924e659f212852ec4b00bf0e439c1b8f4da3d1317c9d9e394f32d5ec0a
+  kind: scalar
+  attributes:
+    key_path: description
+- short_id: 5
+  uuid: db8210a6-8b77-4958-90b3-fb86501549d9
+  content_fingerprint: 7257cdb348a44e3f9f899219b7696f3bd92e5d77c725eac27f76fae428237f5b
+  kind: scalar
+  attributes:
+    key_path: concepts[0]
+- short_id: 6
+  uuid: 8eb9c323-f8ab-403d-978c-8f1b7b37fb6e
+  content_fingerprint: 41fdfc64babd8cdc2591680eb1d22047a8e6f1f25961bdee47ffecf1eec289a5
+  kind: scalar
+  attributes:
+    key_path: concepts[1]
+- short_id: 7
+  uuid: f123b17a-81d3-4432-b4c7-79d74f2b8a49
+  content_fingerprint: d58e7a021421bf9e65c29d2c241beb6106b8492a7dedff57ee6d159128ba70a9
+  kind: scalar
+  attributes:
+    key_path: concepts[2]
+- short_id: 8
+  uuid: a3baa0f1-23c6-46ec-a811-835de1814d1c
+  content_fingerprint: c8996635c673efb0cb5e404cde316962d0fbd1d20efcd29da4a88e0217a1daec
+  kind: mapping
+  attributes:
+    key_path: relations[0]
+- short_id: 9
+  uuid: fe559d53-9e41-4c14-aeb7-c586b15a971b
+  content_fingerprint: 41fdfc64babd8cdc2591680eb1d22047a8e6f1f25961bdee47ffecf1eec289a5
+  kind: scalar
+  attributes:
+    key_path: relations[0].from_concept
+- short_id: 10
+  uuid: 7b671840-98fc-4457-a97a-3f46f7c74249
+  content_fingerprint: 7257cdb348a44e3f9f899219b7696f3bd92e5d77c725eac27f76fae428237f5b
+  kind: scalar
+  attributes:
+    key_path: relations[0].to_concept
+- short_id: 11
+  uuid: e6089351-172d-4ee3-a688-51a8481274eb
+  content_fingerprint: 14cb110972358e196aa78cd4f81881fd00f76ec838abf99138502bab68788ace
+  kind: scalar
+  attributes:
+    key_path: relations[0].type
+- short_id: 12
+  uuid: 89723fc6-9e34-407d-8202-ba13c8693a47
+  content_fingerprint: d19f1c9614eb4b220b23b264a74d4ca9c68f7bbc58fdbe82c7c6c36f54c81a6f
+  kind: scalar
+  attributes:
+    key_path: source_labels[0]
+- short_id: 13
+  uuid: c1043482-dbb0-4b7c-ad8f-996c96b1d34c
+  content_fingerprint: 996676214505e46735e882bfcf07c0b2ac02d33e28a388c7ea0b4835c6a6af3b
+  kind: scalar
+  attributes:
+    key_path: source_labels[1]
+- short_id: 14
+  uuid: 5aa2460b-c680-4bcb-8268-4ec712006a35
+  content_fingerprint: ce7a638ccc3fa2f06436aa2ee83342432c58289744ff0ee6b73b7082de00fea7
+  kind: scalar
+  attributes:
+    key_path: source_labels[2]
+- short_id: 15
+  uuid: d401c9ef-e85e-4f5e-8e07-244b9d697725
+  content_fingerprint: ef33030f518f6428d593f2b8c4919d96017faf690720d78bc6e64a94533879a2
+  kind: scalar
+  attributes:
+    key_path: source_labels[3]
+- short_id: 16
+  uuid: 7a89460b-9b30-4e66-bc77-a9248bac615c
+  content_fingerprint: 094df0531787decd381800baf41c7e2c3347e4d2b958121bb3c393e6027572fe
+  kind: scalar
+  attributes:
+    key_path: source_labels[4]
+- short_id: 17
+  uuid: 55d9904c-59f4-4915-976d-7f4f0887898d
+  content_fingerprint: 6437bcb373af1027b6a0ec2e0977b3cc152bbc7796cb3136d260f478c1100e67
+  kind: scalar
+  attributes:
+    key_path: source_labels[5]
+- short_id: 18
+  uuid: c26337f2-4b06-49e0-b9f5-f39145df0260
+  content_fingerprint: af0c1a3be9dfca41aa08261a84f608c95310807708c50b1574a0df302c38212a
+  kind: scalar
+  attributes:
+    key_path: tactical_steps[0]
+- short_id: 19
+  uuid: a50b043c-2596-45ab-984c-8d2309b5d953
+  content_fingerprint: 8a4a3330f9893f8afcb3670ed218ed90de4d9ecb53078da1a02803a43cfe0847
+  kind: scalar
+  attributes:
+    key_path: tactical_steps[1]
+- short_id: 20
+  uuid: dd05f2e4-36b4-4061-9c5c-69d5aa1dfa13
+  content_fingerprint: 1065dc1ad6ee2affcd18faec07e944644e56f75c73b47319e8d1cb5d77ca55f7
+  kind: scalar
+  attributes:
+    key_path: status
+---TREE---
+___id___: 1
+step_id:
+  ___id___: 2
+  v: G-001
+name:
+  ___id___: 3
+  v: Planning cascade, agent policy and project structure
+description:
+  ___id___: 4
+  v: Define the planning cascade, model-agent entry policy, and documented project
+    structure as the project governance boundary. This step establishes how lower-level
+    artifacts are derived, how Claude/Codex agents load context before implementation,
+    and how the runtime parts and documentation areas remain separated.
+concepts:
+- ___id___: 5
+  v: C-018
+- ___id___: 6
+  v: C-019
+- ___id___: 7
+  v: C-020
+relations:
+- ___id___: 8
+  from_concept:
+    ___id___: 9
+    v: C-019
+  to_concept:
+    ___id___: 10
+    v: C-018
+  type:
+    ___id___: 11
+    v: uses
+source_labels:
+- ___id___: 12
+  v: '{e5g6}'
+- ___id___: 13
+  v: '{h7j8}'
+- ___id___: 14
+  v: '{k9m0}'
+- ___id___: 15
+  v: '{v7w8}'
+- ___id___: 16
+  v: '{n1p2}'
+- ___id___: 17
+  v: '{q3s4}'
+depends_on: []
+tactical_steps:
+- ___id___: 18
+  v: T-001
+- ___id___: 19
+  v: T-002
+status:
+  ___id___: 20
+  v: draft

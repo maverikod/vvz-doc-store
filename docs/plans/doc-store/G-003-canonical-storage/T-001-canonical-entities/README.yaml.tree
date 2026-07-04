@@ -1,0 +1,171 @@
+---CHECKSUMS---
+source_sha256: 0aa57293822a406ca7b8a6ad7464877a8701c6b14f7393b06cd044d7f2d30bfc
+---MAP---
+next_free: 20
+entries:
+- short_id: 1
+  uuid: d656490b-fff0-4209-bf3a-bb742d1181e0
+  content_fingerprint: 0aa57293822a406ca7b8a6ad7464877a8701c6b14f7393b06cd044d7f2d30bfc
+  kind: mapping
+  attributes:
+    key_path: ''
+- short_id: 2
+  uuid: d320652d-6aa4-457b-a4c2-2682ff9d7be6
+  content_fingerprint: af0c1a3be9dfca41aa08261a84f608c95310807708c50b1574a0df302c38212a
+  kind: scalar
+  attributes:
+    key_path: step_id
+- short_id: 3
+  uuid: ec2d91b2-8045-4336-9011-ec3f175dba0c
+  content_fingerprint: 79fddbc00f7a85a1cad800a7d6893b29eb01b96252438759bc077f7aeed9b0f7
+  kind: scalar
+  attributes:
+    key_path: parent_global_step
+- short_id: 4
+  uuid: 7324c112-8a99-464c-ba01-73e8f88cbf1b
+  content_fingerprint: 64ef3104936ccbe221f86d04a960ccf254af9b82e732b6b5616b5ab6d9aa3f3b
+  kind: scalar
+  attributes:
+    key_path: name
+- short_id: 5
+  uuid: 88ec3258-e1de-4323-9ee6-b7913ff9e9de
+  content_fingerprint: 497453a8f839b608b5d9cf017cf5fbc16db24668027c0568dd274a7b31bdc610
+  kind: scalar
+  attributes:
+    key_path: description
+- short_id: 6
+  uuid: b113dfe2-2dad-46e6-b6bf-b8ad9fa8c7e4
+  content_fingerprint: 775e980b9418f10582b5f7ee3c03af0d224da7a6dbcac7b01b46d8b65fa853a6
+  kind: scalar
+  attributes:
+    key_path: concepts[0]
+- short_id: 7
+  uuid: cbee190c-81ac-4461-8806-13b75fe82fee
+  content_fingerprint: b418fb5cc5e6449a7543524fe3c34b55d30594c4d8bd9f36f9ceaaf1098c8004
+  kind: scalar
+  attributes:
+    key_path: concepts[1]
+- short_id: 8
+  uuid: dc5e6c4f-526e-4553-b832-a673a87db68e
+  content_fingerprint: 6b2b8271ecb687cc26f29cb095da7817e03925eb8d25e760d631e66a55141dd2
+  kind: scalar
+  attributes:
+    key_path: concepts[2]
+- short_id: 9
+  uuid: 6e8d86eb-c175-483e-8a31-7d5419e0fe1b
+  content_fingerprint: eb6cd0b6b1e38d57b51b12ae67d8455cb588dd7140f35e96fa336f951e78bb2a
+  kind: scalar
+  attributes:
+    key_path: concepts[3]
+- short_id: 10
+  uuid: 1ba2b816-42d6-467c-b6b2-2b7ad55227d4
+  content_fingerprint: dde7dd6d73af1995cf9c9145c0fd77c596a9db00d78b88a502923e5dbf6fd4ce
+  kind: scalar
+  attributes:
+    key_path: concepts[4]
+- short_id: 11
+  uuid: 5acba5a2-a97a-49d4-9d49-e5b51865cceb
+  content_fingerprint: b479dfb7651a529f4ed110eefc9942d357bad9a27d8dd10e32e8c392d1c1241b
+  kind: mapping
+  attributes:
+    key_path: inputs[0]
+- short_id: 12
+  uuid: cdca6953-b02a-4fc1-a5e5-ba71ab2bd9c5
+  content_fingerprint: 19caa9d73ebff70f261321171ecc175979142a9116632b389b98c8f5518ecd45
+  kind: scalar
+  attributes:
+    key_path: inputs[0].name
+- short_id: 13
+  uuid: ae3b5e7f-2d6b-4a2f-88e5-2482e8624088
+  content_fingerprint: 8211eb3559383278e8a1c1549ae3dc94e7af304a457912dc8e8cc14c43509aba
+  kind: scalar
+  attributes:
+    key_path: inputs[0].type
+- short_id: 14
+  uuid: f8dfc035-e6ef-4a0b-8a98-a9305430e2f7
+  content_fingerprint: 45e91f2944101d21f9018d3846afe222000868449cf6776c3d0e54a0fcbb5615
+  kind: scalar
+  attributes:
+    key_path: inputs[0].description
+- short_id: 15
+  uuid: 715a3488-bd26-4508-9260-8309fcc43adf
+  content_fingerprint: 612a8d007c3345fdc0aa8e802334d7397067c4e05c00c6ffdad5100128f39bfc
+  kind: mapping
+  attributes:
+    key_path: outputs[0]
+- short_id: 16
+  uuid: 876327f5-bb42-4e5c-9eeb-8a1e77fcaf6d
+  content_fingerprint: 54d5a209ac23f8b7139cd6031ac2e3c635bbccb7f70f363b4da2d165f5c5ba5a
+  kind: scalar
+  attributes:
+    key_path: outputs[0].name
+- short_id: 17
+  uuid: 32df2c23-09d3-4360-bd77-8c3817f502cd
+  content_fingerprint: 20010260d219e45f5ab10ffa1186c54ad2098d3a163a172a110c36c09db5a044
+  kind: scalar
+  attributes:
+    key_path: outputs[0].type
+- short_id: 18
+  uuid: 4257fda9-c813-4064-a37f-b4dcf2ec4007
+  content_fingerprint: 8a55c26a053cccb3db149fec246a03db2184da0a20b2992c3b52505db205b203
+  kind: scalar
+  attributes:
+    key_path: outputs[0].description
+- short_id: 19
+  uuid: e8dfbb1a-c7f1-46a7-8144-bc0f4c0d20db
+  content_fingerprint: 1065dc1ad6ee2affcd18faec07e944644e56f75c73b47319e8d1cb5d77ca55f7
+  kind: scalar
+  attributes:
+    key_path: status
+---TREE---
+___id___: 1
+step_id:
+  ___id___: 2
+  v: T-001
+parent_global_step:
+  ___id___: 3
+  v: G-003
+name:
+  ___id___: 4
+  v: canonical entities
+description:
+  ___id___: 5
+  v: Tactical domain step derived from parent GS and MRS. Code file details are deferred
+    to AS layer.
+concepts:
+- ___id___: 6
+  v: C-008
+- ___id___: 7
+  v: C-009
+- ___id___: 8
+  v: C-010
+- ___id___: 9
+  v: C-011
+- ___id___: 10
+  v: C-012
+inputs:
+- ___id___: 11
+  name:
+    ___id___: 12
+    v: parent_context
+  type:
+    ___id___: 13
+    v: planning_artifact
+  description:
+    ___id___: 14
+    v: MRS plus parent GS context.
+outputs:
+- ___id___: 15
+  name:
+    ___id___: 16
+    v: tactical_contract
+  type:
+    ___id___: 17
+    v: planning_contract
+  description:
+    ___id___: 18
+    v: Autonomous tactical contract for later AS decomposition.
+atomic_steps: []
+status:
+  ___id___: 19
+  v: draft

@@ -1,0 +1,178 @@
+---CHECKSUMS---
+source_sha256: 0d038285f9cd879fcbc98298d99f11dc8bad6c9decd4ef0db973c156f24a56e1
+---MAP---
+next_free: 21
+entries:
+- short_id: 1
+  uuid: 7d5ff980-60e5-4395-a507-dc611389ccce
+  content_fingerprint: 0d038285f9cd879fcbc98298d99f11dc8bad6c9decd4ef0db973c156f24a56e1
+  kind: mapping
+  attributes:
+    key_path: ''
+- short_id: 2
+  uuid: 2295ce19-175d-4577-bcb9-37ba9f17f4c9
+  content_fingerprint: e2ee8a66867719615b893472036285e29659868ec79db5cbc6e7bb568233e8e5
+  kind: scalar
+  attributes:
+    key_path: step_id
+- short_id: 3
+  uuid: 81ec43b4-2032-45b0-9f0b-b19314c6fc46
+  content_fingerprint: ab470b27aa710010551dda7e6e34995b5105cb53ce8a38e95957e9bdb68212ea
+  kind: scalar
+  attributes:
+    key_path: name
+- short_id: 4
+  uuid: a9a674ca-8315-4d69-ac4c-be6682d50e10
+  content_fingerprint: 4a28c4aff94623f37d3e3f65ff4f96a2b9aff5301294bc4f34b700be24d35041
+  kind: scalar
+  attributes:
+    key_path: description
+- short_id: 5
+  uuid: 6ec078ef-9d66-4c91-9d0b-fdcf7db84485
+  content_fingerprint: d58e7a021421bf9e65c29d2c241beb6106b8492a7dedff57ee6d159128ba70a9
+  kind: scalar
+  attributes:
+    key_path: concepts[0]
+- short_id: 6
+  uuid: e369d6e0-de8c-45b8-a0ca-6cb35aecd7dd
+  content_fingerprint: 20913300c6e2b6131c4f6122bf5563caeddb10454d3edf37b8f292eb18cf6758
+  kind: scalar
+  attributes:
+    key_path: concepts[1]
+- short_id: 7
+  uuid: c5bb816f-b6b0-4c27-8041-fbfa8d9ffa75
+  content_fingerprint: 601f48ff376bdf5474422122d98fbb706ced68f837c21cda2e285caa930b4f12
+  kind: scalar
+  attributes:
+    key_path: concepts[2]
+- short_id: 8
+  uuid: 8ed14dc1-4c3a-4c58-bce7-6805e875b9d3
+  content_fingerprint: 72b948c7cb92c99a860b780999f373461a9b24e65e7999dc461cd9843210328c
+  kind: scalar
+  attributes:
+    key_path: depends_on[0]
+- short_id: 9
+  uuid: c6167a8b-5caa-483b-9940-8b5e452aaae6
+  content_fingerprint: af0c1a3be9dfca41aa08261a84f608c95310807708c50b1574a0df302c38212a
+  kind: scalar
+  attributes:
+    key_path: tactical_steps[0]
+- short_id: 10
+  uuid: 39a38079-6e11-46ec-b760-e35ba7e10abb
+  content_fingerprint: 8a4a3330f9893f8afcb3670ed218ed90de4d9ecb53078da1a02803a43cfe0847
+  kind: scalar
+  attributes:
+    key_path: tactical_steps[1]
+- short_id: 11
+  uuid: 5376e97a-d392-4f47-828d-e6f1a0ca2500
+  content_fingerprint: 1065dc1ad6ee2affcd18faec07e944644e56f75c73b47319e8d1cb5d77ca55f7
+  kind: scalar
+  attributes:
+    key_path: status
+- short_id: 12
+  uuid: e25aa641-c196-4964-abc9-cc1e5cd5a707
+  content_fingerprint: c27637372e95800d46133ca15ae40dbb2b6be7a6930e2f1a8f5c941937ecd830
+  kind: mapping
+  attributes:
+    key_path: relations[0]
+- short_id: 13
+  uuid: 3b24d4b1-a237-4a48-b23e-f847b43fb8cb
+  content_fingerprint: d58e7a021421bf9e65c29d2c241beb6106b8492a7dedff57ee6d159128ba70a9
+  kind: scalar
+  attributes:
+    key_path: relations[0].from_concept
+- short_id: 14
+  uuid: 68db8424-e6dc-4e88-a9e6-e491cce635b8
+  content_fingerprint: 601f48ff376bdf5474422122d98fbb706ced68f837c21cda2e285caa930b4f12
+  kind: scalar
+  attributes:
+    key_path: relations[0].to_concept
+- short_id: 15
+  uuid: d759f37a-7213-42b2-be69-77e72b92e36e
+  content_fingerprint: e60d00ad7c6638f6beeda244cdbb7f210acc592b7d9e1ba51f4942a1d9d167c2
+  kind: scalar
+  attributes:
+    key_path: relations[0].type
+- short_id: 16
+  uuid: 6810551a-93e4-4262-8f71-7b6613ff0e9a
+  content_fingerprint: 094df0531787decd381800baf41c7e2c3347e4d2b958121bb3c393e6027572fe
+  kind: scalar
+  attributes:
+    key_path: source_labels[0]
+- short_id: 17
+  uuid: 4fa73a21-a258-4660-8024-e738453766ed
+  content_fingerprint: 6437bcb373af1027b6a0ec2e0977b3cc152bbc7796cb3136d260f478c1100e67
+  kind: scalar
+  attributes:
+    key_path: source_labels[1]
+- short_id: 18
+  uuid: 3f9061f2-db62-475f-8e30-d6c92394d76d
+  content_fingerprint: 3ad54061582d59ba51572d88eb284f1bd305cec60b6f71008b7aee1332f2553c
+  kind: scalar
+  attributes:
+    key_path: source_labels[2]
+- short_id: 19
+  uuid: f36de4f1-7a92-467f-a030-4c587eca59eb
+  content_fingerprint: cb3134a5b73c8c783b45c2bc78673e5147d321652fd31a4224af17d868be0a16
+  kind: scalar
+  attributes:
+    key_path: source_labels[3]
+- short_id: 20
+  uuid: b3fa795a-6411-4645-93a6-616af3fd6a9d
+  content_fingerprint: af707de713d3c47e36b7ee8a59ab65c5e52b61969ef3e483308f52f40ea62f8f
+  kind: scalar
+  attributes:
+    key_path: source_labels[4]
+---TREE---
+___id___: 1
+step_id:
+  ___id___: 2
+  v: G-006
+name:
+  ___id___: 3
+  v: Deployment, testing and typed implementation quality
+description:
+  ___id___: 4
+  v: Define deployment and quality boundaries for the project. This step covers documented
+    file structure, file watcher service packaging, typed Python implementation, tests,
+    and conservative module contracts.
+concepts:
+- ___id___: 5
+  v: C-020
+- ___id___: 6
+  v: C-003
+- ___id___: 7
+  v: C-001
+depends_on:
+- ___id___: 8
+  v: G-001
+tactical_steps:
+- ___id___: 9
+  v: T-001
+- ___id___: 10
+  v: T-002
+status:
+  ___id___: 11
+  v: draft
+relations:
+- ___id___: 12
+  from_concept:
+    ___id___: 13
+    v: C-020
+  to_concept:
+    ___id___: 14
+    v: C-001
+  type:
+    ___id___: 15
+    v: depends_on
+source_labels:
+- ___id___: 16
+  v: '{n1p2}'
+- ___id___: 17
+  v: '{q3s4}'
+- ___id___: 18
+  v: '{k1l2}'
+- ___id___: 19
+  v: '{c3d4}'
+- ___id___: 20
+  v: '{a1b2}'

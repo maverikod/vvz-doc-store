@@ -1,0 +1,114 @@
+meta:
+  author: Vasiliy Zdanovskiy
+  description: Mandatory client-session and terminal lifecycle. Client session 
+    is created on code-analysis-server; terminal commands on mcp-terminal reuse 
+    that session_id.
+  email: vasilyvz@gmail.com
+  locale: en
+  title: Terminal Workflow
+  version: '1.1'
+trigger: Before session_create, terminal_session_create, or terminal_run.
+session_server_id: code-analysis-server
+terminal_server_id: mcp-terminal
+session_not_universal_file: session_id from session_create is unrelated to 
+  universal_file_open / universal_file_edit session_id (in-memory file edit 
+  draft). Do not mix the two lifecycles.
+forbidden:
+  client_generated_session_id: PROHIBITED. Do not invent session_id locally. 
+    Always call session_create on code-analysis-server and reuse the returned 
+    UUID4.
+  run_scripts_without_approval: PROHIBITED. Running any script or non-trivial 
+    command via terminal requires explicit user approval in chat before 
+    terminal_run is called.
+  workspace_write_sibling_projects: PROHIBITED. workspace_write=true must never 
+    be requested for sibling projects (mcp_proxy_adapter, vast_srv). They are 
+    read-only via terminal.
+session_identity:
+  create_command: session_create on code-analysis-server (server generates 
+    session_id).
+  session_id_rule: Store session_id from session_create response; reuse for all 
+    session-aware commands (terminal, file locks, subordinate links) until 
+    session_delete.
+  project_id_rule: Use the target watched project UUID from list_projects. For 
+    terminal on code_analysis repo itself use 
+    8772a086-688d-4198-a0c4-f03817cc0e6c.
+  workspace_write_rule: At most one terminal session per project may have 
+    workspace_write=true. All others are read-only on /workspace.
+client_session_lifecycle:
+  server: code-analysis-server
+  1_create: session_create(comment, role_ids?) — returns session_id (UUID4), 
+    comment, created_at, last_active_at
+  2_inspect: session_view(session_id) — locked files by project + subordinate 
+    links; session_list_file_locks(session_id) for lock triples only
+  3_list: session_list(stale_threshold_seconds?) — optional operator listing; 
+    session_id visibility depends on config sessions.show_session_ids
+  4_file_locks_optional: session_open_file(session_id, project_id, file_id) → 
+    session_close_file(...) when coordinating indexed file_id locks (independent
+    of universal_file_open)
+  5_subordinate_optional: subordinate_session_create(parent_session_id, comment,
+    server_uuid?) — register leading session on another server instance (e.g. 
+    mcp-terminal); subordinate_session_list / subordinate_session_delete to 
+    audit
+  6_delete: session_delete(session_id, force=false) — default requires zero file
+    locks and zero subordinate links; force=true releases locks and links first
+terminal_lifecycle:
+  server: mcp-terminal
+  prerequisite: session_id from step client_session_lifecycle.1_create
+  1_create: terminal_session_create(project_id, session_id, 
+    workspace_write=true, bootstrap_python_env=false) — attaches 
+    .terminals/<session_id>/ under project root; idempotent if pair already 
+    exists
+  2_run: terminal_run(project_id, session_id, execution_kind=shell, command=...,
+    keep_container=true) — returns job_id + seq immediately, always async
+  3_poll: terminal_get_status(project_id, session_id, seq=N) — poll until status
+    is terminal. Queue completed does not imply shell success.
+  4_read: terminal_tail(project_id, session_id, seq=N, n=50) or 
+    terminal_read(...)
+  5_delete: terminal_delete(project_id, session_id) — always call when terminal 
+    work is done
+  6_end_client_session: session_delete(session_id) on code-analysis-server after
+    terminal_delete and optional session_close_file cleanup
+session_commands:
+  code_analysis_server:
+    session_create:
+      mcp: call_server(server_id=code-analysis-server, command=session_create, 
+        ...)
+      params: comment (required), role_ids (optional)
+      returns: session_id, comment, created_at, last_active_at
+    session_view:
+      params: session_id (required)
+      returns: locked_files_by_project, subordinate_sessions, counts
+    session_list:
+      params: session_id (optional), stale_threshold_seconds (optional)
+    session_delete:
+      params: session_id (required), force (default false)
+    session_open_file:
+      params: session_id, project_id, file_id — idempotent DB file lock
+    session_close_file:
+      params: session_id, project_id, file_id — idempotent release
+    session_list_file_locks:
+      params: session_id (required)
+    subordinate_session_create:
+      params: parent_session_id, comment, server_uuid (optional)
+    subordinate_session_list:
+      params: parent_session_id (optional), server_uuid (optional)
+    subordinate_session_get:
+      params: parent_session_id, server_uuid
+    subordinate_session_update:
+      params: parent_session_id, server_uuid, comment
+    subordinate_session_delete:
+      params: parent_session_id, server_uuid
+  mcp_terminal:
+    terminal_session_create:
+      params: project_id, session_id (from session_create), workspace_write, 
+        bootstrap_python_env, use_venv, pid_namespace
+    terminal_run: project_id, session_id, command, keep_container, ...
+    terminal_get_status: project_id, session_id, seq
+    terminal_tail: project_id, session_id, seq, n
+    terminal_delete: project_id, session_id
+full_lifecycle_order:
+- session_create (code-analysis-server)
+- terminal_session_create (mcp-terminal) — same session_id
+- terminal_run → poll → read output
+- terminal_delete (mcp-terminal)
+- session_delete (code-analysis-server)

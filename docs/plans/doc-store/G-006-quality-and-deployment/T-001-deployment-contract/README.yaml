@@ -1,0 +1,18 @@
+step_id: T-001
+parent_global_step: G-006
+name: deployment contract
+description: Tactical domain step derived from parent GS and MRS. Code file details
+  are deferred to AS layer.
+concepts:
+- C-020
+- C-003
+inputs:
+- name: parent_context
+  type: planning_artifact
+  description: MRS plus parent GS context.
+outputs:
+- name: tactical_contract
+  type: planning_contract
+  description: Autonomous tactical contract for later AS decomposition.
+atomic_steps: []
+status: draft

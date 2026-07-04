@@ -1,0 +1,551 @@
+meta:
+  title: Development Plan Standard
+  version: '1.0'
+  locale: en
+  description: "Standard for structuring development plans used in AI-assisted development.
+    Defines five artifact levels, decomposition rules, consistency invariants, and
+    cascade change procedure.\n"
+  scope:
+    covers:
+    - artifact structure and required fields
+    - decomposition rules per level
+    - consistency invariants I1–I3
+    - cascade change procedure
+    - statuses and identifiers
+    excludes:
+    - atomic step execution procedure (future: Planning Manager)
+    - concurrent execution rules (one model per file at a time)
+    - YAML schema definitions (defined separately)
+# ─────────────────────────────────────────────
+# CORE PRINCIPLE
+# ─────────────────────────────────────────────
+    - development infrastructure (CI, test environment)
+core_principle:
+  statement: "The sum of children semantically reproduces the parent.\n"
+  levels_1_2: describe WHAT the system must be (concepts, relations)
+  levels_3_5: describe HOW it will be implemented (steps, prompts)
+# ─────────────────────────────────────────────
+# ARTIFACT HIERARCHY
+# ─────────────────────────────────────────────
+  change_rule: all changes flow strictly top-down via cascade procedure
+  axes:
+    concept_axis: 'Semantic. A concept (machine_spec entity with behavior/invariant)
+      is the unit. Completeness = every concept covered by >= 1 step (no empty column).
+      Concept overlap between steps is allowed: a shared concept_id is a link, not
+      duplicated work. Materialized by gs_concept_matrix and ts_concept_matrix.'
+    note: Two independent axes; do not conflate. 'No gaps' is a concept-axis 
+      statement (no lost meaning). 'No overlaps' is an object/work-axis 
+      statement (no duplicated implementation). A concept appearing in several 
+      steps is correct, not a finding.
+    object_work_axis: Implementation. A concrete object 
+      (class/function/method/...) or a unit of work is the unit. Independence = 
+      no two steps create or modify the same object, and no two steps do the 
+      same work on the same target. Materialized by object_matrix and 
+      concept_atomic_matrix.
+artifacts:
+- level: 1
+  name: source_spec
+  title: Source Specification
+  format: markdown
+  path: docs/plans/<plan_name>/source_spec.md
+  description: "Free-form human-readable file where system concepts are drafted. Raw
+    material for all subsequent levels. Every binding paragraph carries a stable paragraph
+    label and is the addressable unit referenced by lower levels via that label.\n"
+  properties:
+    count_per_plan: 1
+    mutability: immutable after cascade start; history tracked in git
+    paragraph_label:
+      format: '{xxxx}'
+      placement: "A short stable label in curly braces at the very start of each binding
+        paragraph, followed by a single space and the paragraph text (e.g. \"{a3f9}
+        The search system must support two paths...\").\n"
+      value: "Four base36 characters generated randomly when the paragraph is first
+        created. Labels are position-independent: inserting, removing, or reordering
+        paragraphs never changes the label of any other paragraph.\n"
+      stability: "The label lives inside the paragraph text itself, so it survives
+        any re-parsing or external editing of the file. Lower levels bind to this
+        label, never to line numbers.\n"
+      uniqueness: each label is unique within one source_spec
+      scope: "Only binding paragraphs are labeled. Section headings and lines inside
+        non-binding blocks are not labeled and are not referenced by lower levels.\n"
+    non_binding_markup:
+      open_tag: <!-- non-binding -->
+      close_tag: <!-- /non-binding -->
+      semantics: "Paragraphs inside non-binding blocks are excluded from concept extraction,
+        are not labeled, and do not need to be covered by global steps. All paragraphs
+        outside these blocks are considered binding and labeled.\n"
+    cascade_trigger:
+      binding_paragraph_change: true
+      non_binding_paragraph_change: false
+- level: 2
+  name: machine_spec
+  title: Machine-Readable Specification
+  format: yaml
+  path: docs/plans/<plan_name>/spec.yaml
+  description: "Structured projection of source_spec into concepts and typed relations.
+    Single source of truth for terminology and inter-concept semantics. Compact context
+    for executor models at lower levels. Reference grid for invariant checks I1–I3.\n"
+  functions:
+  - compact_context_for_executor_models
+  - canonical_terminology_source
+  - invariant_check_reference_grid
+  direct_edit: forbidden  # all changes via cascade from source_spec
+  concept_definition:
+    qualifies_as_concept: entity with behavior or invariant
+    does_not_qualify: "a plain property of an entity, unless it has its own behavior
+      (e.g. validation, normalization, transformation)\n"
+    required_fields:
+    - concept_id  # unique identifier within plan, e.g. C-001
+    - name # canonical name; no synonyms allowed
+    - definition # single concise sentence
+    - properties # list of attributes and invariants
+    - source_labels # list of paragraph labels from source_spec, e.g. ["{a3f9}", "{b2c1}"]
+  relation_definition:
+    allowed_types:
+      uses: A uses B in its operation
+      owns: A owns B (lifecycle, responsibility)
+      implements: A implements contract/interface of B
+      extends: A extends B (inheritance, specialization)
+      depends_on: A depends on existence of B
+      produces: A produces B (creates instances, generates data)
+      consumes: A consumes B (accepts as input)
+    other_types: forbidden
+    violation_signal: "If a relation cannot be expressed via allowed types, the concepts
+      are likely described imprecisely — revise them.\n"
+    required_fields:
+    - from_concept  # concept_id
+    - to_concept # concept_id
+    - type # one of allowed_types
+  forbidden_content:
+  - implementation details (files, functions, modules, libraries)
+  - action sequences (belong to levels 3–5)
+  - alternatives or open questions (only resolved decisions)
+  - prose (structured fields only)
+  creation_procedure:
+    steps:
+      1_extract_concepts: "Identify all entities with behavior/invariant across source_spec
+        text. Assign concept_id and canonical name to each.\n"
+      2_deduplicate: "Merge synonyms into one canonical name.\n"
+      3_extract_relations: "For each concept, identify typed relations to other concepts.
+        Use only allowed_types.\n"
+      4_bind_to_labels: "Assign source_labels to each concept by listing the paragraph
+        labels from source_spec that justify it.\n"
+      5_check_coverage: "Union of all concepts' source_labels must cover every binding
+        paragraph label of source_spec. An uncovered label means either a missing
+        concept or a paragraph that should be marked non-binding.\n"
+  evolution:
+    trigger: discovered omitted concept during global step work
+    procedure: "1. Update source_spec to make the concept explicitly present. 2. Re-project
+      machine_spec via cascade. 3. Re-evaluate all global steps.\n"
+    direct_edit_of_machine_spec: forbidden
+- level: 3
+  name: global_step
+  title: Global Step
+  format: yaml
+  path: docs/plans/<plan_name>/G-NNN-<slug>/README.yaml
+  description: "Conceptual block describing one or more related domain objects and
+    operations on them. Together all global steps form a complete coverage of machine_spec
+    without gaps or overlaps.\n"
+  conceptual_test:
+    rule: "A global step must be describable through domain objects and operations
+      WITHOUT mentioning specific files, modules, functions, or implementation classes.\n"
+    violation: leaked tactics — global step must be revised
+  count_guidance:
+    typical_range:
+    - 3
+    - 7
+    indicator_threshold: 10
+    on_exceed: "Signal for revision: either conceptual test was applied loosely, or
+      project is too large and must be split into separate plans.\n"
+    semantics: indicator, not a hard limit
+  inter_step_relations:
+    semantic_links: expressed via shared concepts in machine_spec only
+    execution_order: expressed via depends_on field
+    principle: "If G-A and G-B operate on the same concept X, this commonality is
+      visible through shared concept_id references in machine_spec — not through cross-references
+      between global steps. machine_spec is the single source of truth for all semantic
+      links.\n"
+  infrastructure_steps:
+    description: "Infrastructure concerns (shared logger, base config, project skeleton,
+      common types and contracts) are formalized as one or more dedicated global steps
+      inside the plan — not outside it.\n"
+    execution_order: typically first, since application steps depend on them via
+      depends_on
+    rules: same as all global steps (conceptual test, coverage, invariants 
+      I1–I3)
+  creation_procedure:
+    phase_a_mapping:
+      name: Source Spec Mapping
+      action: "Mark source_spec into blocks. Each block = set of paragraph labels.
+        Non-contiguous label sets within one block are allowed.\n"
+    phase_b_conceptualization:
+      name: Conceptualization
+      action: "For each block, write a global step: which concepts it covers, which
+        relations it implements, what objects and operations it describes — all via
+        references to machine_spec identifiers.\n"
+  required_fields:
+    step_id: G-NNN format; unique within plan
+    name: short name
+    description: conceptual description of domain objects and operations
+    concepts: list of concept_ids from machine_spec covered by this step
+    relations: list of relation references from machine_spec implemented here
+    source_labels: list of paragraph labels from source_spec, e.g. ["{a3f9}", 
+      "{b2c1}"]; non-contiguous allowed
+    depends_on: list of G-NNN step_ids; execution order only, not semantic
+    tactical_steps: list of T-NNN step_ids
+    status: see statuses section
+- level: 4
+  name: tactical_step
+  title: Tactical Step
+  format: yaml
+  path: docs/plans/<plan_name>/G-NNN-<slug>/T-NNN-<slug>/README.yaml
+  description: "Refinement of one global step into concrete objects and actions. Operates
+    on specific entities: classes, modules, data schemas, API contracts. Not yet files
+    and functions — that is the atomic step level.\n"
+  properties:
+    coverage: sum of tactical steps fully realizes parent global step
+    coherence: one tactical step = one logically connected unit of work
+    reference_integrity: "All mentioned objects are concepts from machine_spec, referenced
+      by concept_id — no free-form names.\n"
+    no_open_decisions: "No open design decisions allowed. No \"can be done via X or
+      Y\", no \"if needed\", no \"as appropriate\". If a fork exists — resolve it
+      at global step or source_spec level first.\n"
+  creation_procedure:
+    steps:
+      '1': Take all source_spec paragraph labels belonging to the parent global 
+        step.
+      '2': Re-analyze them from the angle of "what exactly needs to be done".
+      '3': Create a set of tactical steps that fully covers the global step.
+  required_fields:
+    step_id: T-NNN format; unique within parent global step
+    parent_global_step: G-NNN step_id
+    name: short name
+    description: which entities are created/modified, which operations realized
+    concepts: list of concept_ids from machine_spec referenced by this step
+    inputs: 'structured: {name, type, description} per input'
+    outputs: 'structured: {name, type, description} per output'
+    atomic_steps: list of A-NNN step_ids (defined inline in this file)
+    status: see statuses section
+- level: 5
+  name: atomic_step
+  title: Atomic Step
+  format: yaml
+  location: inline inside parent tactical step README.yaml under key 
+    atomic_steps
+  description: "Self-contained prompt for a coder model. A step that cannot be logically
+    subdivided and touches exactly one code file.\n"
+  atomicity_definition:
+    rule: "Cannot be subdivided: splitting produces either a half-step with no meaning,
+      or two steps where one is meaningless without the other.\n"
+    examples:
+    - create a function with a specified signature
+    - add a method to a class
+    - create a new file with a known structure
+    - modify a specific section of a file by an explicitly described rule
+  one_file_rule:
+    one_atomic_step_touches: exactly one code file
+    one_code_file_may_have: multiple atomic steps
+    reverse: forbidden (one atomic step → multiple files)
+  code_file_size_limit:
+    max_lines: 400
+    recommended_lines: 350
+    on_exceed: "Design constraint violation at tactical step level. The file must
+      be split — patch_region strategy is not supported. All atomic steps work with
+      the full file content.\n"
+  allowed_operations:
+  - create_file
+  - modify_file
+  - delete_file
+  - rename_file
+  priority_within_file:
+    field: priority
+    type: integer
+    rule: "All atomic steps targeting the same code file must have distinct priority
+      values. Execution order: ascending priority. Priority is local to a file — not
+      compared across files.\n"
+    parallel_execution: forbidden for steps targeting the same file
+  file_state_in_prompt:
+    rule: "Each atomic step's prompt contains the file content as it exists after
+      all lower-priority atomic steps on the same file have been applied. If no depends_on
+      is specified: model searches for its own code by signature/name from the prompt.
+      If found — modifies it. If not found — appends to end of file.\n"
+    model_constraint: touches only its own code section; must not modify other 
+      sections
+  context_budget:
+    target_tokens: 4000
+    semantics: "Granularity threshold — not a model lock-in. Indicates how fine-grained
+      steps must be for a small local model to execute without assumptions.\n"
+    full_context_includes:
+    - relevant excerpt from machine_spec (only needed concepts)
+    - parent global step
+    - parent tactical step
+    - current full content of target file
+    - all required signatures, types, imports
+    - the prompt itself
+    on_budget_exceeded:
+      first: try to subdivide the atomic step further
+      if_impossible: "tactical step is too large or file is too large — revise at
+        tactical level\n"
+  prompt_required_content:
+  - exact path of target file
+  - operation type (from allowed_operations)
+  - full current file content (for modify_file, after prior atomic steps 
+    applied)
+  - all imports and types that will be used
+  - exact function/class signature
+  - docstring and typing requirements
+  - all constraints, explicitly listed
+  - targeted excerpt of machine_spec concepts needed for this step only
+  prompt_forbidden_content:
+  - references to other steps
+  - instructions to read other files
+  - open design decisions
+  - phrases like "implement as appropriate"
+  - phrases like "add necessary imports"
+  artifact_size:
+    rule: "Atomic step artifact contains only what is necessary for execution. No
+      redundancy between atomic steps. Minimize size without losing context completeness.\n"
+  required_fields:
+    step_id: A-NNN format; unique within parent tactical step
+    parent_tactical_step: T-NNN step_id
+    name: short name
+    target_file: exact path to code file
+    operation: 'one of: create_file | modify_file | delete_file | rename_file'
+    priority: integer; distinct among all atomic steps targeting same file
+    depends_on: optional list of A-NNN step_ids that must complete first
+    concepts: list of concept_ids from machine_spec referenced in prompt
+    prompt: full self-contained prompt for coder model (see prompt rules)
+    verification:
+      type: 'one of: pytest | import | static_analysis | manual'
+      target: file path, test name, or entity name
+      expected: expected result description (no code)
+# ─────────────────────────────────────────────
+# INVARIANTS
+# ─────────────────────────────────────────────
+    status: see statuses section
+invariants:
+  I1:
+    name: Coverage
+    statement: "The sum of children covers the parent without gaps.\n"
+    checks:
+      a:
+        statement: union(concepts of all G-steps) ≡ concepts(machine_spec)
+        automatable: true
+        verified_via: gs_concept_matrix with no empty column (see 
+          coverage_matrices)
+      b:
+        statement: union(relations implemented in all G-steps) ≡ 
+          relations(machine_spec)
+        automatable: true
+      c:
+        statement: union(source_labels of all G-steps) ≡ binding paragraph 
+          labels of source_spec
+        automatable: true
+        role: fallback check in case machine_spec is incomplete
+    verified_at: before freezing global step set
+  I2:
+    name: Branch Semantic Coverage
+    statement: "The atomic step set derived from branch (machine_spec + G + T) semantically
+      reproduces that branch in full.\n"
+    uniqueness: not required
+    rationale: "Different decompositions may yield different atomic step sets. All
+      are valid as long as each passes the checklist.\n"
+    checklist:
+      objects: "Every object from the parent branch (machine_spec concepts + objects
+        mentioned in G and T) appears in at least one atomic step — either as created
+        or as modified.\n"
+      operations: "Every operation from the branch is realized by at least one atomic
+        step.\n"
+      relations: "Every concept relation belonging to this tactical step is realized
+        by at least one atomic step.\n"
+      prompt_completeness: "Each atomic step's prompt lists all needed concepts, types,
+        signatures. Model must not assume anything.\n"
+      no_extra: "No atomic step implements functionality outside the branch.\n"
+      axis_note: objects/operations/relations checks operate on the object/work 
+        axis and are materialized by object_matrix and concept_atomic_matrix 
+        (see coverage_matrices)
+    verified_at: before freezing atomic step set for each tactical step
+  I3:
+    name: Equivalence
+    statement: "Executing all atomic steps fully realizes source_spec. No implementation
+      detail exists outside atomic steps.\n"
+    violation: any concept or relation not realized by any atomic step
+# ─────────────────────────────────────────────
+# CASCADE CHANGE PROCEDURE
+# ─────────────────────────────────────────────
+    verified_at: upon completion of implementation (tests + manual review)
+coverage_matrices:
+  axes_note: "Matrices are verified on the concept axis: every concept covered by
+    >= 1 step (no empty column). Concept overlap between steps is allowed (a shared
+    concept_id is a semantic link, not duplicated work). The 'no overlaps' rule from
+    core_principle belongs to the object/work axis (an object is created/modified
+    by exactly one step), not to concepts. An object realizes one or more concepts
+    (many-to-many); an object is not a part of a concept but a unit of its realization
+    in code."
+  gs_concept_matrix:
+    axis: concept
+    built_when: during global step creation (level 3), once the G-step set 
+      exists
+    checked_when: in consistency cycle_1 (gs_concept_matrix completeness) and 
+      before freezing the global step set
+    columns: every concept_id of machine_spec
+    completeness_rule: 'no empty column: every machine_spec concept belongs to >=
+      1 global step; concept overlap across global steps is allowed'
+    how_built: for each global step, mark which machine_spec concepts it covers;
+      the marks must agree with that step's concepts list in both directions
+    materializes: invariant I1.a (union of G-step concepts == concepts of 
+      machine_spec)
+    purpose: Materialized coverage of machine_spec concepts by the global step 
+      set.
+    rows: every global step (G-NNN)
+  ts_concept_matrix:
+    axis: concept
+    built_when: during tactical step creation (level 4), per parent global step
+    checked_when: in tactical check t12 (gs coverage by ts set), before the 
+      tactical layer is frozen
+    columns: concepts of the parent global step
+    completeness_rule: 'per global step, no empty cell on the concept axis: every
+      concept of the parent GS is covered by >= 1 of its tactical steps; concept overlap
+      across sibling tactical steps is allowed'
+    how_built: for each tactical step, mark which concepts of the parent global 
+      step it realizes
+    materializes: tactical coverage check t12 (sum of TS realizes the parent GS 
+      on the concept axis)
+    purpose: Materialized coverage of each global step's concepts by its 
+      tactical step set.
+    rows: tactical steps (T-NNN) of one global step
+cascade:
+  principle: "All changes to plan artifacts flow strictly top-down. Direct modification
+    of lower-level artifacts bypassing upper levels is forbidden without exception.
+    No corrigendum, no cosmetic edits outside cascade.\n"
+  order:
+    '1': source_spec
+    '2': machine_spec
+    '3': global_steps
+    '4': tactical_steps (affected only)
+    '5': atomic_steps (affected only)
+  transaction:
+    atomic: true
+    rule: "While cascade steps are incomplete and invariants unchecked, new state
+      is not published. Intermediate states are invisible to lower levels and plan
+      consumers.\n"
+    mechanism: work in branch/copy; merge to main only after full cascade pass
+  invalidation_rule:
+    statement: "When any plan tree node changes, all its direct children transition
+      to needs_review, must be reviewed, and updated if necessary. Changes propagate
+      downward: reviewed children may in turn be changed, invalidating their own children.\n"
+    by_level:
+      source_spec_changed: re-project machine_spec (full re-projection)
+      machine_spec_changed: all global steps → needs_review
+      global_step_changed: all its tactical steps → needs_review; siblings 
+        unaffected
+      tactical_step_changed: all its atomic steps → needs_review; siblings 
+        unaffected
+    no_separate_concept_rules: "Since direct machine_spec edit is forbidden, all concept/relation
+      changes come from source_spec. The general rule above covers all cases.\n"
+  steps:
+    1_localize:
+      name: Localize in source_spec
+      action: Apply change to binding paragraphs of source_spec; new paragraphs 
+        receive new labels.
+    2_reproject:
+      name: Re-project machine_spec
+      action: "Update machine_spec. Produce diff of concepts and relations: added,
+        removed, property changes, relation changes.\n"
+    3_full_global_reassessment:
+      name: Full global step reassessment
+      action: "Check all global steps against updated machine_spec. Distribute new
+        concepts across global steps (possibly new step). Remove disappeared concepts
+        from global steps. Shift global step boundaries if concept boundaries shifted.
+        Verify I1: new union of G-step concepts covers machine_spec. Mark each global
+        step as changed or unchanged.\n"
+    4_selective_tactical_revision:
+      name: Selective tactical step revision
+      action: "For each changed global step: all its tactical steps → needs_review.
+        Review and update as needed.\n"
+    5_selective_atomic_revision:
+      name: Selective atomic step revision
+      action: "For each changed tactical step: all its atomic steps → needs_review.
+        Revise prompts, add or remove atomic steps as needed.\n"
+    6_invariant_checks:
+      name: Invariant verification
+      I1: after step 3
+      I2: after step 5
+      I3: after code implementation of changes
+    7_publish:
+      name: Publish
+      on_pass: merge transaction; new state is published
+      on_fail: rollback cascade; state unchanged
+  enforcement:
+    current: author discipline + git history for post-hoc audit
+# ─────────────────────────────────────────────
+# STATUSES
+# ─────────────────────────────────────────────
+    future: Planning Manager (dedicated tool for cascade control and invariant 
+      automation)
+statuses:
+  applicable_to: all artifact levels
+  values:
+    draft: artifact is being created
+    ready_for_review: ready for invariant check at this level
+    frozen: passed invariant check; lower levels may depend on it
+    needs_review: parent level changed; reassessment required
+  atomic_step_only:
+    in_progress: atomic step is being implemented
+    done: atomic step implemented and verification passed
+  obsolete_status: not used
+# ─────────────────────────────────────────────
+# IDENTIFIERS AND NAMING
+# ─────────────────────────────────────────────
+  obsolete_rationale: "Artifacts are overwritten during cascade. History is kept in
+    git.\n"
+identifiers:
+  formats:
+    global_step:
+      pattern: G-NNN
+      example: G-001
+      padding: zero-padded to 3 digits
+    tactical_step:
+      pattern: T-NNN
+      example: T-007
+      padding: zero-padded to 3 digits
+    atomic_step:
+      pattern: A-NNN
+      example: A-012
+      padding: zero-padded to 3 digits
+    concept:
+      pattern: C-NNN
+      example: C-003
+      padding: zero-padded to 3 digits
+  uniqueness:
+    G-NNN: unique within plan
+    T-NNN: unique within parent global step
+    A-NNN: unique within parent tactical step
+    C-NNN: unique within plan
+  directory_names:
+    format: <step_id>-<slug>
+    slug_style: kebab-case
+    examples:
+    - G-001-user-auth
+    - T-003-token-validation
+  file_names:
+    global_step: README.yaml
+# ─────────────────────────────────────────────
+# DIRECTORY LAYOUT
+# ─────────────────────────────────────────────
+    tactical_step: README.yaml
+layout:
+  root: docs/plans/<plan_name>/
+  files:
+    source_spec: source_spec.md  # level 1: source specification
+    machine_spec: spec.yaml # level 2: machine-readable specification
+    gs_concept_matrix: 'gs_concept_matrix.yaml  # GS x Concept coverage (concept axis)'
+    ts_concept_matrix: 't_concept_matrix.yaml  # TS x Concept coverage (concept axis)'
+    object_matrix: 'object_matrix.yaml  # concept -> python object (object axis, atomic
+      level)'
+    concept_atomic_matrix: 'concept_atomic_matrix.yaml  # concept -> AS (object axis,
+      atomic level)'
+  structure: "docs/plans/<plan_name>/\n  source_spec.md\n  spec.yaml\n  G-001-<slug>/\n\
+    \    README.yaml                  # global step + tactical_steps list\n    T-001-<slug>/\n\
+    \      README.yaml                # tactical step + inline atomic_steps\n    T-002-<slug>/\n\
+    \      README.yaml\n  G-002-<slug>/\n    README.yaml\n    ...\n"

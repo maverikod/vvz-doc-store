@@ -1,0 +1,303 @@
+meta:
+  title: Tactical Step Creation Standard
+  version: '1.0'
+  locale: en
+  description: "Procedure for writing the tactical step layer of a development plan
+    after cycle_1 (HRS↔MRS alignment) and cycle_2 (G-step triple autonomy) have passed
+    green. Complements plan_standard_machine.yaml (which defines the artifact hierarchy)
+    and hrs_mrs_gs_consistency_verification_standard.yaml (which defines upper-level
+    verification cycles).\n"
+  scope:
+    covers:
+    - reading order and context loading for tactical-step authoring
+    - per-G-step decomposition into tactical steps
+    - the verification triple (MRS + G-step + T-step)
+    - the per-G-step loop and the global fixpoint loop
+    - check list for one tactical step
+    excludes:
+    - atomic step authoring (level 5; deferred to a separate standard)
+    - cascade procedure for already-frozen plans (covered by 
+      plan_standard_machine.yaml)
+    - tooling and automation
+  alias_map:
+    HRS: source_spec
+    MRS: machine_spec
+    GS: global_step
+    TS: tactical_step
+    AS: atomic_step
+core_principle:
+  identity_upper: "HRS = MRS + SUM(GS_n). Levels 1–3 together fully describe the system
+    conceptually. Cycle_1 and cycle_2 must already be green before this standard runs.\n"
+  identity_at_tactical_level: "For each global step GS_n, the set SUM(TS_m for GS_n)
+    is the complete refinement of GS_n into concrete entities and actions sufficient
+    to write code against. TS is still a micro-specification, not implementation detail.\n"
+  autonomy_criterion: "A reader of (MRS + parent GS_n + one TS_m) has every piece
+    of information needed to act on that TS_m. No reading of sibling tactical steps
+    is required. No reading of sibling global steps is required.\n"
+  independence_criterion: "Tactical steps within one global step do not overlap in
+    created or modified entities, and do not overlap in actions. Two TSs of the same
+    GS cannot both create/modify the same entity. Shared concept references via concept_id
+    in MRS are not overlap — overlap means doing the same work on the same target.\n"
+  immutability:
+    source_spec: not modified by this procedure
+    machine_spec: not modified by this procedure; if a finding requires changing
+      MRS, halt and re-enter cycle_1 of the upper-level verification standard
+    global_step: not modified by this procedure; if a finding requires changing 
+      a GS, halt and re-enter cycle_2 of the upper-level verification standard
+    tactical_step: created and modified by this procedure
+vocabulary:
+  tactical_step: "Level-4 artifact (per plan_standard_machine.yaml). A refinement
+    of one global step into concrete entities and operations on them. Still conceptual
+    — names domain entities, not files or functions.\n"
+  entity: "A concrete domain object the TS creates or modifies: a class, a module
+    boundary, a data schema, an API contract, a configuration object. Not a file or
+    function; that belongs to AS level.\n"
+  action: "A concrete operation the TS performs on entities: create, modify, route,
+    validate, transform, register, expose. Stated as a verb on named entities, not
+    as code.\n"
+  overlap: "Two TSs overlap when they create the same entity, modify the same entity,
+    or perform the same action on the same target. Referencing the same concept_id
+    from MRS is NOT overlap by itself.\n"
+  green_pass: "A full traversal of the verification loop producing an empty finding
+    list across every TS of every GS in the current snapshot.\n"
+preconditions:
+  required_state:
+  - cycle_1 (HRS↔MRS) is currently green
+  - cycle_2 (G-step triple autonomy) is currently green
+  - every GS has status draft or ready_for_review (not frozen yet)
+  if_any_precondition_fails:
+    action: halt; return to the upper-level verification standard until both 
+      cycles are green; do not start tactical authoring on an unstable upper 
+      layer
+authoring:
+  step_1_load_mrs:
+    name: Load and internalize MRS
+    action: "Read spec.yaml in full. Hold every concept_id, its definition, its properties,
+      and every relation in working context. MRS is the canonical terminology source
+      for all subsequent TS authoring.\n"
+    output: MRS fully loaded
+  step_2_iterate_gs_in_order:
+    name: Iterate global steps in ascending step_id order
+    action: "Process G-001, G-002, ..., G-NNN strictly in order. For each GS: re-read
+      MRS in full AND read the full README.yaml of that GS from source. Build the
+      working context MRS + GS_n. No partial reading. No reliance on memory of MRS
+      from earlier iterations — re-read it every time. Read every field including
+      description, concepts, relations, source_labels, depends_on.\n"
+    note: "depends_on is used as execution order signal; do NOT pull content from
+      sibling GS into the current context.\n"
+    zero_trust_at_authoring:
+      rule: "Re-reading MRS for every GS_n during authoring follows the same zero-trust
+        principle as verification. Memory of MRS from earlier iterations is replaced
+        by assumptions; assumptions hide drift if cycle_1 was somehow violated. Fresh
+        re-read on every iteration eliminates this risk.\n"
+  step_3_write_tactical_steps:
+    name: Write tactical steps for GS_n
+    action: "Decompose GS_n into a set of TSs such that SUM(TS_m for GS_n) realizes
+      GS_n in full and the independence_criterion holds within that set. Each TS conforms
+      to required_fields below and to the check list. TSs are written as readme files
+      under docs/plans/<plan_name>/G-NNN-<slug>/T-NNN-<slug>/README.yaml per plan_standard_machine.yaml
+      layout.\n"
+    required_fields_per_ts:
+      step_id: T-NNN; unique within parent GS; zero-padded
+      parent_global_step: G-NNN of the parent
+      name: short tactical name
+      description: "Concrete entities (created or modified) and actions performed
+        on them. Names domain entities, not files. Resolves every concept it touches
+        by concept_id.\n"
+      concepts: list of concept_ids from MRS referenced by this TS
+      inputs: list of {name, type, description}
+      outputs: list of {name, type, description}
+      atomic_steps: list of A-NNN step_ids; remains empty at this stage
+      status: draft on first write
+    forbidden_in_ts:
+    - file paths, module names, function names, class implementation details 
+      (those belong to AS)
+    - open design decisions, alternatives, conditional phrasing ('X or Y', 'if 
+      needed', 'as appropriate')
+    - free-form entity names that are not resolved to a concept_id when a 
+      matching concept exists in MRS
+    - cross-references to sibling TS content
+    - duplication of MRS or GS text without adding tactical detail
+  step_4_build_ts_concept_matrix:
+    action: After writing the TS set for GS_n, build or update the 
+      ts_concept_matrix for that GS (per plan_standard_machine.yaml 
+      coverage_matrices). Rows = the TS of GS_n; columns = concepts of GS_n; 
+      mark which concepts each TS realizes. The matrix is the materialized form 
+      of check t12 and must have no empty cell on the concept axis (every GS 
+      concept covered by >= 1 TS). Concept overlap across sibling TS is allowed.
+    axis: concept axis only; object/work independence is checked separately by 
+      t13
+    name: Build the TS x Concept matrix for GS_n
+    output: ts_concept_matrix rows for GS_n with no empty concept column
+    path: docs/plans/<plan_name>/t_concept_matrix.yaml
+verification:
+  triple_definition: "For each TS_m of GS_n, the verification triple is (MRS + GS_n
+    + TS_m). Every check on the triple is performed under zero_trust_reread below.\n"
+  zero_trust_reread:
+    rule: "Before every single check pass on a triple, re-read MRS, the parent GS_n
+      README, and TS_m from their source files in full. Do not rely on memory of prior
+      reads, even reads performed seconds ago on the same artifacts. Treat each pass
+      as if the verifier has never seen these files before.\n"
+    rationale: "Models compress context across passes to save tokens. Compression
+      replaces actual file content with assumptions about file content. Assumptions
+      hide gaps. Forced re-reading on every pass blocks this compression and surfaces
+      gaps that memory-based verification misses. Empirically, memory-based verification
+      takes 7–8 passes and still leaves gaps; zero-trust re-read converges faster
+      with no residual gaps.\n"
+    applies_to:
+    - every per_ts_check (t5 through t13)
+    - every iteration of inner_loop_per_gs
+    - every iteration of outer_loop_full_pass
+    forbidden_shortcuts:
+    - I already read MRS earlier in this session
+    - GS_n hasn't changed since I last read it
+    - TS_m is short, I remember it
+    - concept C-NNN definition is the same as before
+    - summarizing artifacts in working memory instead of holding their full text
+    enforcement:
+      operational_rule: "Each check pass begins with explicit re-reads of MRS, parent
+        GS, and the TS under check. Re-reads are observable file operations. A pass
+        that does not start with these re-reads is invalid and must be redone.\n"
+  per_ts_checks:
+    t5_concept_references_valid:
+      statement: "Every concept_id referenced in TS_m exists in current MRS. No dangling
+        references. No free-form synonyms for existing concepts.\n"
+      failure_modes:
+      - concept_id used but not present in MRS
+      - free-form name used where a matching concept_id exists
+    t6_scope_within_parent_gs:
+      statement: "Every concept_id referenced in TS_m is either covered by the parent
+        GS_n's concepts list, or is a concept the parent legitimately touches via
+        its relations. TS_m does not reach into concepts that belong only to sibling
+        GSs.\n"
+      failure_modes:
+      - TS references a concept that belongs exclusively to another GS
+      - TS broadens scope beyond the parent GS
+    t7_executor_completeness:
+      statement: "A reader of MRS + GS_n + TS_m, with no other artifacts, can name
+        every entity TS_m creates or modifies, every action it performs, and every
+        input it consumes and output it produces. No knowledge gaps requiring sibling
+        artifacts.\n"
+      probe: "For each entity, action, input, and output in TS_m's description, locate
+        its meaning either in MRS, in GS_n, or in TS_m itself. If located only in
+        a sibling TS or sibling GS — finding.\n"
+    t8_no_silent_dependency_on_siblings:
+      statement: "TS_m's text does not rely on a sibling TS's content to be understood
+        or executed. Execution order between sibling TSs is not expressed at the TS
+        level; it emerges from the AS layer later. Sibling references are forbidden.\n"
+      failure_modes:
+      - phrases like "after T-002 completes", "as established in T-001"
+      - assumed entities defined only in another TS
+    t9_no_redundancy:
+      statement: "TS_m does not paraphrase MRS or GS_n content without adding tactical
+        detail. Localizing multi-source material in one place for the executor is
+        allowed; bare repetition is a finding.\n"
+      failure_modes:
+      - TS description merely restates GS description
+      - TS lists concept properties already present in MRS without adding action
+        or refinement
+    t10_no_open_decisions:
+      statement: "No open design decisions remain in TS_m. No 'X or Y', no 'if needed',
+        no 'as appropriate', no 'TBD'. Forks are resolved at GS or HRS level before
+        TS is written.\n"
+      failure_modes:
+      - alternative phrasings without resolution
+      - conditional behavior not bound to a concrete predicate
+    t11_inputs_outputs_structured:
+      statement: "inputs and outputs are lists of {name, type, description} per plan_standard_machine.yaml.
+        No prose-only inputs or outputs.\n"
+      failure_modes:
+      - input or output described as free text without name/type/description
+      - inputs or outputs absent when the TS clearly consumes/produces data
+    t12_gs_coverage_by_ts_set:
+      statement: "SUM(TS_m for GS_n) realizes GS_n in full. Every concept_id of GS_n
+        is touched by at least one TS. Every action stated or implied by GS_n's description
+        is realized by at least one TS.\n"
+      scope: this check operates on the whole TS set of GS_n, not on a single TS
+        in isolation
+      failure_modes:
+      - GS concept not realized by any TS
+      - GS action not realized by any TS
+      - TS set realizes only part of GS scope
+      verified_via: ts_concept_matrix for GS_n with no empty cell on the concept
+        axis (see plan_standard_machine.yaml coverage_matrices and 
+        authoring.step_4_build_ts_concept_matrix)
+    t13_ts_independence:
+      statement: "Within the TS set of GS_n, no two TSs overlap. Overlap means: both
+        create the same entity, both modify the same entity, or both perform the same
+        action on the same target. Shared concept_id reference is not overlap.\n"
+      scope: pairwise across TSs of one GS
+      failure_modes:
+      - two TSs both create entity X
+      - two TSs both modify entity X
+      - two TSs perform the same action on the same target
+finding_resolution:
+  rule: "Findings are resolved by modifying the TS layer of GS_n only. If a finding
+    seems to require changing MRS or GS, halt this procedure and re-enter the upper-level
+    verification standard. The source_spec is owned by the human and cannot be changed
+    by this procedure.\n"
+  operations_allowed_on_ts_layer:
+  - add a new TS to GS_n
+  - remove a TS from GS_n
+  - rewrite a TS description
+  - adjust a TS concepts list
+  - adjust a TS inputs or outputs
+  - split a TS into two TSs (to resolve t13 independence violation)
+  - merge two TSs into one (to resolve t9 redundancy or t13 trivial overlap)
+  escalation:
+    finding_requires_mrs_change:
+      action: halt; mark which concept/relation in MRS is incomplete; return to 
+        cycle_1
+    finding_requires_gs_change:
+      action: halt; mark which GS field is incomplete; return to cycle_2
+    finding_requires_source_spec_change:
+      action: halt; consult the human; source_spec is the source of truth
+loops:
+  inner_loop_per_gs:
+    name: Per-GS green pass
+    purpose: bring the TS set of one GS_n to green under the per_ts_checks
+    procedure:
+      '1': for each TS_m of GS_n, run t5..t11 under zero_trust_reread
+      '2': run t12 (coverage) over the TS set of GS_n under zero_trust_reread
+      '3': run t13 (independence) pairwise over the TS set under 
+        zero_trust_reread
+      '4': if findings exist, resolve under finding_resolution
+      '5': any modification to the TS set restarts the inner loop from step 1
+      '6': pass when finding list is empty
+  outer_loop_full_pass:
+    name: Full plan pass
+    purpose: confirm that progress on later GSs did not create regressions on 
+      earlier GSs (e.g. through MRS edits that escalated mid-process)
+    procedure:
+      '1': after inner_loop_per_gs is green for every GS in order
+      '2': re-run the inner_loop_per_gs for every GS in order again
+      '3': if any TS set is modified during this pass, return to step 1
+      '4': pass when a full sweep finds no new findings anywhere
+  termination:
+    overall_green: "The tactical layer is complete when the outer_loop_full_pass completes
+      without modifying any TS set. At this point every GS has a frozen-eligible TS
+      set ready for the atomic step layer.\n"
+relationship:
+  to_plan_standard_machine:
+    statement: "plan_standard_machine.yaml defines what a TS is (level 4, required
+      fields, conceptual test, no-open-decisions rule). This standard defines HOW
+      to author and verify TSs once levels 1–3 are green.\n"
+  to_consistency_verification_standard:
+    statement: "hrs_mrs_gs_consistency_verification_standard.yaml runs cycle_1 and
+      cycle_2 before this standard runs. Findings in this standard that need MRS or
+      GS edits escalate back to those cycles.\n"
+  to_atomic_step_layer:
+    statement: "Atomic step authoring (level 5) starts after this standard's overall_green
+      is reached. AS authoring requires additional inputs (model tier, context budget,
+      target file size) and is governed by a separate standard.\n"
+    matrix_handoff: ts_concept_matrix built here is passed down as a read-only 
+      input to atomic step authoring; the atomic standard consumes it and does 
+      not rebuild or modify it.
+artifact_location:
+  this_standard:
+    path: docs/standards/tactical_step_creation_standard.yaml
+    rationale: stored with the other standards in docs/standards; tracked 
+      together with the consistency verification standard
+  tactical_step_files:
+    path: docs/plans/<plan_name>/G-NNN-<slug>/T-NNN-<slug>/README.yaml
+    rationale: per plan_standard_machine.yaml layout section

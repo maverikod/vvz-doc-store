@@ -1,0 +1,45 @@
+step_id: G-002
+name: Client, watcher and ingestion boundary
+description: Define the document intake boundary. This step covers client operations,
+  watcher collection, known extension handling, server acceptance, and conversion
+  into unified JSON for canonical tree construction.
+concepts:
+- C-002
+- C-003
+- C-004
+- C-005
+- C-006
+- C-007
+depends_on:
+- G-001
+tactical_steps:
+- T-001
+- T-002
+- T-003
+status: draft
+relations:
+- from_concept: C-003
+  to_concept: C-002
+  type: uses
+- from_concept: C-002
+  to_concept: C-004
+  type: uses
+- from_concept: C-004
+  to_concept: C-006
+  type: uses
+- from_concept: C-006
+  to_concept: C-005
+  type: uses
+- from_concept: C-006
+  to_concept: C-007
+  type: produces
+source_labels:
+- '{g7h8}'
+- '{i9j0}'
+- '{k1l2}'
+- '{m3n4}'
+- '{o5p6}'
+- '{q7r8}'
+- '{s9t0}'
+- '{u1v2}'
+- '{w3x4}'

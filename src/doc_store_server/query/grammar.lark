@@ -1,0 +1,16 @@
+// Initial SQL-like query grammar for doc-store.
+?start: select_stmt
+select_stmt: "SELECT"i fields "FROM"i source where_clause? limit_clause?
+fields: "*" | CNAME ("," CNAME)*
+source: CNAME
+where_clause: "WHERE"i condition
+?condition: comparison (("AND"i | "OR"i) comparison)*
+comparison: CNAME OP value
+OP: "=" | "!=" | ">" | ">=" | "<" | "<=" | "~"
+?value: ESCAPED_STRING | SIGNED_NUMBER | CNAME
+limit_clause: "LIMIT"i SIGNED_NUMBER
+%import common.CNAME
+%import common.ESCAPED_STRING
+%import common.SIGNED_NUMBER
+%import common.WS
+%ignore WS

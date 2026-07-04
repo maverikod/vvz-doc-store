@@ -1,0 +1,314 @@
+# ============================================================================
+# editor_ca_workflow_prompt.yaml
+# Machine-readable specification of the full edit lifecycle for the
+# AI Editor server combined with the Code Analysis (CA) server, accessed
+# through the MCP-Proxy. Feed this whole document to an agent as a system
+# prompt or skill. All identifiers, paths and code stay in English.
+# ============================================================================
+
+meta:
+  author: Vasiliy Zdanovskiy
+  email: vasilyvz@gmail.com
+  schema: editor_ca_workflow/1.0
+  language_policy:
+    chat: ru          # human-facing chat in Russian
+    code_and_ids: en  # file paths, identifiers, code in English
+
+# ----------------------------------------------------------------------------
+# Actors. Two servers with strictly separated responsibilities.
+# ----------------------------------------------------------------------------
+actors:
+  proxy:
+    transport: MCP-Proxy
+    call_form: 'call_server(server_id=<server>, copy_number=1, command=<cmd>, params={...})'
+  code_analysis:
+    server_id: code-analysis-server
+    owns:
+      - file ownership (filesystem under project root)
+      - indexes, AST/CST database, FTS, git
+      - client sessions (session_create / session_validate / session_delete)
+      - file locks attributed to session_id (not OS PID)
+      - chunked download / upload
+    note: >
+      The session_id lives HERE. It is a CA-generated UUID4. Every
+      universal_file_* command on the editor must carry this same id.
+  ai_editor:
+    server_id: ai-editor-server
+    owns:
+      - in-memory edit workspace with a draft copy of the file
+      - the five universal_file_* commands
+    note: >
+      The editor does NOT generate or store its own session. It orchestrates
+      CA upstream (lock, download, upload, unlock) using the session_id passed in.
+      Never call CA session_open_file / download / session_close_file separately —
+      universal_file_open and universal_file_close do that internally.
+
+# ----------------------------------------------------------------------------
+# Hard invariants. Violating any of these breaks the workflow.
+# ----------------------------------------------------------------------------
+invariants:
+  - id: INV-1
+    rule: session_id comes from CA session_create, reused unchanged for open/preview/edit/write/close.
+  - id: INV-2
+    rule: open performs lock+download internally; do not call session_open_file or a download command.
+  - id: INV-3
+    rule: close performs CA unlock internally; do not call session_close_file. There is no such editor command.
+  - id: INV-4
+    rule: always run universal_file_preview after open (and after any structural edit) before editing — to obtain fresh node_ref values.
+  - id: INV-5
+    rule: the on-disk file is never touched until universal_file_write with write_mode=commit succeeds.
+  - id: INV-6
+    rule: one open file per (project_id, file_path) at a time; a second open returns PARSE_ERROR.
+  - id: INV-7
+    rule: uncommitted edits are silently discarded on close — commit before close if changes matter.
+  - id: INV-8
+    rule: editor server restart loses all sessions; re-open via universal_file_open.
+  - id: INV-9
+    rule: for text formats, line numbers shift after every edit — re-preview or use anchors before each line-targeted op.
+  - id: INV-10
+    rule: file_path is required on edit/write/close only when the CA session has more than one file open.
+
+# ----------------------------------------------------------------------------
+# Command reference (parameters that matter for the lifecycle).
+# ----------------------------------------------------------------------------
+commands:
+
+  session_create:
+    server: code-analysis-server
+    params:
+      comment: {type: string, required: true}
+      role_ids: {type: array, required: false}
+    returns: {session_id: uuid4}
+    purpose: open a CA client session; first step of any edit run.
+
+  session_delete:
+    server: code-analysis-server
+    params:
+      session_id: {type: string, required: true}
+      force: {type: boolean, required: false, default: false}
+    purpose: release the CA session row after all files are closed. force=true removes locks/subordinates recursively.
+
+  universal_file_open:
+    server: ai-editor-server
+    params:
+      project_id: {type: string, required: true}
+      file_path: {type: string, required: true, note: project-relative, no globs}
+      session_id: {type: string, required: true, note: CA session id}
+      create: {type: boolean, required: false, default: false}
+      initial_content: {type: string, required: false, note: used only when create=true}
+    returns:
+      session_id: echo
+      draft_path: absolute path to in-session draft copy
+      session_dir: '{workspace_root}/{session_id}/'
+      available_operations: [insert, delete, replace]
+      multi_file_bundle: {note: list of files open under this session}
+      is_invalid: {note: true => opened in line-based fallback (parse error)}
+      fallback_reason: {note: parse error text when is_invalid}
+    branches:
+      existing_file: create=false => CA lock + chunked download.
+      new_file: create=true => CA upload(initial_content) + save + lock.
+
+  universal_file_preview:
+    server: ai-editor-server
+    purpose: read-only structured preview of the current draft; source of node_ref values.
+    node_ref_by_format:
+      python: stable UUID per CST node -> pass as node_id
+      json_yaml: RFC 6901 JSON Pointer string (e.g. '/timeout') -> pass as json_pointer
+      markdown: slug-path (e.g. 'intro.setup') -> pass as node_ref
+      text_rst_adoc: zero-based line index string -> convert to 1-based start_line
+
+  universal_file_edit:
+    server: ai-editor-server
+    params:
+      project_id: {required: true}
+      session_id: {required: true}
+      file_path: {required: false, note: required when >1 file open}
+      operations: {type: array, required: true}
+    op_types: [insert, delete, replace, move]
+    applies_to: in-memory draft only (disk untouched).
+    format_rules:
+      python_sidecar:
+        target: node_id (UUID from preview)
+        content_field: code_lines (list[str], preferred) or code
+        insert_container: {parent_node_id: '__root__ for module level', position: 'first|last'}
+        insert_sibling: {target_node_id: <uuid>, position: 'before|after'}
+        constraints:
+          - stable_id preserved across sibling ops in one batch
+          - parent and descendant in same batch => NESTED_BATCH_FORBIDDEN (split into separate calls)
+      json_yaml_tree_temp:
+        target: json_pointer (NOT node_id)
+        replace: {value: 'any JSON type: string|number|bool|null|array|object'}
+        array_append: "parent_json_pointer ending in '/-', or position='last'"
+        object_insert: {before_key: <k>, after_key: <k>, note: preserves key order}
+      text:
+        target: 'node_ref OR start_line/end_line (1-based inclusive)'
+        append_eof: {position: 'last', content: <str>}
+        safety: 'optional anchor_head + anchor_tail (5 non-ws chars) reject stale ranges'
+        warning: re-preview before each line-targeted op; numbers shift after edits (INV-9)
+
+  universal_file_write:
+    server: ai-editor-server
+    params:
+      project_id: {required: true}
+      session_id: {required: true}
+      file_path: {required: false, note: required when >1 file open}
+      write_mode: {type: string, enum: [preview, commit], default: preview}
+    modes:
+      preview: local unified diff (canonical export vs origin snapshot). No CA upload.
+      commit: >
+        if draft == origin -> no-op (unchanged=true, no CA RPC).
+        if differs -> upload canonical export to CA; on success refresh origin snapshot.
+        on CA error -> origin and draft unchanged (safe to retry or close).
+    returns: {unchanged: bool, uploaded: bool}
+
+  universal_file_close:
+    server: ai-editor-server
+    params:
+      project_id: {required: true}
+      session_id: {required: true}
+      file_path: {required: false, note: required when >1 file open}
+    behavior:
+      - best-effort CA unlock (failure does not abort close; unlock_ok=false is informational)
+      - discards uncommitted draft edits (this IS the cancel/rollback path)
+      - removes the file subtree; removes session dir when last file closed
+    returns: {remaining_open_files: [], session_retained: bool, unlock_ok: bool}
+
+# ----------------------------------------------------------------------------
+# Lifecycles. Each is an ordered list of proxy calls.
+# ----------------------------------------------------------------------------
+lifecycles:
+
+  create_new_file:
+    description: Create a brand-new file in the project and write its first content.
+    steps:
+      - call: session_create
+        on: code-analysis-server
+        params: {comment: 'create <file_path>'}
+        capture: session_id
+      - call: universal_file_open
+        on: ai-editor-server
+        params:
+          project_id: <project_id>
+          file_path: <new/relative/path.py>
+          session_id: <session_id>
+          create: true
+          initial_content: "'''module docstring'''\nfrom __future__ import annotations\n"
+        note: uploads initial_content to CA and locks the new path. file_path must NOT already be indexed.
+      - call: universal_file_preview
+        on: ai-editor-server
+        params: {project_id: <project_id>, session_id: <session_id>}
+        note: get node_ref values for subsequent structural edits.
+      - call: universal_file_edit
+        on: ai-editor-server
+        note: optional — add nodes/lines on top of initial_content.
+      - call: universal_file_write
+        on: ai-editor-server
+        params: {write_mode: preview}
+        note: inspect diff vs the just-created origin.
+      - call: universal_file_write
+        on: ai-editor-server
+        params: {write_mode: commit}
+        note: persists to CA; expect uploaded=true.
+      - call: universal_file_close
+        on: ai-editor-server
+      - call: session_delete
+        on: code-analysis-server
+        params: {session_id: <session_id>}
+
+  edit_existing_file:
+    description: Modify an already-indexed file by structural node references.
+    steps:
+      - call: session_create
+        on: code-analysis-server
+        params: {comment: 'edit <file_path>'}
+        capture: session_id
+      - call: universal_file_open
+        on: ai-editor-server
+        params: {project_id: <project_id>, file_path: <rel/path>, session_id: <session_id>}
+        check: if is_invalid==true the file has syntax errors -> session is in text fallback; fix with line edits, commit, then structural editing returns.
+      - call: universal_file_preview
+        on: ai-editor-server
+        params: {project_id: <project_id>, session_id: <session_id>}
+        capture: node_ref values
+      - call: universal_file_edit
+        on: ai-editor-server
+        example_python:
+          operations:
+            - {type: replace, node_id: <uuid>, code_lines: ['def f() -> int:', '    return 42']}
+        example_json_yaml:
+          operations:
+            - {type: replace, json_pointer: '/status', value: 'ready_for_review'}
+        reminder: re-run preview if a full-parent replace or a failure invalidated node_ref (INV-4).
+      - call: universal_file_write
+        on: ai-editor-server
+        params: {write_mode: preview}
+        gate: human/agent reviews the unified diff here.
+      - call: universal_file_write
+        on: ai-editor-server
+        params: {write_mode: commit}
+      - call: universal_file_close
+        on: ai-editor-server
+      - call: session_delete
+        on: code-analysis-server
+        params: {session_id: <session_id>}
+
+  write_persist:
+    description: The write contract on its own (preview then commit).
+    steps:
+      - call: universal_file_write
+        params: {write_mode: preview}
+        outcome: returns local unified diff, no CA contact.
+      - decision:
+          if_diff_acceptable:
+            - call: universal_file_write
+              params: {write_mode: commit}
+              outcome_success: {uploaded: true, note: origin snapshot refreshed}
+              outcome_noop: {unchanged: true, note: draft equalled origin}
+              outcome_error: {error: UPSTREAM_UPLOAD_FAILED, note: origin/draft intact, retry or close}
+          if_diff_rejected:
+            - goto: rollback.discard_uncommitted
+
+  rollback:
+    description: Two distinct rollback scopes.
+    discard_uncommitted:
+      when: edits were applied to the draft but you do NOT want them on disk.
+      how: call universal_file_close WITHOUT a prior commit.
+      effect: draft is rebuilt from on-disk source; uncommitted edits are discarded. Disk unchanged.
+      note: this is the canonical cancel path. No separate revert command needed.
+    revert_committed:
+      when: a commit already reached CA disk and must be undone.
+      how: CA owns version history and git; restore via CA, not the editor.
+      options:
+        - list_backup_versions(project_id, file_path) then restore the desired version on CA.
+        - if git_commit_on_write is enabled, use git on CA to revert the commit.
+      note: the editor has no command to undo a committed write; rollback of disk state is a CA-side operation.
+
+# ----------------------------------------------------------------------------
+# Error handling cheatsheet (stable codes -> action).
+# ----------------------------------------------------------------------------
+errors:
+  SESSION_NOT_FOUND: CA session unknown or editor bundle lost (restart). Re-create CA session and re-open.
+  PARSE_ERROR_on_open: file already open in a session, or unrecoverable parse. Close owner or use text fallback.
+  NESTED_BATCH_FORBIDDEN: batch mixes ancestor and descendant nodes. Split into separate edit calls.
+  STALE_NODE_ID: node_ref no longer valid (e.g. after full-parent replace). Re-run preview.
+  LINE_OUT_OF_RANGE / ANCHOR_MISMATCH: draft shifted. Re-run preview; use fresh lines or anchors.
+  UPSTREAM_UPLOAD_FAILED: CA rejected commit. Inspect upstream_error; fix content/connectivity; retry write or close.
+  UNKNOWN_FORMAT: unsupported extension. Supported: .py .pyi .pyw .json .yaml .yml .md .txt .rst .adoc
+
+# ----------------------------------------------------------------------------
+# Golden-path summary (the one-liner an agent should internalize).
+# ----------------------------------------------------------------------------
+golden_path: >
+  session_create(CA) -> universal_file_open(editor, create? ) -> universal_file_preview ->
+  universal_file_edit -> universal_file_write(preview) -> universal_file_write(commit) ->
+  universal_file_close -> session_delete(CA).
+  Cancel = close without commit. Undo committed = CA version history / git.
+
+# ----------------------------------------------------------------------------
+# Test projects available for dry-runs of this workflow.
+# ----------------------------------------------------------------------------
+test_projects:
+  - {name: test_editor_project,    project_id: 16df34cc-d618-4384-a697-efb7236c12f1}
+  - {name: editor_integration_test, project_id: 978e605f-04a5-42f5-8fbc-0d29cab5718a}
+  - {name: editor_format_test,      project_id: aa10bd1a-d9aa-421e-95de-b565b9341f62}
+  - {name: editor_format_test2,     project_id: 2fe86386-8ecc-437b-9266-ea8ae0396fef}

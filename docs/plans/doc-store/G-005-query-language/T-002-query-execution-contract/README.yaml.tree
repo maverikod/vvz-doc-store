@@ -1,0 +1,155 @@
+---CHECKSUMS---
+source_sha256: 0c359aa82e87fe41d8e73a565dff8ec271420214ce977368a7827124a6803d97
+---MAP---
+next_free: 18
+entries:
+- short_id: 1
+  uuid: 45da1f02-1304-4214-ae1f-a3545a3bc2b7
+  content_fingerprint: 0c359aa82e87fe41d8e73a565dff8ec271420214ce977368a7827124a6803d97
+  kind: mapping
+  attributes:
+    key_path: ''
+- short_id: 2
+  uuid: 58e1d1d6-c83d-4028-898e-54cedf571471
+  content_fingerprint: 8a4a3330f9893f8afcb3670ed218ed90de4d9ecb53078da1a02803a43cfe0847
+  kind: scalar
+  attributes:
+    key_path: step_id
+- short_id: 3
+  uuid: 05b98d9c-9236-4e32-904f-59304dbc0717
+  content_fingerprint: b4f87abcb772450bedbc0c12289137c3d3997266f4739524c861a26dd724abfb
+  kind: scalar
+  attributes:
+    key_path: parent_global_step
+- short_id: 4
+  uuid: e9a6459b-92ae-47a9-b77e-fae6ea83d285
+  content_fingerprint: d9f7e8c44a23aaeacab58f1f9d678ff7b3a906270e4cb137ee929cb268b1f469
+  kind: scalar
+  attributes:
+    key_path: name
+- short_id: 5
+  uuid: 7bb0e093-c2bf-4ad2-b77e-d1ff77aeba46
+  content_fingerprint: 497453a8f839b608b5d9cf017cf5fbc16db24668027c0568dd274a7b31bdc610
+  kind: scalar
+  attributes:
+    key_path: description
+- short_id: 6
+  uuid: b3f8cc87-6a7d-4564-b569-532c4156c9f0
+  content_fingerprint: 92e3da44877eebf854d7c7fd6f5a195fb4f835256fab6cae9e6f3679deb5e1f2
+  kind: scalar
+  attributes:
+    key_path: concepts[0]
+- short_id: 7
+  uuid: 5fe80fdd-e86e-4a00-b7f0-3eff39a75dd8
+  content_fingerprint: 5f21123f9582af33a777b78038f3f14395fcf0e32e494278c622e52f362ecea7
+  kind: scalar
+  attributes:
+    key_path: concepts[1]
+- short_id: 8
+  uuid: 1a0231c3-996b-46ac-b794-f60ae7b810ac
+  content_fingerprint: 775e980b9418f10582b5f7ee3c03af0d224da7a6dbcac7b01b46d8b65fa853a6
+  kind: scalar
+  attributes:
+    key_path: concepts[2]
+- short_id: 9
+  uuid: 597d6127-1c39-4bb0-a1f5-2040953b5f9c
+  content_fingerprint: b479dfb7651a529f4ed110eefc9942d357bad9a27d8dd10e32e8c392d1c1241b
+  kind: mapping
+  attributes:
+    key_path: inputs[0]
+- short_id: 10
+  uuid: cae6427c-93e3-4d97-bf68-6093a6b4c9aa
+  content_fingerprint: 19caa9d73ebff70f261321171ecc175979142a9116632b389b98c8f5518ecd45
+  kind: scalar
+  attributes:
+    key_path: inputs[0].name
+- short_id: 11
+  uuid: af0b2747-c9a4-45af-8708-e8a05dcfbcf8
+  content_fingerprint: 8211eb3559383278e8a1c1549ae3dc94e7af304a457912dc8e8cc14c43509aba
+  kind: scalar
+  attributes:
+    key_path: inputs[0].type
+- short_id: 12
+  uuid: c8459c58-4b9d-4284-9c7b-a79cb3d6e853
+  content_fingerprint: 45e91f2944101d21f9018d3846afe222000868449cf6776c3d0e54a0fcbb5615
+  kind: scalar
+  attributes:
+    key_path: inputs[0].description
+- short_id: 13
+  uuid: 7ac46480-86f6-48ca-ae10-6eb9f3090c81
+  content_fingerprint: 612a8d007c3345fdc0aa8e802334d7397067c4e05c00c6ffdad5100128f39bfc
+  kind: mapping
+  attributes:
+    key_path: outputs[0]
+- short_id: 14
+  uuid: c76261b8-238b-43cc-bd45-bc555cbb629e
+  content_fingerprint: 54d5a209ac23f8b7139cd6031ac2e3c635bbccb7f70f363b4da2d165f5c5ba5a
+  kind: scalar
+  attributes:
+    key_path: outputs[0].name
+- short_id: 15
+  uuid: 94632572-30b8-4577-9421-69450761c789
+  content_fingerprint: 20010260d219e45f5ab10ffa1186c54ad2098d3a163a172a110c36c09db5a044
+  kind: scalar
+  attributes:
+    key_path: outputs[0].type
+- short_id: 16
+  uuid: c6c7116e-9d35-456a-aa93-66ad92174586
+  content_fingerprint: 8a55c26a053cccb3db149fec246a03db2184da0a20b2992c3b52505db205b203
+  kind: scalar
+  attributes:
+    key_path: outputs[0].description
+- short_id: 17
+  uuid: c13958f3-fb2e-4a95-a127-11d2d8a795a1
+  content_fingerprint: 1065dc1ad6ee2affcd18faec07e944644e56f75c73b47319e8d1cb5d77ca55f7
+  kind: scalar
+  attributes:
+    key_path: status
+---TREE---
+___id___: 1
+step_id:
+  ___id___: 2
+  v: T-002
+parent_global_step:
+  ___id___: 3
+  v: G-005
+name:
+  ___id___: 4
+  v: query execution contract
+description:
+  ___id___: 5
+  v: Tactical domain step derived from parent GS and MRS. Code file details are deferred
+    to AS layer.
+concepts:
+- ___id___: 6
+  v: C-017
+- ___id___: 7
+  v: C-013
+- ___id___: 8
+  v: C-008
+inputs:
+- ___id___: 9
+  name:
+    ___id___: 10
+    v: parent_context
+  type:
+    ___id___: 11
+    v: planning_artifact
+  description:
+    ___id___: 12
+    v: MRS plus parent GS context.
+outputs:
+- ___id___: 13
+  name:
+    ___id___: 14
+    v: tactical_contract
+  type:
+    ___id___: 15
+    v: planning_contract
+  description:
+    ___id___: 16
+    v: Autonomous tactical contract for later AS decomposition.
+atomic_steps: []
+status:
+  ___id___: 17
+  v: draft

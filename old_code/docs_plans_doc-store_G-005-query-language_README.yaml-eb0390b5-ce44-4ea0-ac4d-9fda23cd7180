@@ -1,0 +1,14 @@
+step_id: G-005
+name: SQL-like Lark query language
+description: SQL-like Lark query language. Domain-level step; implementation files
+  are intentionally absent at GS level.
+concepts:
+- C-017
+- C-013
+- C-008
+depends_on:
+- G-003
+tactical_steps:
+- T-001
+- T-002
+status: draft

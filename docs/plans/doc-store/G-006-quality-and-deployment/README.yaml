@@ -1,0 +1,25 @@
+step_id: G-006
+name: Deployment, testing and typed implementation quality
+description: Define deployment and quality boundaries for the project. This step covers
+  documented file structure, file watcher service packaging, typed Python implementation,
+  tests, and conservative module contracts.
+concepts:
+- C-020
+- C-003
+- C-001
+depends_on:
+- G-001
+tactical_steps:
+- T-001
+- T-002
+status: draft
+relations:
+- from_concept: C-020
+  to_concept: C-001
+  type: depends_on
+source_labels:
+- '{n1p2}'
+- '{q3s4}'
+- '{k1l2}'
+- '{c3d4}'
+- '{a1b2}'

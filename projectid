@@ -1,0 +1,4 @@
+{
+    "id": "ff997eab-d809-4cb9-b805-9dff4df60c6d",
+    "description": "Хранилище документации: клиент, file watcher systemd service, сервер API; PostgreSQL; нормализация документов в JSON/tree; vectorizer; SQL-like query language on Lark."
+}

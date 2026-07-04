@@ -1,0 +1,13 @@
+step_id: G-001
+name: Planning and agent entry standards
+description: Planning and agent entry standards. Domain-level step; implementation
+  files are intentionally absent at GS level.
+concepts:
+- C-018
+- C-019
+- C-020
+depends_on: []
+tactical_steps:
+- T-001
+- T-002
+status: draft

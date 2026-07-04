@@ -1,0 +1,328 @@
+meta:
+  plan_name: doc-store
+  artifact: machine_spec
+  version: '0.2'
+  status: draft
+  source_spec: source_spec.md
+concepts:
+- concept_id: C-001
+  name: DocStoreSystem
+  definition: Documentation storage service that accepts files and raw texts, normalizes
+    them, stores canonical document trees, vectorizes searchable units, and exposes
+    structured retrieval.
+  properties:
+  - Runtime composition is defined by ClientLibrary, FileWatcherService, and ServerAPI.
+  - PostgreSQL is the canonical persistent database for canonical document data.
+  - Provider-specific model names are outside product requirements unless approved
+    by provider integration.
+  source_labels:
+  - '{a1b2}'
+  - '{c3d4}'
+  - '{e5f6}'
+  - '{v7w8}'
+- concept_id: C-002
+  name: ClientLibrary
+  definition: Reusable API client that hides HTTP details and provides document upload,
+    ingestion-status, and query operations.
+  properties:
+  - Provides raw text upload.
+  - Provides file upload.
+  - Provides ingestion status checks.
+  - Provides query request submission.
+  - Used by FileWatcherService and future external tools instead of duplicated API
+    request logic.
+  source_labels:
+  - '{g7h8}'
+  - '{i9j0}'
+- concept_id: C-003
+  name: FileWatcherService
+  definition: Systemd-oriented service that reads configuration, discovers acceptable
+    files, and submits them through ClientLibrary.
+  properties:
+  - Reads watched directories, recursion mode, known extensions, server URL, and authentication
+    from configuration.
+  - Collects files from configured directories.
+  - Filters collected files by known extensions before upload.
+  - Skips unsupported files with diagnostics.
+  source_labels:
+  - '{k1l2}'
+  - '{m3n4}'
+  - '{o5p6}'
+- concept_id: C-004
+  name: ServerAPI
+  definition: Server boundary that accepts client uploads and exposes ingestion, document
+    retrieval, and query operations.
+  properties:
+  - Accepts raw text uploads.
+  - Accepts file uploads.
+  - Routes accepted inputs into ingestion and query workflows.
+  - Returns rows and diagnostics rather than internal errors for query execution.
+  source_labels:
+  - '{q7r8}'
+  - '{b3d4}'
+- concept_id: C-005
+  name: KnownExtensionRegistry
+  definition: Registry that determines which file extensions are supported and selects
+    the correct extension-specific filter.
+  properties:
+  - Unsupported extensions are rejected before opaque ingestion.
+  - Known extensions are used by FileWatcherService and FilterPipeline.
+  source_labels:
+  - '{s9t0}'
+  - '{o5p6}'
+- concept_id: C-006
+  name: FilterPipeline
+  definition: Ingestion pipeline stage that applies extension-specific filters and
+    produces normalized content.
+  properties:
+  - Selects filters through KnownExtensionRegistry.
+  - Reports filter failures with diagnostics.
+  - Prevents failed ingestion from corrupting already stored canonical data.
+  source_labels:
+  - '{s9t0}'
+  - '{u1v2}'
+  - '{w3x4}'
+- concept_id: C-007
+  name: UnifiedJsonObject
+  definition: Unified JSON representation produced by filters from source input for
+    canonical tree construction.
+  properties:
+  - Contains source metadata.
+  - Contains extracted textual content suitable for canonical tree construction.
+  source_labels:
+  - '{u1v2}'
+- concept_id: C-008
+  name: CanonicalDocumentTree
+  definition: Canonical hierarchy built from normalized content using Project, Chapter,
+    Paragraph, and Sentence entities.
+  properties:
+  - Hierarchy order is Project -> Chapter -> Paragraph -> Sentence.
+  - Stored in PostgreSQL with query-relevant metadata.
+  source_labels:
+  - '{y5z6}'
+  - '{j5k6}'
+- concept_id: C-009
+  name: ProjectEntity
+  definition: Top-level canonical entity representing a book, documentation set, manual,
+    or imported collection.
+  properties:
+  - Owns ordered ChapterEntity children.
+  - Represents a large logical documentation block.
+  source_labels:
+  - '{b7c8}'
+- concept_id: C-010
+  name: ChapterEntity
+  definition: Canonical entity that belongs to exactly one ProjectEntity and owns
+    ordered ParagraphEntity children.
+  properties:
+  - Preserves order inside its ProjectEntity.
+  - Owns ordered ParagraphEntity children.
+  source_labels:
+  - '{d9e0}'
+- concept_id: C-011
+  name: ParagraphEntity
+  definition: Canonical entity that belongs to exactly one ChapterEntity and carries
+    paragraph level, title, body, and vectorization source text.
+  properties:
+  - Preserves order inside its ChapterEntity.
+  - Has level:int.
+  - Has title.
+  - Has body.
+  - Is the primary input unit for vectorization.
+  source_labels:
+  - '{f1g2}'
+  - '{r3s4}'
+- concept_id: C-012
+  name: SentenceEntity
+  definition: Canonical entity that belongs to exactly one ParagraphEntity and records
+    sentence text language.
+  properties:
+  - Preserves order inside its ParagraphEntity.
+  - Has language.
+  source_labels:
+  - '{h3i4}'
+- concept_id: C-013
+  name: PostgreSQLStorage
+  definition: Canonical persistent storage for source records, ingestion jobs, canonical
+    entities, vectorization jobs, vectors, and query metadata.
+  properties:
+  - Stores source records.
+  - Stores ingestion jobs.
+  - Stores Projects, Chapters, Paragraphs, and Sentences.
+  - Stores vectorization jobs and vector records.
+  - Schema evolution is managed through migrations.
+  source_labels:
+  - '{e5f6}'
+  - '{j5k6}'
+  - '{n9o0}'
+- concept_id: C-014
+  name: SourceTraceability
+  definition: Invariant that every canonical node remains traceable to its source
+    record and ingestion job.
+  properties:
+  - Applies to every canonical node.
+  - Connects canonical data back to source records.
+  - Connects canonical data back to ingestion jobs.
+  source_labels:
+  - '{l7m8}'
+- concept_id: C-015
+  name: VectorizationWorker
+  definition: Asynchronous worker that creates vectors for ParagraphEntity instances
+    after ingestion.
+  properties:
+  - Runs asynchronously from ingestion.
+  - Stores provider/model identifier.
+  - Stores vector dimensions.
+  - Stores vectorization status.
+  - Stores ParagraphEntity reference.
+  source_labels:
+  - '{p1q2}'
+  - '{r3s4}'
+- concept_id: C-016
+  name: SemanticSlidingWindow
+  definition: Configurable semantic splitting strategy for oversized paragraphs before
+    vectorization.
+  properties:
+  - Splits oversized paragraphs into ordered semantic blocks.
+  - Uses configurable overlap.
+  - Triggered by embedding model or retrieval policy limits.
+  source_labels:
+  - '{t5u6}'
+- concept_id: C-017
+  name: QueryLanguage
+  definition: SQL-like Lark-parsed query language executed over canonical entities
+    and PostgreSQL metadata.
+  properties:
+  - Supports SELECT.
+  - Supports FROM.
+  - Supports WHERE.
+  - Supports comparison operators.
+  - Supports AND and OR.
+  - Supports LIMIT.
+  - Returns rows and diagnostics.
+  source_labels:
+  - '{x9y0}'
+  - '{z1a2}'
+  - '{b3d4}'
+- concept_id: C-018
+  name: PlanningCascade
+  definition: Strict planning cascade from source_spec through machine spec, global
+    steps, tactical steps, and atomic steps.
+  properties:
+  - Lower-level artifacts are derived from upper-level artifacts.
+  - Traceability is preserved through stable labels and concept identifiers.
+  source_labels:
+  - '{e5g6}'
+  - '{h7j8}'
+- concept_id: C-019
+  name: AgentPromptPolicy
+  definition: Policy requiring Claude and Codex entry prompts to load standards, plan
+    artifacts, and file structure before implementation.
+  properties:
+  - Prompts read standards before implementation.
+  - Prompts read canonical plan structure.
+  - Prompts read HRS/source_spec and machine spec.
+  - Prompts read global and tactical plan files.
+  - Prompts read file structure.
+  source_labels:
+  - '{k9m0}'
+  - '{v7w8}'
+- concept_id: C-020
+  name: ProjectFileStructure
+  definition: Documented project layout separating runtime parts, storage, migrations,
+    deployment units, tests, standards, and plans.
+  properties:
+  - Separates client, file watcher, server API, core, database, filters, ingestion,
+    query language, and vectorization.
+  - Separates migrations, systemd units, tests, standards, and plans.
+  - Implementation uses typed Python, explicit modules, tests, and conservative contracts.
+  source_labels:
+  - '{n1p2}'
+  - '{q3s4}'
+relations:
+- from_concept: C-003
+  to_concept: C-002
+  type: uses
+- from_concept: C-002
+  to_concept: C-004
+  type: uses
+- from_concept: C-004
+  to_concept: C-006
+  type: uses
+- from_concept: C-006
+  to_concept: C-005
+  type: uses
+- from_concept: C-006
+  to_concept: C-007
+  type: produces
+- from_concept: C-007
+  to_concept: C-008
+  type: produces
+- from_concept: C-009
+  to_concept: C-010
+  type: owns
+- from_concept: C-010
+  to_concept: C-011
+  type: owns
+- from_concept: C-011
+  to_concept: C-012
+  type: owns
+- from_concept: C-013
+  to_concept: C-008
+  type: owns
+- from_concept: C-014
+  to_concept: C-008
+  type: depends_on
+- from_concept: C-015
+  to_concept: C-011
+  type: consumes
+- from_concept: C-015
+  to_concept: C-016
+  type: uses
+- from_concept: C-017
+  to_concept: C-013
+  type: uses
+- from_concept: C-017
+  to_concept: C-008
+  type: uses
+- from_concept: C-019
+  to_concept: C-018
+  type: uses
+- from_concept: C-020
+  to_concept: C-001
+  type: depends_on
+coverage:
+  status: source_labels_projected
+  binding_labels:
+  - '{a1b2}'
+  - '{c3d4}'
+  - '{e5f6}'
+  - '{g7h8}'
+  - '{i9j0}'
+  - '{k1l2}'
+  - '{m3n4}'
+  - '{o5p6}'
+  - '{q7r8}'
+  - '{s9t0}'
+  - '{u1v2}'
+  - '{w3x4}'
+  - '{y5z6}'
+  - '{b7c8}'
+  - '{d9e0}'
+  - '{f1g2}'
+  - '{h3i4}'
+  - '{j5k6}'
+  - '{l7m8}'
+  - '{n9o0}'
+  - '{p1q2}'
+  - '{r3s4}'
+  - '{t5u6}'
+  - '{v7w8}'
+  - '{x9y0}'
+  - '{z1a2}'
+  - '{b3d4}'
+  - '{e5g6}'
+  - '{h7j8}'
+  - '{k9m0}'
+  - '{n1p2}'
+  - '{q3s4}'
