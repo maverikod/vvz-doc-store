@@ -71,6 +71,7 @@ class DocumentWriteRequest(PublicModel):
     source_version_id: str
     raw_text: str | None = None
     transferred_file: Mapping[str, Any] | None = None
+    chunking_strategy: str | None = None
 
     def __post_init__(self) -> None:
         if not self.document_id.strip() or not self.source_version_id.strip():
@@ -79,11 +80,22 @@ class DocumentWriteRequest(PublicModel):
             raise ValueError("raw_text and transferred_file are mutually exclusive")
         if self.raw_text is not None and not self.raw_text:
             raise ValueError("raw_text must be non-empty")
+        if self.chunking_strategy is not None and self.chunking_strategy not in {
+            "paragraph",
+            "sentence",
+            "semantic",
+        }:
+            raise ValueError("chunking_strategy must be paragraph, sentence, or semantic")
 
 
 @dataclass(frozen=True, kw_only=True)
 class DocumentCreateRequest(DocumentWriteRequest):
     """Request payload for ``document_create``."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if self.chunking_strategy is None:
+            raise ValueError("chunking_strategy is required")
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -101,9 +113,68 @@ class DocumentWriteResult(PublicModel):
     source_version_id: str
     details: Mapping[str, Any] | None = None
 
+    @classmethod
+    def from_payload(cls, payload: Payload) -> Self:
+        values = dict(payload)
+        known = {model_field.name for model_field in fields(cls)}
+        extras = {key: values.pop(key) for key in sorted(set(values) - known)}
+        if extras:
+            details = dict(values.get("details") or {})
+            details.update(extras)
+            values["details"] = details
+        return _read(cls, values)
+
 
 DocumentCreateResult = DocumentWriteResult
 DocumentUpdateResult = DocumentWriteResult
+
+
+@dataclass(frozen=True, kw_only=True)
+class DocumentChunkRequest(PublicModel):
+    document_id: str
+    chunking_strategy: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.document_id.strip():
+            raise ValueError("document_id must be non-empty")
+        if self.chunking_strategy is not None and self.chunking_strategy not in {
+            "paragraph",
+            "sentence",
+            "semantic",
+        }:
+            raise ValueError("chunking_strategy must be paragraph, sentence, or semantic")
+
+
+DocumentChunkResult = DocumentWriteResult
+
+
+@dataclass(frozen=True, kw_only=True)
+class DocumentRebindRequest(PublicModel):
+    document_id: str
+    project: str | None = None
+    document_properties: Mapping[str, Any] | None = None
+    chunk_properties: Mapping[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        if not self.document_id.strip():
+            raise ValueError("document_id must be non-empty")
+        if self.project is not None and not self.project.strip():
+            raise ValueError("project must be non-empty when supplied")
+        if not any(
+            value is not None
+            for value in (self.project, self.document_properties, self.chunk_properties)
+        ):
+            raise ValueError("at least one rebind field is required")
+
+
+@dataclass(frozen=True, kw_only=True)
+class DocumentRebindResult(PublicModel):
+    outcome: str
+    document_id: str
+    project: str | None = None
+    document_properties: Mapping[str, Any] | None = None
+    chunk_properties: Mapping[str, Any] | None = None
+    updated: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -142,6 +213,17 @@ class ServerError(PublicModel):
     message: str
     details: Mapping[str, Any] | None = None
     type: str | None = None
+
+    @classmethod
+    def from_payload(cls, payload: Payload) -> Self:
+        values = dict(payload)
+        known = {model_field.name for model_field in fields(cls)}
+        extras = {key: values.pop(key) for key in sorted(set(values) - known)}
+        if extras:
+            details = dict(values.get("details") or {})
+            details.update(extras)
+            values["details"] = details
+        return _read(cls, values)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -251,6 +333,10 @@ class SearchResult(PublicModel):
     @classmethod
     def from_payload(cls, payload: Payload) -> Self:
         values = dict(payload)
+        nested = values.pop("data", None)
+        if isinstance(nested, Mapping):
+            values = {**dict(nested), **values}
+        values.setdefault("status", "success")
         values["results"] = tuple(
             RankedSearchHit.from_payload(item) for item in values.get("results", ())
         )
@@ -284,8 +370,9 @@ class OperationState(PublicModel):
 
 __all__ = [
     "ChapterGetRequest", "ChapterGetResult", "ChunkQuery", "DocumentCreateRequest",
-    "DocumentCreateResult", "DocumentDeleteRequest", "DocumentDeleteResult",
-    "DocumentGetRequest", "DocumentGetResult", "DocumentUpdateRequest", "DocumentUpdateResult",
+    "DocumentCreateResult", "DocumentChunkRequest", "DocumentChunkResult",
+    "DocumentDeleteRequest", "DocumentDeleteResult", "DocumentGetRequest", "DocumentGetResult",
+    "DocumentRebindRequest", "DocumentRebindResult", "DocumentUpdateRequest", "DocumentUpdateResult",
     "DocumentWriteRequest", "DocumentWriteResult", "OperationState", "ParagraphGetRequest",
     "ParagraphGetResult", "ProcessingStatusRequest", "ProcessingStatusResult", "RankedSearchHit",
     "RetrievalRequest", "RetrievalResult", "SearchResult", "ServerError",

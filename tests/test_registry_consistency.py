@@ -96,6 +96,7 @@ def _spawn_execution_worker(result: Any) -> None:
             command_class().execute(
                 document_id="550e8400-e29b-41d4-a716-446655440000",
                 source_version_id="source-v1",
+                chunking_strategy="paragraph",
                 raw_text="Registry proof",
             )
         )
@@ -255,6 +256,7 @@ def test_representative_queued_command_executes_inside_spawn_worker() -> None:
             "payload": {
                 "document_id": "550e8400-e29b-41d4-a716-446655440000",
                 "source_version_id": "source-v1",
+                "chunking_strategy": "paragraph",
                 "raw_text": "Registry proof",
             },
         },

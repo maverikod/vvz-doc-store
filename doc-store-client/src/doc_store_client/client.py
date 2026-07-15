@@ -10,12 +10,16 @@ from chunk_metadata_adapter import ChunkQuery
 from .models import (
     ChapterGetRequest,
     ChapterGetResult,
+    DocumentChunkRequest,
+    DocumentChunkResult,
     DocumentCreateRequest,
     DocumentCreateResult,
     DocumentDeleteRequest,
     DocumentDeleteResult,
     DocumentGetRequest,
     DocumentGetResult,
+    DocumentRebindRequest,
+    DocumentRebindResult,
     DocumentUpdateRequest,
     DocumentUpdateResult,
     ParagraphGetRequest,
@@ -43,6 +47,8 @@ DOC_STORE_COMMANDS: tuple[str, ...] = (
     "paragraph_get",
     "document_create",
     "document_update",
+    "document_chunk",
+    "document_rebind",
     "processing_status",
     "document_delete",
     "chunk_query_search",
@@ -201,6 +207,16 @@ class DocStoreClient:
     ) -> Any:
         return await self.call("document_update", params, **kwargs)
 
+    async def document_chunk(
+        self, params: Mapping[str, Any] | None = None, **kwargs: Any
+    ) -> Any:
+        return await self.call("document_chunk", params, **kwargs)
+
+    async def document_rebind(
+        self, params: Mapping[str, Any] | None = None, **kwargs: Any
+    ) -> Any:
+        return await self.call("document_rebind", params, **kwargs)
+
     async def processing_status(
         self, params: Mapping[str, Any] | None = None, **kwargs: Any
     ) -> Any:
@@ -308,6 +324,14 @@ class DocStoreClient:
         params = await self._write_params(request, source_path=source_path, filename=filename)
         return await self._execute("document_update", params, DocumentUpdateResult)
 
+    async def chunk_document(self, request: DocumentChunkRequest) -> DocumentChunkResult:
+        return await self._execute("document_chunk", request.to_params(), DocumentChunkResult)
+
+    async def rebind_document(self, request: DocumentRebindRequest) -> DocumentRebindResult:
+        return await self._execute(
+            "document_rebind", request.to_params(), DocumentRebindResult
+        )
+
     async def get_processing_status(
         self, request: ProcessingStatusRequest
     ) -> ProcessingStatusResult:
@@ -365,11 +389,10 @@ class DocStoreClient:
                 raise ValueError("raw_text, transferred_file, or source_path is required")
             return request.to_params()
         transfer_ref = await self.upload_file(source_path, filename=filename)
-        return {
-            "document_id": request.document_id,
-            "source_version_id": request.source_version_id,
-            "transferred_file": transfer_ref,
-        }
+        params = request.to_params()
+        params.pop("raw_text", None)
+        params["transferred_file"] = transfer_ref
+        return params
 
     async def _execute(self, command: str, params: Mapping[str, Any], result_type: type[T]) -> T:
         response = await self._adapter_client.execute_command_unified(command, dict(params))
@@ -496,7 +519,7 @@ def _completed_transfer_reference(receipt: Any) -> Mapping[str, Any]:
 
 def _dump_query(query: ChunkQuery) -> Mapping[str, Any]:
     if hasattr(query, "model_dump"):
-        return query.model_dump(mode="python", exclude_none=True)
+        return query.model_dump(mode="python", exclude_none=True, exclude_unset=True)
     if is_dataclass(query):
         return {
             key: value

@@ -10,6 +10,7 @@ import pytest
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from doc_store_server.commands.ingestion_commands import (
+    DocumentChunkCommand,
     DocumentCreateCommand,
     DocumentUpdateCommand,
 )
@@ -18,6 +19,10 @@ from doc_store_server.commands.ingestion_commands import (
 DOCUMENT_ID = "550e8400-e29b-41d4-a716-446655440000"
 SOURCE_VERSION_ID = "source-v1"
 COMMANDS = (DocumentCreateCommand, DocumentUpdateCommand)
+INGESTION_PARAMS = {
+    DocumentCreateCommand: {"chunking_strategy": "paragraph"},
+    DocumentUpdateCommand: {},
+}
 
 
 class RecordingBoundary:
@@ -55,6 +60,7 @@ def test_command_delegates_exact_identity_and_source_to_g006(
             context={"ingestion_boundary": boundary},
             document_id=DOCUMENT_ID,
             source_version_id=SOURCE_VERSION_ID,
+            **INGESTION_PARAMS[command_class],
             **expected_source,
         )
     )
@@ -67,6 +73,7 @@ def test_command_delegates_exact_identity_and_source_to_g006(
         {
             "document_id": DOCUMENT_ID,
             "source_version_id": SOURCE_VERSION_ID,
+            **INGESTION_PARAMS[command_class],
             source: expected_source[source],
             "operation_id": result.data["operation_id"],
             "command": command_class.name,
@@ -90,6 +97,7 @@ def test_command_rejects_raw_text_and_transferred_file_xor_violations(
             context={"ingestion_boundary": RecordingBoundary()},
             document_id=DOCUMENT_ID,
             source_version_id=SOURCE_VERSION_ID,
+            **INGESTION_PARAMS[command_class],
             **params,
         )
     )
@@ -109,6 +117,7 @@ def test_command_returns_structured_validation_errors_without_delegating(
             context={"ingestion_boundary": boundary},
             document_id="not-a-uuid",
             source_version_id="source-v1",
+            **INGESTION_PARAMS[command_class],
             raw_text="text",
             unexpected="field",
         )
@@ -133,6 +142,11 @@ def test_command_falls_back_to_installed_runtime_boundary(
         command_class().execute(
             document_id=DOCUMENT_ID,
             source_version_id=SOURCE_VERSION_ID,
+            **(
+                INGESTION_PARAMS[command_class]
+                if command_class is DocumentCreateCommand
+                else {"chunking_strategy": "paragraph"}
+            ),
             raw_text="text",
         )
     )
@@ -154,6 +168,7 @@ def test_command_uses_installed_runtime_boundary_when_context_omits_boundary(
             command_class().execute(
                 document_id=DOCUMENT_ID,
                 source_version_id=SOURCE_VERSION_ID,
+                **INGESTION_PARAMS[command_class],
                 raw_text="text",
             )
         )
@@ -186,6 +201,7 @@ def test_command_maps_boundary_results_to_stable_public_statuses(
             context={"ingestion_boundary": RecordingBoundary({"status": boundary_status})},
             document_id=DOCUMENT_ID,
             source_version_id=SOURCE_VERSION_ID,
+            **INGESTION_PARAMS[command_class],
             raw_text="text",
         )
     )
@@ -207,6 +223,7 @@ def test_command_maps_orchestration_exception_to_structured_failed_result(
             context={"ingestion_boundary": failing_boundary},
             document_id=DOCUMENT_ID,
             source_version_id=SOURCE_VERSION_ID,
+            **INGESTION_PARAMS[command_class],
             raw_text="text",
         )
     )
@@ -231,8 +248,17 @@ def test_command_schema_and_metadata_are_complete_and_boundary_scoped(
 
     assert set(schema) == {"type", "properties", "required", "additionalProperties", "x-oneOf", "x-use-queue"}
     assert schema["type"] == "object"
-    assert set(schema["properties"]) == {"document_id", "source_version_id", "raw_text", "transferred_file"}
-    assert schema["required"] == ["document_id", "source_version_id"]
+    assert set(schema["properties"]) == {
+        "document_id",
+        "source_version_id",
+        "raw_text",
+        "transferred_file",
+        "chunking_strategy",
+    }
+    expected_required = ["document_id", "source_version_id"]
+    if command_class is DocumentCreateCommand:
+        expected_required.append("chunking_strategy")
+    assert schema["required"] == expected_required
     assert schema["additionalProperties"] is False
     assert schema["x-oneOf"] == ["raw_text", "transferred_file"]
     assert schema["x-use-queue"] is True
@@ -250,3 +276,55 @@ def test_command_schema_and_metadata_are_complete_and_boundary_scoped(
     for forbidden_stage in ("transfer", "queue", "WebSocket", "chunking", "embedding", "persistence"):
         assert forbidden_stage in description
     assert "G-006" in description
+
+
+def test_document_create_requires_chunking_strategy_before_delegating() -> None:
+    boundary = RecordingBoundary()
+
+    result = asyncio.run(
+        DocumentCreateCommand().execute(
+            context={"ingestion_boundary": boundary},
+            document_id=DOCUMENT_ID,
+            source_version_id=SOURCE_VERSION_ID,
+            raw_text="source text",
+        )
+    )
+
+    assert isinstance(result, ErrorResult)
+    assert result.details == {"missing_parameters": ["chunking_strategy"]}
+    assert boundary.calls == []
+
+
+def test_document_chunk_delegates_document_id_and_optional_strategy() -> None:
+    boundary = RecordingBoundary({"status": "committed", "source_version_id": "source-v2"})
+
+    result = asyncio.run(
+        DocumentChunkCommand().execute(
+            context={"ingestion_boundary": boundary},
+            document_id=DOCUMENT_ID,
+            chunking_strategy="sentence",
+        )
+    )
+
+    assert isinstance(result, SuccessResult)
+    assert result.data["status"] == "completed"
+    assert result.data["source_version_id"] == "source-v2"
+    assert boundary.calls == [
+        {
+            "document_id": DOCUMENT_ID,
+            "chunking_strategy": "sentence",
+            "source_version_id": "stored",
+            "operation_id": result.data["operation_id"],
+            "command": "document_chunk",
+        }
+    ]
+
+
+def test_document_chunk_schema_uses_stored_strategy_by_default() -> None:
+    schema = DocumentChunkCommand.get_schema()
+    metadata = DocumentChunkCommand.metadata()
+
+    assert set(schema["properties"]) == {"document_id", "chunking_strategy"}
+    assert schema["required"] == ["document_id"]
+    assert "x-oneOf" not in schema
+    assert set(metadata["parameters"]) == {"document_id", "chunking_strategy"}

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 from dataclasses import replace
 from typing import Any
 from unittest.mock import create_autospec
@@ -111,7 +112,16 @@ def test_query_text_uses_embedding_client_contract_and_validates_provider_model_
 
 def test_semantic_sql_selects_only_active_compatible_vectors_and_binds_typed_predicates() -> None:
     session = FakeAsyncSession([])
-    _execute(_plan(project="doc-store", tags=["semantic"], quality_score="0.8"), _client(_response()), session)
+    _execute(
+        _plan(
+            project="doc-store",
+            tags=["semantic"],
+            quality_score="0.8",
+            block_meta={"scope": "client"},
+        ),
+        _client(_response()),
+        session,
+    )
 
     statement, params = session.calls[0]
     sql = str(statement)
@@ -119,11 +129,13 @@ def test_semantic_sql_selects_only_active_compatible_vectors_and_binds_typed_pre
     assert "sce.model = :embedding_model" in sql
     assert "sce.dimension = :embedding_dimension" in sql
     assert "sc.deleted_at IS NULL" in sql
-    assert "sc.block_meta ->> 'project' = :p0" in sql
-    assert "sc.block_meta ->> 'quality_score' = :p1" in sql
-    assert "sc.block_meta -> 'tags' @> CAST(:p2 AS jsonb)" in sql
-    assert params["p0"] == "doc-store"
-    assert params["p1"] == "0.8"
+    assert "sc.block_meta @> CAST(:p0 AS jsonb)" in sql
+    assert "sc.block_meta ->> 'project' = :p1" in sql
+    assert "sc.block_meta ->> 'quality_score' = :p2" in sql
+    assert "sc.block_meta -> 'tags' @> CAST(:p3 AS jsonb)" in sql
+    assert json.loads(params["p0"]) == {"scope": "client"}
+    assert params["p1"] == "doc-store"
+    assert params["p2"] == "0.8"
 
 
 def test_pgvector_ranking_pagination_and_tie_order_are_deterministic() -> None:

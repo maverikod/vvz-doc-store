@@ -141,9 +141,14 @@ def _compile_predicates(values: Mapping[str, Any], provided: frozenset[str]) -> 
             continue
         if field not in _ORDER_FIELDS:
             raise QueryPredicateError(f"field is not filterable: {field}")
-        if isinstance(value, Mapping):
+        if field == "block_meta":
+            if not isinstance(value, Mapping):
+                raise QueryPredicateError("block_meta requires an object")
+            operator = "@>"
+            bound = dict(value)
+        elif isinstance(value, Mapping):
             raise QueryPredicateError(f"boolean/operator AST is not accepted for {field}")
-        if field in {"tags", "links"}:
+        elif field in {"tags", "links"}:
             if not isinstance(value, (list, tuple)) or not all(isinstance(item, str) for item in value):
                 raise QueryPredicateError(f"{field} requires a sequence of strings")
             operator = "@>"

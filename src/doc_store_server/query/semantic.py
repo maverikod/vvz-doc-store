@@ -44,6 +44,7 @@ _PREDICATE_COLUMNS = {
     "chunk_type": "sc.chunk_type",
     "score": "sc.score",
     "search_weight": "sc.search_weight",
+    "block_meta": "sc.block_meta",
     "project": "sc.block_meta ->> 'project'",
     "source": "sc.block_meta ->> 'source'",
     "source_id": "sc.document_id",

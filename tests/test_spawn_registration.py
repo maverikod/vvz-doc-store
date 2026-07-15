@@ -87,6 +87,7 @@ def _spawn_execution_worker(result: Any) -> None:
         payload = {
             "document_id": "550e8400-e29b-41d4-a716-446655440000",
             "source_version_id": "source-v1",
+            "chunking_strategy": "paragraph",
             "raw_text": "Spawn proof",
         }
         typed_result = asyncio.run(command.execute(**payload))
@@ -153,10 +154,11 @@ def test_representative_queued_command_executes_inside_fresh_spawn_worker() -> N
     assert payload["typed_result"] == {
         "ok": True,
         "command": payload["command_name"],
-        "payload": {
-            "document_id": "550e8400-e29b-41d4-a716-446655440000",
-            "source_version_id": "source-v1",
-            "raw_text": "Spawn proof",
-        },
+            "payload": {
+                "document_id": "550e8400-e29b-41d4-a716-446655440000",
+                "source_version_id": "source-v1",
+                "chunking_strategy": "paragraph",
+                "raw_text": "Spawn proof",
+            },
         "worker_registry_id": payload["worker_registry_id"],
     }

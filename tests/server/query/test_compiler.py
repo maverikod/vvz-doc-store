@@ -86,6 +86,15 @@ def test_structured_filter_only_payload_is_exact() -> None:
     )
 
 
+def test_block_meta_object_filter_compiles_to_jsonb_containment() -> None:
+    plan = compile_query({"block_meta": {"scope": "client-upload"}, "max_results": 5})
+
+    assert plan.mode is ExecutionMode.STRUCTURED
+    assert plan.predicates.predicates == (
+        compiler.BoundPredicate("block_meta", "@>", {"scope": "client-upload"}, "p0"),
+    )
+
+
 def test_full_text_only_payload_is_exact() -> None:
     plan = compile_query(
         {
@@ -153,4 +162,3 @@ def test_adapter_ast_is_request_input_only_and_compiler_is_io_free() -> None:
     assert "Session" not in source
     assert not any(name.endswith(("Repository", "Storage", "Response")) for name in vars(compiler))
     assert not any(callable(value) and name in {"execute", "retrieve", "fetch"} for name, value in vars(compiler).items())
-

@@ -13,7 +13,10 @@ from mcp_proxy_adapter.commands.hooks import (
 
 from doc_store_server.commands.chunk_query_search_command import ChunkQuerySearchCommand
 from doc_store_server.commands.document_delete_command import DocumentDeleteCommand
+from doc_store_server.commands.document_rebind_command import DocumentRebindCommand
+from doc_store_server.commands.health_command import DocStoreHealthCommand
 from doc_store_server.commands.ingestion_commands import (
+    DocumentChunkCommand,
     DocumentCreateCommand,
     DocumentUpdateCommand,
 )
@@ -116,6 +119,14 @@ class _DocStoreCommand(Command):
 
 DOC_STORE_COMMAND_MANIFEST: Final[tuple[CommandManifestEntry, ...]] = (
     CommandManifestEntry(
+        "health",
+        DocStoreHealthCommand,
+        "doc_store_server.commands.health_command",
+        "sync",
+        "DocStoreHealthCommand.metadata",
+        "DocStoreHealthCommand.get_schema",
+    ),
+    CommandManifestEntry(
         "document_get",
         DocumentGetCommand,
         "doc_store_server.commands.retrieval_commands",
@@ -156,6 +167,22 @@ DOC_STORE_COMMAND_MANIFEST: Final[tuple[CommandManifestEntry, ...]] = (
         "DocumentUpdateCommand.get_schema",
     ),
     CommandManifestEntry(
+        "document_chunk",
+        DocumentChunkCommand,
+        "doc_store_server.commands.ingestion_commands",
+        "queue",
+        "DocumentChunkCommand.metadata",
+        "DocumentChunkCommand.get_schema",
+    ),
+    CommandManifestEntry(
+        "document_rebind",
+        DocumentRebindCommand,
+        "doc_store_server.commands.document_rebind_command",
+        "sync",
+        "DocumentRebindCommand.metadata",
+        "DocumentRebindCommand.get_schema",
+    ),
+    CommandManifestEntry(
         "processing_status",
         ProcessingStatusCommand,
         "doc_store_server.commands.processing_status_command",
@@ -182,8 +209,10 @@ DOC_STORE_COMMAND_MANIFEST: Final[tuple[CommandManifestEntry, ...]] = (
 )
 
 DOC_STORE_COMMAND_MODULE_MANIFEST: Final[tuple[str, ...]] = (
+    "doc_store_server.commands.health_command",
     "doc_store_server.commands.retrieval_commands",
     "doc_store_server.commands.ingestion_commands",
+    "doc_store_server.commands.document_rebind_command",
     "doc_store_server.commands.processing_status_command",
     "doc_store_server.commands.document_delete_command",
     "doc_store_server.commands.chunk_query_search_command",
@@ -217,9 +246,12 @@ __all__ = [
     "DOC_STORE_COMMAND_MANIFEST",
     "DOC_STORE_COMMAND_MODULE_MANIFEST",
     "DOC_STORE_QUEUED_COMMAND_MODULES",
+    "DocStoreHealthCommand",
+    "DocumentChunkCommand",
     "DocumentCreateCommand",
     "DocumentDeleteCommand",
     "DocumentGetCommand",
+    "DocumentRebindCommand",
     "DocumentUpdateCommand",
     "ChapterGetCommand",
     "ParagraphGetCommand",

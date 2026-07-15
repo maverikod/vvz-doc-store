@@ -55,6 +55,7 @@ class ChunkQuerySearchCommand(Command):
     author: ClassVar[str] = "Vasiliy Zdanovskiy"
     email: ClassVar[str] = "vasilyvz@gmail.com"
     use_queue: ClassVar[bool] = False
+    search_orchestrator: ClassVar[SearchOrchestrator | Any | None] = None
 
     @classmethod
     def get_schema(cls) -> dict[str, Any]:
@@ -149,6 +150,12 @@ class ChunkQuerySearchCommand(Command):
 
         runtime_context = dict(context or {})
         orchestrator: SearchOrchestrator | Any = runtime_context.pop("search_orchestrator", None)
+        if orchestrator is None:
+            orchestrator = self.search_orchestrator
+        if orchestrator is None:
+            from doc_store_server.query.runtime_boundary import installed_search_orchestrator
+
+            orchestrator = installed_search_orchestrator()
         if orchestrator is None:
             return ErrorResult(
                 "ORCHESTRATOR_UNAVAILABLE: configure the G-007 search_orchestrator",

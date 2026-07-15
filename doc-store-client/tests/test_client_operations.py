@@ -14,12 +14,16 @@ from doc_store_client.client import DOC_STORE_COMMANDS, DocStoreClient, DocStore
 from doc_store_client.models import (
     ChapterGetRequest,
     ChapterGetResult,
+    DocumentChunkRequest,
+    DocumentChunkResult,
     DocumentCreateRequest,
     DocumentCreateResult,
     DocumentDeleteRequest,
     DocumentDeleteResult,
     DocumentGetRequest,
     DocumentGetResult,
+    DocumentRebindRequest,
+    DocumentRebindResult,
     DocumentUpdateRequest,
     DocumentUpdateResult,
     ParagraphGetRequest,
@@ -92,7 +96,10 @@ async def _test_document_create_and_update_use_exact_commands_and_typed_results(
 
     created = await client.create_document(
         DocumentCreateRequest(
-            document_id="doc-001", source_version_id="version-001", raw_text="hello"
+            document_id="doc-001",
+            source_version_id="version-001",
+            raw_text="hello",
+            chunking_strategy="paragraph",
         )
     )
     updated = await client.update_document(
@@ -110,6 +117,7 @@ async def _test_document_create_and_update_use_exact_commands_and_typed_results(
                 "document_id": "doc-001",
                 "source_version_id": "version-001",
                 "raw_text": "hello",
+                "chunking_strategy": "paragraph",
             },
         ),
         (
@@ -121,6 +129,28 @@ async def _test_document_create_and_update_use_exact_commands_and_typed_results(
             },
         ),
     ]
+
+
+def test_document_write_result_preserves_runtime_extra_fields_in_details() -> None:
+    result = DocumentCreateResult.from_payload(
+        {
+            "status": "completed",
+            "operation_id": "op-001",
+            "document_id": "doc-001",
+            "source_version_id": "version-001",
+            "chunk_ids": ["chunk-001"],
+            "paragraph_ids": ["paragraph-001"],
+            "chunking_strategy": "paragraph",
+            "source_version": 1,
+        }
+    )
+
+    assert result.details == {
+        "chunk_ids": ["chunk-001"],
+        "paragraph_ids": ["paragraph-001"],
+        "chunking_strategy": "paragraph",
+        "source_version": 1,
+    }
 
 
 @pytest.mark.parametrize(
@@ -165,6 +195,41 @@ async def _test_document_create_and_update_use_exact_commands_and_typed_results(
             {"document_id": "doc-001", "version_token": "token-001"},
             DocumentDeleteResult,
             {"outcome": "deleted", "document_id": "doc-001"},
+        ),
+        (
+            "chunk_document",
+            DocumentChunkRequest(document_id="doc-001", chunking_strategy="sentence"),
+            "document_chunk",
+            {"document_id": "doc-001", "chunking_strategy": "sentence"},
+            DocumentChunkResult,
+            {
+                "status": "completed",
+                "operation_id": "op-001",
+                "document_id": "doc-001",
+                "source_version_id": "version-001",
+            },
+        ),
+        (
+            "rebind_document",
+            DocumentRebindRequest(
+                document_id="doc-001",
+                project="doc-store",
+                chunk_properties={"scope": "client"},
+            ),
+            "document_rebind",
+            {
+                "document_id": "doc-001",
+                "project": "doc-store",
+                "chunk_properties": {"scope": "client"},
+            },
+            DocumentRebindResult,
+            {
+                "outcome": "rebound",
+                "document_id": "doc-001",
+                "project": "doc-store",
+                "chunk_properties": {"scope": "client"},
+                "updated": {"documents": 1, "semantic_chunks": 2},
+            },
         ),
     ],
 )
@@ -228,10 +293,54 @@ async def _test_search_uses_canonical_query_and_adapter_managed_delivery(queued:
     assert adapter.calls == [
         (
             "chunk_query_search",
-            {"query": query.model_dump(mode="python", exclude_none=True)},
+            {"query": query.model_dump(mode="python", exclude_none=True, exclude_unset=True)},
         )
     ]
     assert adapter.execute_count == 1
+
+
+def test_search_omits_unset_chunk_query_defaults() -> None:
+    asyncio.run(_test_search_omits_unset_chunk_query_defaults())
+
+
+async def _test_search_omits_unset_chunk_query_defaults() -> None:
+    adapter = FakeAdapter()
+    adapter.responses["chunk_query_search"] = {"status": "success", "results": []}
+
+    await DocStoreClient(adapter).search(ChunkQuery(project="doc-store"))
+
+    assert adapter.calls == [("chunk_query_search", {"query": {"project": "doc-store"}})]
+
+
+def test_search_accepts_runtime_nested_data_response() -> None:
+    asyncio.run(_test_search_accepts_runtime_nested_data_response())
+
+
+async def _test_search_accepts_runtime_nested_data_response() -> None:
+    adapter = FakeAdapter()
+    adapter.responses["chunk_query_search"] = {
+        "status": "success",
+        "data": {
+            "results": [
+                {
+                    "chunk_id": "chunk-001",
+                    "chunk": {"text": "runtime body"},
+                    "rank": 1,
+                    "highlights": {"text": ["runtime"]},
+                }
+            ],
+            "total_results": 1,
+            "metadata": {"source": "runtime"},
+        },
+    }
+
+    result = await DocStoreClient(adapter).search(ChunkQuery(search_query="runtime"))
+
+    assert isinstance(result, SearchResult)
+    assert result.status == "success"
+    assert result.results[0].chunk_id == "chunk-001"
+    assert result.results[0].highlights == {"text": ["runtime"]}
+    assert result.metadata == {"source": "runtime"}
 
 
 def test_structured_command_error_becomes_public_error() -> None:
@@ -262,6 +371,18 @@ async def _test_structured_command_error_becomes_public_error() -> None:
     )
 
 
+def test_server_error_preserves_runtime_extra_fields_in_details() -> None:
+    error = ServerError.from_payload(
+        {
+            "code": "SEARCH_EXECUTION_FAILED",
+            "message": "search failed",
+            "data": {"reason": "fixture"},
+        }
+    )
+
+    assert error.details == {"data": {"reason": "fixture"}}
+
+
 def test_file_transfer_is_delegated_before_ingestion() -> None:
     asyncio.run(_test_file_transfer_is_delegated_before_ingestion())
 
@@ -287,7 +408,11 @@ async def _test_file_transfer_is_delegated_before_ingestion() -> None:
     client = DocStoreClient(adapter)
 
     result = await client.create_document(
-        DocumentCreateRequest(document_id="doc-001", source_version_id="version-003"),
+        DocumentCreateRequest(
+            document_id="doc-001",
+            source_version_id="version-003",
+            chunking_strategy="semantic",
+        ),
         source_path="/tmp/manual.pdf",
         filename="manual.pdf",
     )
@@ -310,6 +435,7 @@ async def _test_file_transfer_is_delegated_before_ingestion() -> None:
             {
                 "document_id": "doc-001",
                 "source_version_id": "version-003",
+                "chunking_strategy": "semantic",
                 "transferred_file": {
                     "transfer_id": "transfer-001",
                     "filename": "manual.pdf",
@@ -429,6 +555,8 @@ def test_client_facade_has_no_transport_or_server_implementation() -> None:
     typed_facade_methods = {
         "create_document",
         "update_document",
+        "chunk_document",
+        "rebind_document",
         "get_processing_status",
         "get_document",
         "get_chapter",

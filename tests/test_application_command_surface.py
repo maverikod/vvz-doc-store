@@ -12,7 +12,10 @@ import pytest
 from doc_store_server.commands import registration
 from doc_store_server.commands.chunk_query_search_command import ChunkQuerySearchCommand
 from doc_store_server.commands.document_delete_command import DocumentDeleteCommand
+from doc_store_server.commands.document_rebind_command import DocumentRebindCommand
+from doc_store_server.commands.health_command import DocStoreHealthCommand
 from doc_store_server.commands.ingestion_commands import (
+    DocumentChunkCommand,
     DocumentCreateCommand,
     DocumentUpdateCommand,
 )
@@ -26,11 +29,14 @@ from doc_store_server.commands.retrieval_commands import (
 
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_COMMANDS = {
+    "health": (DocStoreHealthCommand, "sync"),
     "document_get": (DocumentGetCommand, "sync"),
     "chapter_get": (ChapterGetCommand, "sync"),
     "paragraph_get": (ParagraphGetCommand, "sync"),
     "document_create": (DocumentCreateCommand, "queue"),
     "document_update": (DocumentUpdateCommand, "queue"),
+    "document_chunk": (DocumentChunkCommand, "queue"),
+    "document_rebind": (DocumentRebindCommand, "sync"),
     "processing_status": (ProcessingStatusCommand, "sync"),
     "document_delete": (DocumentDeleteCommand, "sync"),
     "chunk_query_search": (ChunkQuerySearchCommand, "sync"),
@@ -112,7 +118,8 @@ def test_manifest_registry_and_live_help_are_one_exact_surface() -> None:
         assert set(schema["required"]) <= set(schema["properties"])
         assert schema["additionalProperties"] is False
         assert metadata["name"] == command.name
-        assert metadata["parameters"]
+        if command.name != "health":
+            assert metadata["parameters"]
         assert metadata["return_value"]
         assert metadata["error_cases"]
 
@@ -197,17 +204,25 @@ class FakeDelete:
         return {"outcome": "deleted", "document_id": document_id, "version_token": version_token}
 
 
+class FakeRebind:
+    def rebind_document(self, **kwargs: Any) -> dict[str, Any]:
+        return {"outcome": "rebound", "document_id": kwargs["document_id"]}
+
+
 @pytest.mark.parametrize(
     ("command_class", "params", "context"),
     [
         (DocumentGetCommand, {"document_id": "550e8400-e29b-41d4-a716-446655440001"}, {"retrieval_boundary": FakeRetrieval()}),
         (ChapterGetCommand, {"chapter_id": "550e8400-e29b-41d4-a716-446655440003"}, {"retrieval_boundary": FakeRetrieval()}),
         (ParagraphGetCommand, {"paragraph_id": "550e8400-e29b-41d4-a716-446655440004"}, {"retrieval_boundary": FakeRetrieval()}),
-        (DocumentCreateCommand, {"document_id": "550e8400-e29b-41d4-a716-446655440001", "source_version_id": "v1", "raw_text": "hello"}, {"ingestion_boundary": lambda **_: {"status": "committed"}}),
+        (DocumentCreateCommand, {"document_id": "550e8400-e29b-41d4-a716-446655440001", "source_version_id": "v1", "chunking_strategy": "paragraph", "raw_text": "hello"}, {"ingestion_boundary": lambda **_: {"status": "committed"}}),
         (DocumentUpdateCommand, {"document_id": "550e8400-e29b-41d4-a716-446655440001", "source_version_id": "v2", "raw_text": "hello"}, {"ingestion_boundary": lambda **_: {"status": "committed"}}),
+        (DocumentChunkCommand, {"document_id": "550e8400-e29b-41d4-a716-446655440001"}, {"ingestion_boundary": lambda **_: {"status": "committed", "source_version_id": "v2"}}),
+        (DocumentRebindCommand, {"document_id": "550e8400-e29b-41d4-a716-446655440001", "project": "doc-store"}, {"document_rebind_boundary": FakeRebind()}),
         (ProcessingStatusCommand, {"operation_id": "op-1"}, {"runtime_status_boundary": FakeStatus()}),
         (DocumentDeleteCommand, {"document_id": "doc-1", "version_token": "v1"}, {"canonical_document_service": FakeDelete()}),
         (ChunkQuerySearchCommand, {"query": {"search_query": "hello"}}, {"search_orchestrator": lambda *_args, **_kwargs: {"status": "success", "data": {"results": []}}}),
+        (DocStoreHealthCommand, {}, {}),
     ],
 )
 def test_every_registered_command_exercises_a_representative_success_path(

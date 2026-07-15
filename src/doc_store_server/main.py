@@ -18,6 +18,8 @@ from mcp_proxy_adapter.core.server_engine import ServerEngineFactory
 from doc_store_server.commands.registration import (
     register_doc_store_commands as register_doc_store_commands,
 )
+from doc_store_server.commands.chunk_query_search_command import ChunkQuerySearchCommand
+from doc_store_server.commands.health_command import DocStoreHealthCommand
 from doc_store_server.commands.ingestion_commands import (
     DocumentCreateCommand,
     DocumentUpdateCommand,
@@ -28,6 +30,7 @@ from doc_store_server.ingestion.runtime_boundary import (
     RuntimeIngestionBoundary,
     installed_runtime_status,
 )
+from doc_store_server.query.runtime_boundary import installed_search_orchestrator
 
 
 ServerConfig = Mapping[str, Any]
@@ -120,7 +123,7 @@ def create_server_application(config: ServerConfig | None = None) -> Any:
     return create_app(
         title="doc-store",
         description="doc-store adapter server",
-        version="0.1.0",
+        version="0.1.8",
         app_config=dict(config or {}),
     )
 
@@ -130,9 +133,12 @@ def configure_runtime_boundaries(config: ServerConfig) -> None:
 
     status = installed_runtime_status()
     ingestion = RuntimeIngestionBoundary(database_url_from_config(config), status)
+    search = installed_search_orchestrator(config)
     DocumentCreateCommand.ingestion_boundary = ingestion
     DocumentUpdateCommand.ingestion_boundary = ingestion
     ProcessingStatusCommand.runtime_status_boundary = status
+    ChunkQuerySearchCommand.search_orchestrator = search
+    DocStoreHealthCommand.runtime_config = dict(config)
 
 
 def run_server(config: ServerConfig | None = None) -> None:

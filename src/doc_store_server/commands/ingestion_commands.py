@@ -22,8 +22,9 @@ Boundary = Callable[
 ]
 _BOUNDARY_CONTEXT_KEY = "ingestion_boundary"
 _STATES = frozenset({"accepted", "idempotent", "completed", "failed"})
+_CHUNKING_STRATEGIES = frozenset({"paragraph", "sentence", "semantic"})
 _KNOWN_FIELDS = frozenset(
-    {"document_id", "source_version_id", "raw_text", "transferred_file"}
+    {"document_id", "source_version_id", "raw_text", "transferred_file", "chunking_strategy"}
 )
 
 
@@ -35,7 +36,28 @@ def _operation_id(document_id: str, source_version_id: str) -> str:
     )
 
 
-def _validate_identity(params: dict[str, Any]) -> dict[str, Any]:
+def _validate_chunking_strategy(
+    params: dict[str, Any],
+    *,
+    required: bool,
+) -> str | None:
+    strategy = params.get("chunking_strategy")
+    if strategy is None:
+        if required:
+            raise ValidationError(
+                "chunking_strategy is required",
+                {"field": "chunking_strategy", "allowed": sorted(_CHUNKING_STRATEGIES)},
+            )
+        return None
+    if not isinstance(strategy, str) or strategy.strip() not in _CHUNKING_STRATEGIES:
+        raise ValidationError(
+            "chunking_strategy must be one of paragraph, sentence, semantic",
+            {"field": "chunking_strategy", "allowed": sorted(_CHUNKING_STRATEGIES)},
+        )
+    return strategy.strip()
+
+
+def _validate_identity(params: dict[str, Any], *, chunking_required: bool) -> dict[str, Any]:
     document_id = params.get("document_id")
     if not isinstance(document_id, str) or not document_id.strip():
         raise ValidationError(
@@ -75,6 +97,9 @@ def _validate_identity(params: dict[str, Any]) -> dict[str, Any]:
     normalized = dict(params)
     normalized["document_id"] = str(document_uuid)
     normalized["source_version_id"] = source_version_id.strip()
+    strategy = _validate_chunking_strategy(normalized, required=chunking_required)
+    if strategy is not None:
+        normalized["chunking_strategy"] = strategy
     return normalized
 
 
@@ -107,10 +132,14 @@ class _IngestionCommand(Command):
     use_queue: ClassVar[bool] = True
     result_class: ClassVar[type[SuccessResult]] = SuccessResult
     _description: ClassVar[str]
+    chunking_strategy_required: ClassVar[bool] = False
     ingestion_boundary: ClassVar[Boundary | None] = None
 
     @classmethod
     def get_schema(cls) -> dict[str, Any]:
+        required = ["document_id", "source_version_id"]
+        if cls.chunking_strategy_required:
+            required.append("chunking_strategy")
         return {
             "type": "object",
             "properties": {
@@ -124,8 +153,13 @@ class _IngestionCommand(Command):
                     "type": "object",
                     "description": "Adapter-standard transferred file reference.",
                 },
+                "chunking_strategy": {
+                    "type": "string",
+                    "enum": ["paragraph", "sentence", "semantic"],
+                    "description": "Document chunking strategy.",
+                },
             },
-            "required": ["document_id", "source_version_id"],
+            "required": required,
             "additionalProperties": False,
             "x-oneOf": ["raw_text", "transferred_file"],
             "x-use-queue": True,
@@ -152,6 +186,10 @@ class _IngestionCommand(Command):
                 "source_version_id": "Required stable source-version identity.",
                 "raw_text": "Exactly one accepted source: raw text.",
                 "transferred_file": "Exactly one accepted source: adapter transfer reference.",
+                "chunking_strategy": (
+                    "Required for document_create; optional for update/rechunk where the stored "
+                    "document strategy is reused when omitted."
+                ),
             },
             "return_value": {
                 "description": (
@@ -168,11 +206,13 @@ class _IngestionCommand(Command):
                 {
                     "document_id": "550e8400-e29b-41d4-a716-446655440000",
                     "source_version_id": "source-v1",
+                    "chunking_strategy": "paragraph",
                     "raw_text": "Example documentation text.",
                 },
                 {
                     "document_id": "550e8400-e29b-41d4-a716-446655440000",
                     "source_version_id": "source-v2",
+                    "chunking_strategy": "semantic",
                     "transferred_file": {"transfer_id": "adapter-transfer-id"},
                 },
             ],
@@ -185,7 +225,10 @@ class _IngestionCommand(Command):
         unknown = sorted(set(params) - _KNOWN_FIELDS)
         if unknown:
             raise ValidationError("unknown command fields", {"fields": unknown})
-        return _validate_identity(dict(super().validate_params(params)))
+        return _validate_identity(
+            dict(super().validate_params(params)),
+            chunking_required=self.chunking_strategy_required,
+        )
 
     async def execute(self, context: Any = None, **kwargs: Any) -> SuccessResult | ErrorResult:
         try:
@@ -254,6 +297,7 @@ class DocumentCreateCommand(_IngestionCommand):
     name = "document_create"
     descr = "Create a document version from exactly one adapter-owned source."
     _description = descr
+    chunking_strategy_required = True
 
 
 class DocumentUpdateCommand(_IngestionCommand):
@@ -264,4 +308,131 @@ class DocumentUpdateCommand(_IngestionCommand):
     _description = descr
 
 
-__all__ = ("DocumentCreateCommand", "DocumentUpdateCommand")
+class DocumentChunkCommand(_IngestionCommand):
+    """Rechunk an existing document, optionally overriding its stored strategy."""
+
+    name = "document_chunk"
+    descr = "Rechunk an existing document using its stored chunking strategy unless overridden."
+    _description = descr
+
+    @classmethod
+    def get_schema(cls) -> dict[str, Any]:
+        schema = super().get_schema()
+        schema["properties"] = {
+            "document_id": schema["properties"]["document_id"],
+            "chunking_strategy": schema["properties"]["chunking_strategy"],
+        }
+        schema["required"] = ["document_id"]
+        schema.pop("x-oneOf", None)
+        return schema
+
+    @classmethod
+    def metadata(cls) -> dict[str, Any]:
+        metadata = super().metadata()
+        metadata["parameters"] = {
+            "document_id": "Required UUID document identity.",
+            "chunking_strategy": (
+                "Optional strategy override; when omitted, the stored document strategy is reused."
+            ),
+        }
+        metadata["usage_examples"] = [
+            {"document_id": "550e8400-e29b-41d4-a716-446655440000"},
+            {
+                "document_id": "550e8400-e29b-41d4-a716-446655440000",
+                "chunking_strategy": "sentence",
+            },
+        ]
+        metadata["error_cases"] = {
+            "CHUNKING_STRATEGY_REQUIRED": "The existing document has no stored strategy and none was supplied.",
+            "DOCUMENT_NOT_FOUND": "The document does not exist.",
+            "INGESTION_BOUNDARY_UNAVAILABLE": "The G-006 boundary was not supplied.",
+        }
+        return metadata
+
+    def validate_params(self, params: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(params, dict):
+            raise ValidationError("command parameters must be an object")
+        unknown = sorted(set(params) - {"document_id", "chunking_strategy"})
+        if unknown:
+            raise ValidationError("unknown command fields", {"fields": unknown})
+        document_id = params.get("document_id")
+        if not isinstance(document_id, str) or not document_id.strip():
+            raise ValidationError(
+                "document_id must be a non-empty UUID string", {"field": "document_id"}
+            )
+        try:
+            document_uuid = UUID(document_id)
+        except (ValueError, AttributeError) as exc:
+            raise ValidationError(
+                "document_id must be a valid UUID", {"field": "document_id"}
+            ) from exc
+        normalized = dict(params)
+        normalized["document_id"] = str(document_uuid)
+        strategy = _validate_chunking_strategy(normalized, required=False)
+        if strategy is not None:
+            normalized["chunking_strategy"] = strategy
+        return normalized
+
+    async def execute(self, context: Any = None, **kwargs: Any) -> SuccessResult | ErrorResult:
+        try:
+            params = self.validate_params(kwargs)
+        except ValidationError as exc:
+            return ErrorResult(str(exc), code=exc.code, details=exc.data)
+
+        document_id = params["document_id"]
+        params.setdefault("source_version_id", "stored")
+        source_version_id = params.get("source_version_id", "stored")
+        operation_id = _operation_id(document_id, f"chunk:{source_version_id}:{params.get('chunking_strategy', 'stored')}")
+        boundary = context.get(_BOUNDARY_CONTEXT_KEY) if isinstance(context, Mapping) else None
+        if boundary is None:
+            boundary = self.ingestion_boundary
+        if boundary is None:
+            from doc_store_server.ingestion.runtime_boundary import installed_ingestion_boundary
+
+            boundary = installed_ingestion_boundary()
+        if boundary is None:
+            return ErrorResult(
+                "G-006 ingestion boundary is unavailable",
+                code=-32603,
+                details=_result_payload(
+                    status="failed",
+                    document_id=document_id,
+                    source_version_id=source_version_id,
+                    operation_id=operation_id,
+                    details={"error": "INGESTION_BOUNDARY_UNAVAILABLE"},
+                ),
+            )
+
+        try:
+            outcome = boundary(**params, operation_id=operation_id, command=self.name)
+            if inspect.isawaitable(outcome):
+                outcome = await outcome
+            outcome_map = dict(outcome or {})
+            raw_status = str(outcome_map.pop("status", "accepted"))
+            status = {
+                "committed": "completed",
+                "idempotent_replay": "idempotent",
+                "rolled_back": "failed",
+            }.get(raw_status, raw_status)
+            return SuccessResult(
+                _result_payload(
+                    status=status,
+                    document_id=document_id,
+                    source_version_id=str(outcome_map.get("source_version_id", source_version_id)),
+                    operation_id=operation_id,
+                    details=outcome_map,
+                )
+            )
+        except Exception as exc:
+            return SuccessResult(
+                _result_payload(
+                    status="failed",
+                    document_id=document_id,
+                    source_version_id=source_version_id,
+                    operation_id=operation_id,
+                    details={"error": type(exc).__name__, "message": str(exc)},
+                )
+            )
+
+
+__all__ = ("DocumentChunkCommand", "DocumentCreateCommand", "DocumentUpdateCommand")

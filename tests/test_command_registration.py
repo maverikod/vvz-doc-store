@@ -14,7 +14,10 @@ import pytest
 from doc_store_server.commands import registration
 from doc_store_server.commands.chunk_query_search_command import ChunkQuerySearchCommand
 from doc_store_server.commands.document_delete_command import DocumentDeleteCommand
+from doc_store_server.commands.document_rebind_command import DocumentRebindCommand
+from doc_store_server.commands.health_command import DocStoreHealthCommand
 from doc_store_server.commands.ingestion_commands import (
+    DocumentChunkCommand,
     DocumentCreateCommand,
     DocumentUpdateCommand,
 )
@@ -78,6 +81,14 @@ def _assert_exact_registration(
 def test_manifest_has_exact_command_identity_and_registration_shape() -> None:
     expected = [
         (
+            "health",
+            DocStoreHealthCommand,
+            "doc_store_server.commands.health_command",
+            "sync",
+            "DocStoreHealthCommand.metadata",
+            "DocStoreHealthCommand.get_schema",
+        ),
+        (
             "document_get",
             DocumentGetCommand,
             "doc_store_server.commands.retrieval_commands",
@@ -116,6 +127,22 @@ def test_manifest_has_exact_command_identity_and_registration_shape() -> None:
             "queue",
             "DocumentUpdateCommand.metadata",
             "DocumentUpdateCommand.get_schema",
+        ),
+        (
+            "document_chunk",
+            DocumentChunkCommand,
+            "doc_store_server.commands.ingestion_commands",
+            "queue",
+            "DocumentChunkCommand.metadata",
+            "DocumentChunkCommand.get_schema",
+        ),
+        (
+            "document_rebind",
+            DocumentRebindCommand,
+            "doc_store_server.commands.document_rebind_command",
+            "sync",
+            "DocumentRebindCommand.metadata",
+            "DocumentRebindCommand.get_schema",
         ),
         (
             "processing_status",
