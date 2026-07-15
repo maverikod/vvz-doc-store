@@ -47,4 +47,15 @@ install -d -o root -g "$DOC_STORE_GROUP" /etc/doc-store
 chmod 0750 /var/doc-store /var/log/doc-store /etc/doc-store
 chmod 0775 /app/logs
 
+if [[ "${DOC_STORE_AUTO_MIGRATE:-true}" =~ ^(1|true|TRUE|yes|YES|on|ON)$ ]]; then
+    if [[ -n "${DOC_STORE_DATABASE_URL:-${DATABASE_URL:-}}" ]]; then
+        echo "INFO: applying doc-store database migrations"
+        if ! gosu "$DOC_STORE_USER:$DOC_STORE_GROUP" python -m doc_store_server.db.migrations; then
+            echo "WARNING: doc-store database migrations failed; server will still start" >&2
+        fi
+    else
+        echo "INFO: DOC_STORE_DATABASE_URL is not configured; skipping migrations"
+    fi
+fi
+
 exec gosu "$DOC_STORE_USER:$DOC_STORE_GROUP" "$@"

@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from chunk_metadata_adapter import ChunkQuery
-from doc_store_client.client import DocStoreClient, DocStoreClientError
+from doc_store_client.client import DOC_STORE_COMMANDS, DocStoreClient, DocStoreClientError
 from doc_store_client.models import (
     ChapterGetRequest,
     ChapterGetResult,
@@ -55,7 +55,18 @@ class FakeAdapter:
 
     async def upload_file(self, source_path: str, **kwargs: Any) -> Any:
         self.uploads.append((source_path, kwargs))
-        return {"completed": True, "transfer_id": "transfer-001", "path": source_path}
+        return {
+            "completed": True,
+            "transfer_id": "transfer-001",
+            "filename": kwargs.get("filename"),
+            "path": source_path,
+            "size_bytes": 123,
+            "checksum_algorithm": "sha256",
+            "checksum_value": "a" * 64,
+            "compression": kwargs.get("compression", "identity"),
+            "chunk_size": 1024,
+            "status": "uploaded",
+        }
 
 
 def _write_result(command: str) -> dict[str, Any]:
@@ -258,10 +269,20 @@ def test_file_transfer_is_delegated_before_ingestion() -> None:
 async def _test_file_transfer_is_delegated_before_ingestion() -> None:
     adapter = FakeAdapter()
     adapter.responses["document_create"] = {
-        "status": "accepted",
-        "operation_id": "op-002",
-        "document_id": "doc-001",
-        "source_version_id": "version-003",
+        "mode": "queued",
+        "result": {
+            "job_id": "job-001",
+            "command": "document_create",
+            "result": {
+                "success": True,
+                "data": {
+                    "status": "accepted",
+                    "operation_id": "op-002",
+                    "document_id": "doc-001",
+                    "source_version_id": "version-003",
+                },
+            },
+        },
     }
     client = DocStoreClient(adapter)
 
@@ -272,17 +293,127 @@ async def _test_file_transfer_is_delegated_before_ingestion() -> None:
     )
 
     assert isinstance(result, DocumentCreateResult)
-    assert adapter.uploads == [("/tmp/manual.pdf", {"filename": "manual.pdf"})]
+    assert adapter.uploads == [
+        (
+            "/tmp/manual.pdf",
+            {
+                "filename": "manual.pdf",
+                "compression": "identity",
+                "chunk_size": None,
+                "on_progress": None,
+            },
+        )
+    ]
     assert adapter.calls == [
         (
             "document_create",
             {
                 "document_id": "doc-001",
                 "source_version_id": "version-003",
-                "transferred_file": {"transfer_id": "transfer-001", "path": "/tmp/manual.pdf"},
+                "transferred_file": {
+                    "transfer_id": "transfer-001",
+                    "filename": "manual.pdf",
+                    "path": "/tmp/manual.pdf",
+                    "size_bytes": 123,
+                    "checksum_algorithm": "sha256",
+                    "checksum_value": "a" * 64,
+                    "compression": "identity",
+                    "chunk_size": 1024,
+                    "status": "uploaded",
+                },
             },
         )
     ]
+
+
+def test_public_upload_file_returns_adapter_transfer_reference() -> None:
+    asyncio.run(_test_public_upload_file_returns_adapter_transfer_reference())
+
+
+async def _test_public_upload_file_returns_adapter_transfer_reference() -> None:
+    adapter = FakeAdapter()
+    client = DocStoreClient(adapter)
+
+    reference = await client.upload_file(
+        "/tmp/manual.md",
+        filename="manual.md",
+        compression="gzip",
+        chunk_size=4096,
+    )
+
+    assert adapter.uploads == [
+        (
+            "/tmp/manual.md",
+            {
+                "filename": "manual.md",
+                "compression": "gzip",
+                "chunk_size": 4096,
+                "on_progress": None,
+            },
+        )
+    ]
+    assert reference["transfer_id"] == "transfer-001"
+    assert reference["filename"] == "manual.md"
+    assert reference["compression"] == "gzip"
+
+
+def test_every_known_server_command_has_simple_facade_method() -> None:
+    asyncio.run(_test_every_known_server_command_has_simple_facade_method())
+
+
+async def _test_every_known_server_command_has_simple_facade_method() -> None:
+    adapter = FakeAdapter()
+    for command in DOC_STORE_COMMANDS:
+        adapter.responses[command] = {"command": command, "ok": True}
+
+    client = DocStoreClient(adapter)
+    assert client.commands == DOC_STORE_COMMANDS
+
+    for command in DOC_STORE_COMMANDS:
+        method = getattr(client, command)
+        result = await method(params={"marker": command})
+        assert result == {"command": command, "ok": True}
+
+    assert adapter.calls == [
+        (command, {"marker": command})
+        for command in DOC_STORE_COMMANDS
+    ]
+
+
+def test_generic_call_merges_params_and_kwargs_without_network_logic() -> None:
+    asyncio.run(_test_generic_call_merges_params_and_kwargs_without_network_logic())
+
+
+async def _test_generic_call_merges_params_and_kwargs_without_network_logic() -> None:
+    adapter = FakeAdapter()
+    adapter.responses["document_get"] = {"entity": "document", "identifier": "doc-001"}
+
+    result = await DocStoreClient(adapter).call(
+        "document_get",
+        {"document_id": "doc-001"},
+        source_version=2,
+    )
+
+    assert result == {"entity": "document", "identifier": "doc-001"}
+    assert adapter.calls == [
+        (
+            "document_get",
+            {"document_id": "doc-001", "source_version": 2},
+        )
+    ]
+
+
+def test_generic_call_rejects_ambiguous_or_empty_command_params() -> None:
+    asyncio.run(_test_generic_call_rejects_ambiguous_or_empty_command_params())
+
+
+async def _test_generic_call_rejects_ambiguous_or_empty_command_params() -> None:
+    client = DocStoreClient(FakeAdapter())
+
+    with pytest.raises(ValueError, match="command must be non-empty"):
+        await client.call(" ")
+    with pytest.raises(ValueError, match="duplicate parameters"):
+        await client.call("document_get", {"document_id": "doc-001"}, document_id="doc-002")
 
 
 def test_client_facade_has_no_transport_or_server_implementation() -> None:
@@ -295,7 +426,7 @@ def test_client_facade_has_no_transport_or_server_implementation() -> None:
         "aiohttp",
     }
     forbidden_names = {"authenticate", "tls", "retry", "poll", "websocket"}
-    public_facade_methods = {
+    typed_facade_methods = {
         "create_document",
         "update_document",
         "get_processing_status",
@@ -304,6 +435,10 @@ def test_client_facade_has_no_transport_or_server_implementation() -> None:
         "get_paragraph",
         "delete_document",
         "search",
+    }
+    public_facade_methods = typed_facade_methods | set(DOC_STORE_COMMANDS) | {
+        "call",
+        "upload_file",
     }
 
     for path in package_root.glob("*.py"):

@@ -18,7 +18,16 @@ from mcp_proxy_adapter.core.server_engine import ServerEngineFactory
 from doc_store_server.commands.registration import (
     register_doc_store_commands as register_doc_store_commands,
 )
+from doc_store_server.commands.ingestion_commands import (
+    DocumentCreateCommand,
+    DocumentUpdateCommand,
+)
+from doc_store_server.commands.processing_status_command import ProcessingStatusCommand
 from doc_store_server.db.health import check_database_health, database_url_from_config
+from doc_store_server.ingestion.runtime_boundary import (
+    RuntimeIngestionBoundary,
+    installed_runtime_status,
+)
 
 
 ServerConfig = Mapping[str, Any]
@@ -53,7 +62,8 @@ def default_config_from_env() -> dict[str, Any]:
             "log_level": os.getenv("DOC_STORE_LOG_LEVEL", "info"),
         },
         "queue_manager": {
-            "enabled": _env_bool("DOC_STORE_QUEUE_ENABLED", False),
+            "enabled": _env_bool("DOC_STORE_QUEUE_ENABLED", True),
+            "in_memory": _env_bool("DOC_STORE_QUEUE_IN_MEMORY", True),
         },
     }
     if database_url:
@@ -106,12 +116,23 @@ def create_server_application(config: ServerConfig | None = None) -> Any:
     """Create the single application boundary owned by the adapter."""
 
     initialize_main_process()
+    configure_runtime_boundaries(config or {})
     return create_app(
         title="doc-store",
         description="doc-store adapter server",
         version="0.1.0",
         app_config=dict(config or {}),
     )
+
+
+def configure_runtime_boundaries(config: ServerConfig) -> None:
+    """Wire installed-server runtime boundaries into command class defaults."""
+
+    status = installed_runtime_status()
+    ingestion = RuntimeIngestionBoundary(database_url_from_config(config), status)
+    DocumentCreateCommand.ingestion_boundary = ingestion
+    DocumentUpdateCommand.ingestion_boundary = ingestion
+    ProcessingStatusCommand.runtime_status_boundary = status
 
 
 def run_server(config: ServerConfig | None = None) -> None:

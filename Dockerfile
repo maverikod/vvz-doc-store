@@ -7,7 +7,8 @@ ENV PYTHONUNBUFFERED=1 \
     DOC_STORE_PROTOCOL=http \
     DOC_STORE_DEBUG=false \
     DOC_STORE_LOG_LEVEL=info \
-    DOC_STORE_QUEUE_ENABLED=false
+    DOC_STORE_QUEUE_ENABLED=true \
+    DOC_STORE_AUTO_MIGRATE=true
 
 WORKDIR /app
 
@@ -18,6 +19,7 @@ RUN apt-get update \
 
 COPY pyproject.toml README.md ./
 COPY src ./src
+COPY migrations ./migrations
 COPY scripts/docker-entrypoint.sh /usr/local/bin/doc-store-entrypoint
 
 RUN python -m pip install --no-cache-dir . \

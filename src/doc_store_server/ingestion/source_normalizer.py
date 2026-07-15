@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import gzip
 import mimetypes
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Protocol
 from uuid import UUID, uuid5, NAMESPACE_URL
@@ -210,6 +212,8 @@ def _read_transferred_file(
         media_type = _optional_str(
             transferred_file.get("media_type") or transferred_file.get("content_type")
         )
+        if payload is None and _optional_str(transferred_file.get("transfer_id")):
+            return _read_adapter_transfer_reference(transferred_file, filename, media_type)
     else:
         payload = transferred_file.read()
         filename = _optional_str(getattr(transferred_file, "filename", None))
@@ -223,6 +227,73 @@ def _read_transferred_file(
             MappingProxyType({"payload_type": type(payload).__name__}),
         )
     return payload, filename, media_type
+
+
+def _read_adapter_transfer_reference(
+    transferred_file: Mapping[str, Any],
+    fallback_filename: str | None,
+    fallback_media_type: str | None,
+) -> tuple[bytes, str | None, str | None] | NormalizationDiagnostic:
+    transfer_id = _optional_str(transferred_file.get("transfer_id"))
+    if transfer_id is None:
+        return NormalizationDiagnostic(
+            "INVALID_TRANSFER_REFERENCE",
+            "adapter transfer reference must include transfer_id",
+        )
+    try:
+        store = _adapter_transfer_store()
+        session = store.get_session(transfer_id)
+        if getattr(session, "direction", None) != "upload":
+            return NormalizationDiagnostic(
+                "INVALID_TRANSFER_REFERENCE",
+                "adapter transfer reference must point to an upload session",
+                MappingProxyType({"transfer_id": transfer_id}),
+            )
+        if getattr(session, "status", None) != "uploaded":
+            return NormalizationDiagnostic(
+                "INCOMPLETE_TRANSFER",
+                "adapter transfer is not complete",
+                MappingProxyType({"transfer_id": transfer_id, "status": getattr(session, "status", None)}),
+            )
+        path = Path(str(session.storage_path))
+        if not path.is_file():
+            return NormalizationDiagnostic(
+                "TRANSFER_PAYLOAD_UNAVAILABLE",
+                "adapter transfer payload is not available on the server",
+                MappingProxyType({"transfer_id": transfer_id}),
+            )
+        compression = str(getattr(session, "compression", "identity") or "identity")
+        if compression == "gzip":
+            with gzip.open(path, "rb") as source:
+                payload = source.read()
+        elif compression == "identity":
+            payload = path.read_bytes()
+        else:
+            return NormalizationDiagnostic(
+                "UNSUPPORTED_TRANSFER_COMPRESSION",
+                "adapter transfer compression is not supported",
+                MappingProxyType({"transfer_id": transfer_id, "compression": compression}),
+            )
+        filename = fallback_filename or _optional_str(getattr(session, "filename", None))
+        return payload, filename, fallback_media_type
+    except Exception as exc:
+        return NormalizationDiagnostic(
+            "TRANSFER_REFERENCE_FAILED",
+            "adapter transfer reference could not be resolved",
+            MappingProxyType(
+                {
+                    "transfer_id": transfer_id,
+                    "error_type": type(exc).__name__,
+                    "message": str(exc),
+                }
+            ),
+        )
+
+
+def _adapter_transfer_store() -> Any:
+    from mcp_proxy_adapter.api.handlers import get_transfer_store
+
+    return get_transfer_store()
 
 
 def _select_filter(

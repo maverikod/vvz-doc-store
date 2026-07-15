@@ -121,9 +121,14 @@ def test_command_returns_structured_validation_errors_without_delegating(
 
 
 @pytest.mark.parametrize("command_class", COMMANDS)
-def test_command_reports_missing_g006_boundary_as_structured_error(
+def test_command_falls_back_to_installed_runtime_boundary(
     command_class: type[Any],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.delenv("DOC_STORE_DATABASE_URL", raising=False)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("DOC_STORE_CONFIG", raising=False)
+
     result = asyncio.run(
         command_class().execute(
             document_id=DOCUMENT_ID,
@@ -132,10 +137,32 @@ def test_command_reports_missing_g006_boundary_as_structured_error(
         )
     )
 
-    assert isinstance(result, ErrorResult)
-    assert result.code == -32603
-    assert result.details["status"] == "failed"
-    assert result.details["error"] == "INGESTION_BOUNDARY_UNAVAILABLE"
+    assert isinstance(result, SuccessResult)
+    assert result.data["status"] == "failed"
+    assert result.data["failure"]["code"] == "DATABASE_NOT_CONFIGURED"
+
+
+@pytest.mark.parametrize("command_class", COMMANDS)
+def test_command_uses_installed_runtime_boundary_when_context_omits_boundary(
+    command_class: type[Any],
+) -> None:
+    boundary = RecordingBoundary({"status": "committed"})
+    previous = command_class.ingestion_boundary
+    command_class.ingestion_boundary = boundary
+    try:
+        result = asyncio.run(
+            command_class().execute(
+                document_id=DOCUMENT_ID,
+                source_version_id=SOURCE_VERSION_ID,
+                raw_text="text",
+            )
+        )
+    finally:
+        command_class.ingestion_boundary = previous
+
+    assert isinstance(result, SuccessResult)
+    assert result.data["status"] == "completed"
+    assert boundary.calls
 
 
 @pytest.mark.parametrize("command_class", COMMANDS)

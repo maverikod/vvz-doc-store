@@ -9,6 +9,7 @@ description = "Documentation storage server."
 requires-python = ">=3.11"
 authors = [{ name = "Vasiliy Zdanovskiy" }]
 dependencies = [
+  "alembic>=1.13",
   "asyncpg",
   "pgvector>=0.5",
   "psycopg[binary]>=3.2",

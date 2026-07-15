@@ -107,6 +107,7 @@ class _IngestionCommand(Command):
     use_queue: ClassVar[bool] = True
     result_class: ClassVar[type[SuccessResult]] = SuccessResult
     _description: ClassVar[str]
+    ingestion_boundary: ClassVar[Boundary | None] = None
 
     @classmethod
     def get_schema(cls) -> dict[str, Any]:
@@ -196,6 +197,12 @@ class _IngestionCommand(Command):
         source_version_id = params["source_version_id"]
         operation_id = _operation_id(document_id, source_version_id)
         boundary = context.get(_BOUNDARY_CONTEXT_KEY) if isinstance(context, Mapping) else None
+        if boundary is None:
+            boundary = self.ingestion_boundary
+        if boundary is None:
+            from doc_store_server.ingestion.runtime_boundary import installed_ingestion_boundary
+
+            boundary = installed_ingestion_boundary()
         if boundary is None:
             return ErrorResult(
                 "G-006 ingestion boundary is unavailable",

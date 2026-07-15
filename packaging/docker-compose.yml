@@ -30,7 +30,7 @@ services:
       DOC_STORE_PROTOCOL: https
       DOC_STORE_DEBUG: "false"
       DOC_STORE_LOG_LEVEL: info
-      DOC_STORE_QUEUE_ENABLED: "false"
+      DOC_STORE_QUEUE_ENABLED: "true"
       DOC_STORE_DATABASE_CONNECT_TIMEOUT: 3
     volumes:
       - /etc/doc-store:/etc/doc-store

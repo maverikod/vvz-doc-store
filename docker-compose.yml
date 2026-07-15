@@ -26,7 +26,7 @@ services:
       DOC_STORE_PROTOCOL: http
       DOC_STORE_DEBUG: "false"
       DOC_STORE_LOG_LEVEL: info
-      DOC_STORE_QUEUE_ENABLED: "false"
+      DOC_STORE_QUEUE_ENABLED: "true"
     ports:
       - "18080:8000"
     volumes:

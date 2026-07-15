@@ -60,3 +60,7 @@ src = ["src", "tests"]
 [tool.mypy]
 python_version = "3.11"
 packages = ["doc_store_client"]
+
+[[tool.mypy.overrides]]
+module = ["chunk_metadata_adapter"]
+ignore_missing_imports = true

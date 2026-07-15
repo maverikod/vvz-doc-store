@@ -5,7 +5,7 @@ from importlib.metadata import version as _distribution_version
 from pathlib import Path as _Path
 import tomllib as _tomllib
 
-from .client import DocStoreClient, DocStoreClientError
+from .client import DOC_STORE_COMMANDS, DocStoreClient, DocStoreClientError
 from .models import (
     ChapterGetRequest,
     ChapterGetResult,
@@ -41,6 +41,7 @@ except _PackageNotFoundError:
 __all__ = [
     "ChapterGetRequest",
     "ChapterGetResult",
+    "DOC_STORE_COMMANDS",
     "DocStoreClient",
     "DocStoreClientError",
     "DocumentCreateRequest",

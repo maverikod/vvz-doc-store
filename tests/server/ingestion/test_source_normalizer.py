@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from io import BytesIO
+from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
 
+from doc_store_server.ingestion import source_normalizer
 from doc_store_server.ingestion.source_normalizer import (
     DEFAULT_PRESET,
     FormatFilter,
@@ -69,6 +71,61 @@ def test_adapter_shaped_descriptor_and_real_stream_are_accepted() -> None:
     assert descriptor_result.request.text == "descriptor text"
     assert descriptor_result.request.source_metadata.filename == "descriptor.txt"
     assert descriptor_result.request.source_metadata.media_type == "text/plain"
+
+
+def test_adapter_transfer_reference_is_resolved_from_server_store(
+    tmp_path: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "upload.md"
+    path.write_bytes(b"adapter transfer text")
+
+    class Store:
+        def get_session(self, transfer_id: str) -> object:
+            assert transfer_id == "tr_1"
+            return SimpleNamespace(
+                direction="upload",
+                status="uploaded",
+                storage_path=str(path),
+                compression="identity",
+                filename="upload.md",
+            )
+
+    monkeypatch.setattr(source_normalizer, "_adapter_transfer_store", lambda: Store())
+
+    result = normalize_source(
+        transferred_file={"transfer_id": "tr_1"},
+        document_id=DOCUMENT_ID,
+    )
+
+    assert result.ok
+    assert result.request is not None
+    assert result.request.text == "adapter transfer text"
+    assert result.request.source_metadata.filename == "upload.md"
+
+
+def test_incomplete_adapter_transfer_reference_is_structured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Store:
+        def get_session(self, _transfer_id: str) -> object:
+            return SimpleNamespace(
+                direction="upload",
+                status="uploading",
+                storage_path="/tmp/missing",
+                compression="identity",
+                filename="upload.md",
+            )
+
+    monkeypatch.setattr(source_normalizer, "_adapter_transfer_store", lambda: Store())
+
+    result = normalize_source(
+        transferred_file={"transfer_id": "tr_1"},
+        document_id=DOCUMENT_ID,
+    )
+
+    assert result.diagnostic is not None
+    assert result.diagnostic.code == "INCOMPLETE_TRANSFER"
 
 
 def test_trusted_hint_selects_filter_and_invokes_existing_filter_contract() -> None:
