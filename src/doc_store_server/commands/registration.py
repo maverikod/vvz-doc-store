@@ -11,6 +11,19 @@ from mcp_proxy_adapter.commands.hooks import (
     register_custom_commands_hook,
 )
 
+from doc_store_server.commands.chunk_query_search_command import ChunkQuerySearchCommand
+from doc_store_server.commands.document_delete_command import DocumentDeleteCommand
+from doc_store_server.commands.ingestion_commands import (
+    DocumentCreateCommand,
+    DocumentUpdateCommand,
+)
+from doc_store_server.commands.processing_status_command import ProcessingStatusCommand
+from doc_store_server.commands.retrieval_commands import (
+    ChapterGetCommand,
+    DocumentGetCommand,
+    ParagraphGetCommand,
+)
+
 
 ExecutionMode = Literal["sync", "queue"]
 CommandClass = type[Command]
@@ -101,181 +114,82 @@ class _DocStoreCommand(Command):
         return schema
 
 
-class CreateDocumentCommand(_DocStoreCommand):
-    name = "create_document"
-    descr = "Create or replace one document version from adapter-owned input."
-    use_queue = True
-    detailed_description = (
-        "Accepts a document creation request and delegates future ingestion behavior "
-        "to the ingestion orchestration layer without owning transport behavior."
-    )
-    schema_properties = {
-        "document_id": {"type": "string", "description": "Optional document UUID."},
-        "title": {"type": "string", "description": "Document title."},
-        "source": {"type": "object", "description": "Adapter-provided source descriptor."},
-    }
-    required_fields = ("title", "source")
-    parameter_docs = schema_properties
-    return_contract = {"description": "Queued document creation result."}
-    usage_examples = [{"title": "Example", "source": {"kind": "text"}}]
-    best_practices = ["Use adapter transfer primitives for large file payloads."]
-
-
-class UpdateDocumentCommand(CreateDocumentCommand):
-    name = "update_document"
-    descr = "Create a new version for an existing document."
-    required_fields = ("document_id", "source")
-    return_contract = {"description": "Queued document update result."}
-
-
-class ProcessingStatusCommand(_DocStoreCommand):
-    name = "processing_status"
-    descr = "Return processing state for one document operation."
-    schema_properties = {
-        "operation_id": {"type": "string", "description": "Operation identifier."}
-    }
-    required_fields = ("operation_id",)
-    parameter_docs = schema_properties
-    return_contract = {"description": "Current processing state and diagnostics."}
-    usage_examples = [{"operation_id": "00000000-0000-4000-8000-000000000000"}]
-    best_practices = ["Poll only operation identifiers returned by document commands."]
-
-
-class GetDocumentCommand(_DocStoreCommand):
-    name = "get_document"
-    descr = "Return one document by UUID."
-    schema_properties = {
-        "document_id": {"type": "string", "description": "Document UUID."}
-    }
-    required_fields = ("document_id",)
-    parameter_docs = schema_properties
-    return_contract = {"description": "Document payload."}
-    usage_examples = [{"document_id": "00000000-0000-4000-8000-000000000000"}]
-    best_practices = ["Use UUID identifiers returned by create_document."]
-
-
-class GetChapterCommand(GetDocumentCommand):
-    name = "get_chapter"
-    descr = "Return one chapter by UUID."
-    schema_properties = {
-        "chapter_id": {"type": "string", "description": "Chapter UUID."}
-    }
-    required_fields = ("chapter_id",)
-
-
-class GetParagraphCommand(GetDocumentCommand):
-    name = "get_paragraph"
-    descr = "Return one paragraph by UUID."
-    schema_properties = {
-        "paragraph_id": {"type": "string", "description": "Paragraph UUID."}
-    }
-    required_fields = ("paragraph_id",)
-
-
-class DeleteDocumentCommand(_DocStoreCommand):
-    name = "delete_document"
-    descr = "Delete or tombstone one document."
-    use_queue = True
-    schema_properties = {
-        "document_id": {"type": "string", "description": "Document UUID."}
-    }
-    required_fields = ("document_id",)
-    parameter_docs = schema_properties
-    return_contract = {"description": "Queued deletion result."}
-    usage_examples = [{"document_id": "00000000-0000-4000-8000-000000000000"}]
-    best_practices = ["Delete by document UUID, not source filename."]
-
-
-class ChunkQueryCommand(_DocStoreCommand):
-    name = "chunk_query"
-    descr = "Search chunks through the canonical ChunkQuery contract."
-    use_queue = True
-    schema_properties = {
-        "query": {"type": "object", "description": "ChunkQuery payload."}
-    }
-    required_fields = ("query",)
-    parameter_docs = schema_properties
-    return_contract = {"description": "ChunkQueryResponse-compatible search result."}
-    usage_examples = [{"query": {"text": "adapter boundary"}}]
-    best_practices = ["Use chunk-metadata-adapter ChunkQuery fields only."]
-
-
 DOC_STORE_COMMAND_MANIFEST: Final[tuple[CommandManifestEntry, ...]] = (
     CommandManifestEntry(
-        "create_document",
-        CreateDocumentCommand,
-        "doc_store_server.commands.registration",
-        "queue",
-        "CreateDocumentCommand.metadata",
-        "CreateDocumentCommand.get_schema",
+        "document_get",
+        DocumentGetCommand,
+        "doc_store_server.commands.retrieval_commands",
+        "sync",
+        "DocumentGetCommand.metadata",
+        "DocumentGetCommand.get_schema",
     ),
     CommandManifestEntry(
-        "update_document",
-        UpdateDocumentCommand,
-        "doc_store_server.commands.registration",
+        "chapter_get",
+        ChapterGetCommand,
+        "doc_store_server.commands.retrieval_commands",
+        "sync",
+        "ChapterGetCommand.metadata",
+        "ChapterGetCommand.get_schema",
+    ),
+    CommandManifestEntry(
+        "paragraph_get",
+        ParagraphGetCommand,
+        "doc_store_server.commands.retrieval_commands",
+        "sync",
+        "ParagraphGetCommand.metadata",
+        "ParagraphGetCommand.get_schema",
+    ),
+    CommandManifestEntry(
+        "document_create",
+        DocumentCreateCommand,
+        "doc_store_server.commands.ingestion_commands",
         "queue",
-        "UpdateDocumentCommand.metadata",
-        "UpdateDocumentCommand.get_schema",
+        "DocumentCreateCommand.metadata",
+        "DocumentCreateCommand.get_schema",
+    ),
+    CommandManifestEntry(
+        "document_update",
+        DocumentUpdateCommand,
+        "doc_store_server.commands.ingestion_commands",
+        "queue",
+        "DocumentUpdateCommand.metadata",
+        "DocumentUpdateCommand.get_schema",
     ),
     CommandManifestEntry(
         "processing_status",
         ProcessingStatusCommand,
-        "doc_store_server.commands.registration",
+        "doc_store_server.commands.processing_status_command",
         "sync",
         "ProcessingStatusCommand.metadata",
         "ProcessingStatusCommand.get_schema",
     ),
     CommandManifestEntry(
-        "get_document",
-        GetDocumentCommand,
-        "doc_store_server.commands.registration",
+        "document_delete",
+        DocumentDeleteCommand,
+        "doc_store_server.commands.document_delete_command",
         "sync",
-        "GetDocumentCommand.metadata",
-        "GetDocumentCommand.get_schema",
+        "DocumentDeleteCommand.metadata",
+        "DocumentDeleteCommand.get_schema",
     ),
     CommandManifestEntry(
-        "get_chapter",
-        GetChapterCommand,
-        "doc_store_server.commands.registration",
+        "chunk_query_search",
+        ChunkQuerySearchCommand,
+        "doc_store_server.commands.chunk_query_search_command",
         "sync",
-        "GetChapterCommand.metadata",
-        "GetChapterCommand.get_schema",
-    ),
-    CommandManifestEntry(
-        "get_paragraph",
-        GetParagraphCommand,
-        "doc_store_server.commands.registration",
-        "sync",
-        "GetParagraphCommand.metadata",
-        "GetParagraphCommand.get_schema",
-    ),
-    CommandManifestEntry(
-        "delete_document",
-        DeleteDocumentCommand,
-        "doc_store_server.commands.registration",
-        "queue",
-        "DeleteDocumentCommand.metadata",
-        "DeleteDocumentCommand.get_schema",
-    ),
-    CommandManifestEntry(
-        "chunk_query",
-        ChunkQueryCommand,
-        "doc_store_server.commands.registration",
-        "queue",
-        "ChunkQueryCommand.metadata",
-        "ChunkQueryCommand.get_schema",
+        "ChunkQuerySearchCommand.metadata",
+        "ChunkQuerySearchCommand.get_schema",
     ),
 )
 
-DOC_STORE_COMMAND_MODULE_MANIFEST: Final[tuple[str, ...]] = tuple(
-    dict.fromkeys(entry.import_module for entry in DOC_STORE_COMMAND_MANIFEST)
+DOC_STORE_COMMAND_MODULE_MANIFEST: Final[tuple[str, ...]] = (
+    "doc_store_server.commands.retrieval_commands",
+    "doc_store_server.commands.ingestion_commands",
+    "doc_store_server.commands.processing_status_command",
+    "doc_store_server.commands.document_delete_command",
+    "doc_store_server.commands.chunk_query_search_command",
 )
-DOC_STORE_QUEUED_COMMAND_MODULES: Final[tuple[str, ...]] = tuple(
-    dict.fromkeys(
-        entry.import_module
-        for entry in DOC_STORE_COMMAND_MANIFEST
-        if entry.execution_mode == "queue"
-    )
+DOC_STORE_QUEUED_COMMAND_MODULES: Final[tuple[str, ...]] = (
+    "doc_store_server.commands.ingestion_commands",
 )
 
 
@@ -298,17 +212,17 @@ register_custom_commands_hook(register_doc_store_commands)
 
 
 __all__ = [
-    "ChunkQueryCommand",
+    "ChunkQuerySearchCommand",
     "CommandManifestEntry",
-    "CreateDocumentCommand",
     "DOC_STORE_COMMAND_MANIFEST",
     "DOC_STORE_COMMAND_MODULE_MANIFEST",
     "DOC_STORE_QUEUED_COMMAND_MODULES",
-    "DeleteDocumentCommand",
-    "GetChapterCommand",
-    "GetDocumentCommand",
-    "GetParagraphCommand",
+    "DocumentCreateCommand",
+    "DocumentDeleteCommand",
+    "DocumentGetCommand",
+    "DocumentUpdateCommand",
+    "ChapterGetCommand",
+    "ParagraphGetCommand",
     "ProcessingStatusCommand",
-    "UpdateDocumentCommand",
     "register_doc_store_commands",
 ]

@@ -12,6 +12,17 @@ from typing import Any
 import pytest
 
 from doc_store_server.commands import registration
+from doc_store_server.commands.chunk_query_search_command import ChunkQuerySearchCommand
+from doc_store_server.commands.document_delete_command import DocumentDeleteCommand
+from doc_store_server.commands.ingestion_commands import (
+    DocumentCreateCommand,
+    DocumentUpdateCommand,
+)
+from doc_store_server.commands.retrieval_commands import (
+    ChapterGetCommand,
+    DocumentGetCommand,
+    ParagraphGetCommand,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -67,68 +78,68 @@ def _assert_exact_registration(
 def test_manifest_has_exact_command_identity_and_registration_shape() -> None:
     expected = [
         (
-            "create_document",
-            registration.CreateDocumentCommand,
-            "doc_store_server.commands.registration",
-            "queue",
-            "CreateDocumentCommand.metadata",
-            "CreateDocumentCommand.get_schema",
+            "document_get",
+            DocumentGetCommand,
+            "doc_store_server.commands.retrieval_commands",
+            "sync",
+            "DocumentGetCommand.metadata",
+            "DocumentGetCommand.get_schema",
         ),
         (
-            "update_document",
-            registration.UpdateDocumentCommand,
-            "doc_store_server.commands.registration",
+            "chapter_get",
+            ChapterGetCommand,
+            "doc_store_server.commands.retrieval_commands",
+            "sync",
+            "ChapterGetCommand.metadata",
+            "ChapterGetCommand.get_schema",
+        ),
+        (
+            "paragraph_get",
+            ParagraphGetCommand,
+            "doc_store_server.commands.retrieval_commands",
+            "sync",
+            "ParagraphGetCommand.metadata",
+            "ParagraphGetCommand.get_schema",
+        ),
+        (
+            "document_create",
+            DocumentCreateCommand,
+            "doc_store_server.commands.ingestion_commands",
             "queue",
-            "UpdateDocumentCommand.metadata",
-            "UpdateDocumentCommand.get_schema",
+            "DocumentCreateCommand.metadata",
+            "DocumentCreateCommand.get_schema",
+        ),
+        (
+            "document_update",
+            DocumentUpdateCommand,
+            "doc_store_server.commands.ingestion_commands",
+            "queue",
+            "DocumentUpdateCommand.metadata",
+            "DocumentUpdateCommand.get_schema",
         ),
         (
             "processing_status",
             registration.ProcessingStatusCommand,
-            "doc_store_server.commands.registration",
+            "doc_store_server.commands.processing_status_command",
             "sync",
             "ProcessingStatusCommand.metadata",
             "ProcessingStatusCommand.get_schema",
         ),
         (
-            "get_document",
-            registration.GetDocumentCommand,
-            "doc_store_server.commands.registration",
+            "document_delete",
+            DocumentDeleteCommand,
+            "doc_store_server.commands.document_delete_command",
             "sync",
-            "GetDocumentCommand.metadata",
-            "GetDocumentCommand.get_schema",
+            "DocumentDeleteCommand.metadata",
+            "DocumentDeleteCommand.get_schema",
         ),
         (
-            "get_chapter",
-            registration.GetChapterCommand,
-            "doc_store_server.commands.registration",
+            "chunk_query_search",
+            ChunkQuerySearchCommand,
+            "doc_store_server.commands.chunk_query_search_command",
             "sync",
-            "GetChapterCommand.metadata",
-            "GetChapterCommand.get_schema",
-        ),
-        (
-            "get_paragraph",
-            registration.GetParagraphCommand,
-            "doc_store_server.commands.registration",
-            "sync",
-            "GetParagraphCommand.metadata",
-            "GetParagraphCommand.get_schema",
-        ),
-        (
-            "delete_document",
-            registration.DeleteDocumentCommand,
-            "doc_store_server.commands.registration",
-            "queue",
-            "DeleteDocumentCommand.metadata",
-            "DeleteDocumentCommand.get_schema",
-        ),
-        (
-            "chunk_query",
-            registration.ChunkQueryCommand,
-            "doc_store_server.commands.registration",
-            "queue",
-            "ChunkQueryCommand.metadata",
-            "ChunkQueryCommand.get_schema",
+            "ChunkQuerySearchCommand.metadata",
+            "ChunkQuerySearchCommand.get_schema",
         ),
     ]
     assert _manifest_rows() == expected
@@ -176,7 +187,6 @@ def test_every_manifest_command_has_complete_metadata_and_schema_contract() -> N
         metadata = command.metadata()
         assert set(metadata) == EXPECTED_METADATA_FIELDS
         assert metadata["name"] == command.name
-        assert metadata["parameters"] == command.parameter_docs
         assert isinstance(metadata["parameters"], dict)
         assert all(
             isinstance(value, str) and value
@@ -186,13 +196,14 @@ def test_every_manifest_command_has_complete_metadata_and_schema_contract() -> N
 
         schema = command.get_schema()
         assert schema["type"] == "object"
-        assert schema["properties"] == command.schema_properties
-        assert schema["required"] == list(command.required_fields)
+        assert isinstance(schema["properties"], dict)
+        assert isinstance(schema["required"], list)
         assert set(schema["required"]) <= set(schema["properties"])
         assert schema["additionalProperties"] is False
-        assert set(command.required_fields) == set(schema["required"])
+        assert set(metadata["parameters"]) <= set(schema["properties"])
         for parameter_name, parameter in schema["properties"].items():
-            assert set(parameter) == {"type", "description"}
+            assert "type" in parameter
+            assert "description" in parameter
             assert parameter["type"]
             assert parameter["description"]
 

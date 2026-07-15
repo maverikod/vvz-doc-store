@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "doc-store-client"
+version = "0.1.0"
+description = "Client library for the doc-store documentation service."
+requires-python = ">=3.11"
+authors = [{ name = "Vasiliy Zdanovskiy" }]
+license = "MIT"
+keywords = ["documentation", "client", "search", "json-rpc"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Documentation",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+  "chunk-metadata-adapter>=1.0",
+  "mcp-proxy-adapter>=8.10.19",
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest>=8",
+  "pytest-asyncio>=0.23",
+]
+dev = [
+  "doc-store-client[test]",
+  "ruff>=0.5",
+  "mypy>=1.10",
+  "build>=1.2",
+]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["doc_store_client*"]
+exclude = ["tests*", "test_environment*", "logs*"]
+
+[tool.setuptools.package-data]
+doc_store_client = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.mypy]
+python_version = "3.11"
+packages = ["doc_store_client"]

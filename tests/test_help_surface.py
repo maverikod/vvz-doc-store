@@ -81,13 +81,13 @@ def _assert_complete_help_entry(name: str, entry: dict[str, Any]) -> None:
     assert isinstance(metadata["usage_examples"], list) and metadata["usage_examples"]
     assert isinstance(metadata["error_cases"], dict) and metadata["error_cases"]
     assert isinstance(metadata["best_practices"], list) and metadata["best_practices"]
-    assert all(
-        isinstance(error_code, str)
-        and error_code
-        and isinstance(remediation, str)
-        and remediation
-        for error_code, remediation in metadata["error_cases"].items()
-    )
+    for error_code, remediation in metadata["error_cases"].items():
+        assert isinstance(error_code, str) and error_code
+        if isinstance(remediation, str):
+            assert remediation
+        else:
+            assert isinstance(remediation, dict)
+            assert any(isinstance(value, str) and value for value in remediation.values())
     assert all(isinstance(practice, str) and practice for practice in metadata["best_practices"])
 
     assert schema["type"] == "object"

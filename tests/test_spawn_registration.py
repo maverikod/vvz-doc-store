@@ -84,7 +84,11 @@ def _spawn_execution_worker(result: Any) -> None:
     command_class.execute = _test_execute
     try:
         command = command_class()
-        payload = {"title": "Spawn proof", "source": {"kind": "text"}}
+        payload = {
+            "document_id": "550e8400-e29b-41d4-a716-446655440000",
+            "source_version_id": "source-v1",
+            "raw_text": "Spawn proof",
+        }
         typed_result = asyncio.run(command.execute(**payload))
     finally:
         command_class.execute = original_execute
@@ -149,6 +153,10 @@ def test_representative_queued_command_executes_inside_fresh_spawn_worker() -> N
     assert payload["typed_result"] == {
         "ok": True,
         "command": payload["command_name"],
-        "payload": {"title": "Spawn proof", "source": {"kind": "text"}},
+        "payload": {
+            "document_id": "550e8400-e29b-41d4-a716-446655440000",
+            "source_version_id": "source-v1",
+            "raw_text": "Spawn proof",
+        },
         "worker_registry_id": payload["worker_registry_id"],
     }
