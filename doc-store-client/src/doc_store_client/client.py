@@ -22,6 +22,14 @@ from .models import (
     DocumentRebindResult,
     DocumentUpdateRequest,
     DocumentUpdateResult,
+    EntityGetRequest,
+    EntityGetResult,
+    EntityIdsRequest,
+    EntityLifecycleResult,
+    EntityListRequest,
+    EntityListResult,
+    EntityReferencesRequest,
+    EntityReferencesResult,
     ParagraphGetRequest,
     ParagraphGetResult,
     ProcessingStatusRequest,
@@ -51,6 +59,12 @@ DOC_STORE_COMMANDS: tuple[str, ...] = (
     "document_rebind",
     "processing_status",
     "document_delete",
+    "entity_list",
+    "entity_get",
+    "entity_soft_delete",
+    "entity_undelete",
+    "entity_hard_delete",
+    "entity_references",
     "chunk_query_search",
     "help",
     "health",
@@ -227,6 +241,36 @@ class DocStoreClient:
     ) -> Any:
         return await self.call("document_delete", params, **kwargs)
 
+    async def entity_list(
+        self, params: Mapping[str, Any] | None = None, **kwargs: Any
+    ) -> Any:
+        return await self.call("entity_list", params, **kwargs)
+
+    async def entity_get(
+        self, params: Mapping[str, Any] | None = None, **kwargs: Any
+    ) -> Any:
+        return await self.call("entity_get", params, **kwargs)
+
+    async def entity_soft_delete(
+        self, params: Mapping[str, Any] | None = None, **kwargs: Any
+    ) -> Any:
+        return await self.call("entity_soft_delete", params, **kwargs)
+
+    async def entity_undelete(
+        self, params: Mapping[str, Any] | None = None, **kwargs: Any
+    ) -> Any:
+        return await self.call("entity_undelete", params, **kwargs)
+
+    async def entity_hard_delete(
+        self, params: Mapping[str, Any] | None = None, **kwargs: Any
+    ) -> Any:
+        return await self.call("entity_hard_delete", params, **kwargs)
+
+    async def entity_references(
+        self, params: Mapping[str, Any] | None = None, **kwargs: Any
+    ) -> Any:
+        return await self.call("entity_references", params, **kwargs)
+
     async def chunk_query_search(
         self, params: Mapping[str, Any] | None = None, **kwargs: Any
     ) -> Any:
@@ -350,6 +394,24 @@ class DocStoreClient:
 
     async def delete_document(self, request: DocumentDeleteRequest) -> DocumentDeleteResult:
         return await self._execute("document_delete", request.to_params(), DocumentDeleteResult)
+
+    async def list_entities(self, request: EntityListRequest) -> EntityListResult:
+        return await self._execute("entity_list", request.to_params(), EntityListResult)
+
+    async def get_entity(self, request: EntityGetRequest) -> EntityGetResult:
+        return await self._execute("entity_get", request.to_params(), EntityGetResult)
+
+    async def soft_delete_entities(self, request: EntityIdsRequest) -> EntityLifecycleResult:
+        return await self._execute("entity_soft_delete", request.to_params(), EntityLifecycleResult)
+
+    async def undelete_entities(self, request: EntityIdsRequest) -> EntityLifecycleResult:
+        return await self._execute("entity_undelete", request.to_params(), EntityLifecycleResult)
+
+    async def hard_delete_entities(self, request: EntityIdsRequest) -> EntityLifecycleResult:
+        return await self._execute("entity_hard_delete", request.to_params(), EntityLifecycleResult)
+
+    async def get_entity_references(self, request: EntityReferencesRequest) -> EntityReferencesResult:
+        return await self._execute("entity_references", request.to_params(), EntityReferencesResult)
 
     async def search(self, query: ChunkQuery) -> SearchResult:
         return await self._execute("chunk_query_search", {"query": _dump_query(query)}, SearchResult)

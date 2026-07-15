@@ -13,6 +13,14 @@ from doc_store_server.commands import registration
 from doc_store_server.commands.chunk_query_search_command import ChunkQuerySearchCommand
 from doc_store_server.commands.document_delete_command import DocumentDeleteCommand
 from doc_store_server.commands.document_rebind_command import DocumentRebindCommand
+from doc_store_server.commands.entity_lifecycle_commands import (
+    EntityGetCommand,
+    EntityHardDeleteCommand,
+    EntityListCommand,
+    EntityReferencesCommand,
+    EntitySoftDeleteCommand,
+    EntityUndeleteCommand,
+)
 from doc_store_server.commands.health_command import DocStoreHealthCommand
 from doc_store_server.commands.ingestion_commands import (
     DocumentChunkCommand,
@@ -39,6 +47,12 @@ EXPECTED_COMMANDS = {
     "document_rebind": (DocumentRebindCommand, "sync"),
     "processing_status": (ProcessingStatusCommand, "sync"),
     "document_delete": (DocumentDeleteCommand, "sync"),
+    "entity_list": (EntityListCommand, "sync"),
+    "entity_get": (EntityGetCommand, "sync"),
+    "entity_soft_delete": (EntitySoftDeleteCommand, "sync"),
+    "entity_undelete": (EntityUndeleteCommand, "sync"),
+    "entity_hard_delete": (EntityHardDeleteCommand, "sync"),
+    "entity_references": (EntityReferencesCommand, "sync"),
     "chunk_query_search": (ChunkQuerySearchCommand, "sync"),
 }
 EXPECTED_METADATA = {
@@ -209,6 +223,26 @@ class FakeRebind:
         return {"outcome": "rebound", "document_id": kwargs["document_id"]}
 
 
+class FakeLifecycle:
+    def list_entities(self, **kwargs: Any) -> dict[str, Any]:
+        return {"entity_type": kwargs["entity_type"], "items": [], "limit": 50, "offset": 0, "total": 0, "show_deleted": False}
+
+    def get_entity(self, **kwargs: Any) -> dict[str, Any]:
+        return {"entity_type": kwargs["entity_type"], "id": kwargs["entity_id"], "value": {"id": kwargs["entity_id"]}}
+
+    def soft_delete(self, **kwargs: Any) -> dict[str, Any]:
+        return {"outcome": "updated", "updated": {"documents": len(kwargs["ids"])}, "is_deleted": True}
+
+    def undelete(self, **kwargs: Any) -> dict[str, Any]:
+        return {"outcome": "updated", "updated": {"documents": len(kwargs["ids"])}, "is_deleted": False}
+
+    def hard_delete(self, **kwargs: Any) -> dict[str, Any]:
+        return {"outcome": "deleted", "deleted": {"documents": len(kwargs["ids"])}, "blocked": []}
+
+    def references_for(self, **kwargs: Any) -> dict[str, Any]:
+        return {"entity_type": kwargs["entity_type"], "id": kwargs["entity_id"], "references": []}
+
+
 @pytest.mark.parametrize(
     ("command_class", "params", "context"),
     [
@@ -221,6 +255,12 @@ class FakeRebind:
         (DocumentRebindCommand, {"document_id": "550e8400-e29b-41d4-a716-446655440001", "project": "doc-store"}, {"document_rebind_boundary": FakeRebind()}),
         (ProcessingStatusCommand, {"operation_id": "op-1"}, {"runtime_status_boundary": FakeStatus()}),
         (DocumentDeleteCommand, {"document_id": "doc-1", "version_token": "v1"}, {"canonical_document_service": FakeDelete()}),
+        (EntityListCommand, {"entity_type": "documents"}, {"entity_lifecycle_boundary": FakeLifecycle()}),
+        (EntityGetCommand, {"entity_type": "documents", "entity_id": "550e8400-e29b-41d4-a716-446655440001"}, {"entity_lifecycle_boundary": FakeLifecycle()}),
+        (EntitySoftDeleteCommand, {"entity_type": "documents", "ids": ["550e8400-e29b-41d4-a716-446655440001"]}, {"entity_lifecycle_boundary": FakeLifecycle()}),
+        (EntityUndeleteCommand, {"entity_type": "documents", "ids": ["550e8400-e29b-41d4-a716-446655440001"]}, {"entity_lifecycle_boundary": FakeLifecycle()}),
+        (EntityHardDeleteCommand, {"entity_type": "documents", "ids": ["550e8400-e29b-41d4-a716-446655440001"]}, {"entity_lifecycle_boundary": FakeLifecycle()}),
+        (EntityReferencesCommand, {"entity_type": "documents", "entity_id": "550e8400-e29b-41d4-a716-446655440001"}, {"entity_lifecycle_boundary": FakeLifecycle()}),
         (ChunkQuerySearchCommand, {"query": {"search_query": "hello"}}, {"search_orchestrator": lambda *_args, **_kwargs: {"status": "success", "data": {"results": []}}}),
         (DocStoreHealthCommand, {}, {}),
     ],
@@ -268,14 +308,26 @@ def test_runtime_configuration_installs_retrieval_boundary(monkeypatch: pytest.M
     monkeypatch.setattr(ParagraphGetCommand, "retrieval_boundary", None)
     monkeypatch.setattr(ProcessingStatusCommand, "runtime_status_boundary", None)
     monkeypatch.setattr(ChunkQuerySearchCommand, "search_orchestrator", None)
+    for command in (
+        EntityListCommand,
+        EntityGetCommand,
+        EntitySoftDeleteCommand,
+        EntityUndeleteCommand,
+        EntityHardDeleteCommand,
+        EntityReferencesCommand,
+    ):
+        monkeypatch.setattr(command, "lifecycle_boundary", None)
     monkeypatch.setattr(DocStoreHealthCommand, "runtime_config", {})
     monkeypatch.setattr(main, "RuntimeIngestionBoundary", lambda *_args: object())
     monkeypatch.setattr(main, "installed_runtime_status", lambda: object())
     monkeypatch.setattr(main, "installed_search_orchestrator", lambda _config: object())
     monkeypatch.setattr(main, "installed_retrieval_boundary", lambda _config: boundary)
+    monkeypatch.setattr(main, "installed_entity_lifecycle_service", lambda _config: boundary)
 
     main.configure_runtime_boundaries({"database": {"url": "postgresql://example/db"}})
 
     assert DocumentGetCommand.retrieval_boundary is boundary
     assert ChapterGetCommand.retrieval_boundary is boundary
     assert ParagraphGetCommand.retrieval_boundary is boundary
+    assert EntityListCommand.lifecycle_boundary is boundary
+    assert EntityHardDeleteCommand.lifecycle_boundary is boundary

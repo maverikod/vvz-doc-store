@@ -15,6 +15,14 @@ from doc_store_server.commands import registration
 from doc_store_server.commands.chunk_query_search_command import ChunkQuerySearchCommand
 from doc_store_server.commands.document_delete_command import DocumentDeleteCommand
 from doc_store_server.commands.document_rebind_command import DocumentRebindCommand
+from doc_store_server.commands.entity_lifecycle_commands import (
+    EntityGetCommand,
+    EntityHardDeleteCommand,
+    EntityListCommand,
+    EntityReferencesCommand,
+    EntitySoftDeleteCommand,
+    EntityUndeleteCommand,
+)
 from doc_store_server.commands.health_command import DocStoreHealthCommand
 from doc_store_server.commands.ingestion_commands import (
     DocumentChunkCommand,
@@ -159,6 +167,54 @@ def test_manifest_has_exact_command_identity_and_registration_shape() -> None:
             "sync",
             "DocumentDeleteCommand.metadata",
             "DocumentDeleteCommand.get_schema",
+        ),
+        (
+            "entity_list",
+            EntityListCommand,
+            "doc_store_server.commands.entity_lifecycle_commands",
+            "sync",
+            "EntityListCommand.metadata",
+            "EntityListCommand.get_schema",
+        ),
+        (
+            "entity_get",
+            EntityGetCommand,
+            "doc_store_server.commands.entity_lifecycle_commands",
+            "sync",
+            "EntityGetCommand.metadata",
+            "EntityGetCommand.get_schema",
+        ),
+        (
+            "entity_soft_delete",
+            EntitySoftDeleteCommand,
+            "doc_store_server.commands.entity_lifecycle_commands",
+            "sync",
+            "EntitySoftDeleteCommand.metadata",
+            "EntitySoftDeleteCommand.get_schema",
+        ),
+        (
+            "entity_undelete",
+            EntityUndeleteCommand,
+            "doc_store_server.commands.entity_lifecycle_commands",
+            "sync",
+            "EntityUndeleteCommand.metadata",
+            "EntityUndeleteCommand.get_schema",
+        ),
+        (
+            "entity_hard_delete",
+            EntityHardDeleteCommand,
+            "doc_store_server.commands.entity_lifecycle_commands",
+            "sync",
+            "EntityHardDeleteCommand.metadata",
+            "EntityHardDeleteCommand.get_schema",
+        ),
+        (
+            "entity_references",
+            EntityReferencesCommand,
+            "doc_store_server.commands.entity_lifecycle_commands",
+            "sync",
+            "EntityReferencesCommand.metadata",
+            "EntityReferencesCommand.get_schema",
         ),
         (
             "chunk_query_search",

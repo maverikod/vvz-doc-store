@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -43,7 +44,54 @@ class Base(DeclarativeBase):
 UUID4 = PGUUID(as_uuid=True)
 
 
-class Document(Base):
+class EntityCRUDMixin:
+    """Virtual CRUD/lifecycle contract shared by addressable entities."""
+
+    @classmethod
+    def create(cls, *args: Any, **kwargs: Any) -> Any:
+        raise NotImplementedError
+
+    @classmethod
+    def get(cls, *args: Any, **kwargs: Any) -> Any:
+        raise NotImplementedError
+
+    @classmethod
+    def list(cls, *args: Any, **kwargs: Any) -> Any:
+        raise NotImplementedError
+
+    def update(self, *args: Any, **kwargs: Any) -> Any:
+        raise NotImplementedError
+
+    @classmethod
+    def soft_delete(cls, *args: Any, **kwargs: Any) -> Any:
+        raise NotImplementedError
+
+    @classmethod
+    def undelete(cls, *args: Any, **kwargs: Any) -> Any:
+        raise NotImplementedError
+
+    @classmethod
+    def hard_delete(cls, *args: Any, **kwargs: Any) -> Any:
+        raise NotImplementedError
+
+
+class EntityUuidRegistry(Base):
+    """Global UUID registry for addressable entity rows."""
+
+    __tablename__ = "entity_uuid_registry"
+    __table_args__ = (
+        UniqueConstraint("entity_id", name="uq_entity_uuid_registry_entity_id"),
+        Index("ix_entity_uuid_registry_entity_table", "entity_table"),
+    )
+
+    entity_table: Mapped[str] = mapped_column(String(128), primary_key=True)
+    entity_id: Mapped[UUID] = mapped_column(UUID4, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class Document(EntityCRUDMixin, Base):
     """A versioned source document and its ordered structural children."""
 
     __tablename__ = "documents"
@@ -55,6 +103,7 @@ class Document(Base):
     )
 
     id: Mapped[UUID] = mapped_column(UUID4, primary_key=True, default=uuid4)
+    is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     source_upload_id: Mapped[UUID] = mapped_column(UUID4, nullable=False)
     source_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     source_path: Mapped[str | None] = mapped_column(String(2048))
@@ -86,7 +135,7 @@ class Document(Base):
     )
 
 
-class Chapter(Base):
+class Chapter(EntityCRUDMixin, Base):
     """An ordered structural section belonging to one document."""
 
     __tablename__ = "chapters"
@@ -100,6 +149,7 @@ class Chapter(Base):
     )
 
     id: Mapped[UUID] = mapped_column(UUID4, primary_key=True, default=uuid4)
+    is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     document_id: Mapped[UUID] = mapped_column(
         UUID4, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False
     )
@@ -120,7 +170,7 @@ class Chapter(Base):
     )
 
 
-class Paragraph(Base):
+class Paragraph(EntityCRUDMixin, Base):
     """An ordered, searchable text block belonging to one chapter."""
 
     __tablename__ = "paragraphs"
@@ -136,6 +186,7 @@ class Paragraph(Base):
     )
 
     id: Mapped[UUID] = mapped_column(UUID4, primary_key=True, default=uuid4)
+    is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     document_id: Mapped[UUID] = mapped_column(
         UUID4, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False
     )
@@ -160,7 +211,7 @@ class Paragraph(Base):
     )
 
 
-class SemanticChunk(Base):
+class SemanticChunk(EntityCRUDMixin, Base):
     """A independently identified searchable chunk projected from a paragraph."""
 
     __tablename__ = "semantic_chunks"
@@ -179,6 +230,7 @@ class SemanticChunk(Base):
     )
 
     id: Mapped[UUID] = mapped_column(UUID4, primary_key=True, default=uuid4)
+    is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     document_id: Mapped[UUID] = mapped_column(
         UUID4, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False
     )
@@ -205,4 +257,13 @@ class SemanticChunk(Base):
     chapter: Mapped[Chapter] = relationship(back_populates="semantic_chunks")
 
 
-__all__ = ("Base", "Chapter", "Document", "Paragraph", "SemanticChunk", "metadata")
+__all__ = (
+    "Base",
+    "Chapter",
+    "Document",
+    "EntityCRUDMixin",
+    "EntityUuidRegistry",
+    "Paragraph",
+    "SemanticChunk",
+    "metadata",
+)

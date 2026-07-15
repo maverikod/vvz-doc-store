@@ -26,9 +26,13 @@ from doc_store_client import (
     DocStoreClientError,
     DocumentChunkRequest,
     DocumentCreateRequest,
-    DocumentRebindRequest,
-    SearchResult,
     DocumentGetRequest,
+    DocumentRebindRequest,
+    EntityGetRequest,
+    EntityIdsRequest,
+    EntityListRequest,
+    EntityReferencesRequest,
+    SearchResult,
 )
 from mcp_proxy_adapter.client.jsonrpc_client.client import JsonRpcClient
 
@@ -529,6 +533,105 @@ async def _verify_retrieval_boundary(
     )
 
 
+async def _verify_lifecycle(
+    client: DocStoreClient,
+    *,
+    document_id: str,
+    project: str,
+) -> list[Check]:
+    checks: list[Check] = []
+    try:
+        listed = await client.list_entities(
+            EntityListRequest(
+                entity_type="documents",
+                fields=("id", "title", "is_deleted", "block_meta"),
+                filters={"id": document_id},
+                limit=5,
+            )
+        )
+        _add_check(
+            checks,
+            "entity_list documents",
+            any(item.get("id") == document_id for item in listed.items),
+            f"{listed.total} total",
+        )
+    except Exception as exc:
+        _add_check(checks, "entity_list documents", False, repr(exc))
+
+    try:
+        entity = await client.get_entity(
+            EntityGetRequest(entity_type="documents", entity_id=document_id, fields=("id", "is_deleted"))
+        )
+        _add_check(checks, "entity_get document", entity.value.get("id") == document_id, str(entity.value))
+    except Exception as exc:
+        _add_check(checks, "entity_get document", False, repr(exc))
+
+    try:
+        refs = await client.get_entity_references(
+            EntityReferencesRequest(entity_type="documents", entity_id=document_id)
+        )
+        _add_check(checks, "entity_references document", isinstance(refs.references, tuple), f"{len(refs.references)} reference(s)")
+    except Exception as exc:
+        _add_check(checks, "entity_references document", False, repr(exc))
+
+    try:
+        deleted = await client.soft_delete_entities(EntityIdsRequest(entity_type="documents", ids=(document_id,)))
+        hidden = await client.list_entities(EntityListRequest(entity_type="documents", filters={"id": document_id}, limit=5))
+        shown = await client.list_entities(
+            EntityListRequest(entity_type="documents", filters={"id": document_id}, show_deleted=True, limit=5)
+        )
+        _add_check(
+            checks,
+            "entity_soft_delete hides by default",
+            deleted.is_deleted is True
+            and not any(item.get("id") == document_id for item in hidden.items)
+            and any(item.get("id") == document_id and item.get("is_deleted") is True for item in shown.items),
+            json.dumps({"updated": deleted.updated, "hidden_total": hidden.total, "shown_total": shown.total}, default=str),
+        )
+    except Exception as exc:
+        _add_check(checks, "entity_soft_delete hides by default", False, repr(exc))
+
+    try:
+        restored = await client.undelete_entities(EntityIdsRequest(entity_type="documents", ids=(document_id,)))
+        visible = await client.list_entities(EntityListRequest(entity_type="documents", filters={"id": document_id}, limit=5))
+        _add_check(
+            checks,
+            "entity_undelete restores visibility",
+            restored.is_deleted is False and any(item.get("id") == document_id for item in visible.items),
+            json.dumps({"updated": restored.updated, "visible_total": visible.total}, default=str),
+        )
+    except Exception as exc:
+        _add_check(checks, "entity_undelete restores visibility", False, repr(exc))
+
+    try:
+        projects = await client.list_entities(EntityListRequest(entity_type="projects", limit=20))
+        _add_check(checks, "entity_list projects", any(item.get("project") == project for item in projects.items), f"{projects.total} total")
+    except Exception as exc:
+        _add_check(checks, "entity_list projects", False, repr(exc))
+    return checks
+
+
+async def _verify_hard_delete(client: DocStoreClient, *, document_id: str) -> list[Check]:
+    checks: list[Check] = []
+    try:
+        result = await client.hard_delete_entities(EntityIdsRequest(entity_type="documents", ids=(document_id,)))
+        deleted = result.deleted or {}
+        missing = False
+        try:
+            await client.get_entity(EntityGetRequest(entity_type="documents", entity_id=document_id, show_deleted=True))
+        except Exception:
+            missing = True
+        _add_check(
+            checks,
+            "entity_hard_delete document closure",
+            result.outcome == "deleted" and int(deleted.get("documents", 0)) >= 1 and missing,
+            json.dumps(deleted, default=str),
+        )
+    except Exception as exc:
+        _add_check(checks, "entity_hard_delete document closure", False, repr(exc))
+    return checks
+
+
 async def _run(args: argparse.Namespace) -> int:
     adapter = JsonRpcClient(
         protocol=args.protocol,
@@ -568,6 +671,12 @@ async def _run(args: argparse.Namespace) -> int:
         "document_create",
         "document_chunk",
         "document_rebind",
+        "entity_list",
+        "entity_get",
+        "entity_soft_delete",
+        "entity_undelete",
+        "entity_hard_delete",
+        "entity_references",
         "chunk_query_search",
         "health",
         "help",
@@ -605,6 +714,20 @@ async def _run(args: argparse.Namespace) -> int:
                 client,
                 document_id=strategy_runs[0].document_id,
                 strict=args.strict,
+            )
+        )
+        all_checks.extend(
+            await _verify_lifecycle(
+                client,
+                document_id=strategy_runs[0].document_id,
+                project=args.project,
+            )
+        )
+    if len(strategy_runs) > 1:
+        all_checks.extend(
+            await _verify_hard_delete(
+                client,
+                document_id=strategy_runs[-1].document_id,
             )
         )
 

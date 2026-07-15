@@ -20,6 +20,14 @@ from doc_store_server.commands.registration import (
 )
 from doc_store_server.commands.chunk_query_search_command import ChunkQuerySearchCommand
 from doc_store_server.commands.health_command import DocStoreHealthCommand
+from doc_store_server.commands.entity_lifecycle_commands import (
+    EntityGetCommand,
+    EntityHardDeleteCommand,
+    EntityListCommand,
+    EntityReferencesCommand,
+    EntitySoftDeleteCommand,
+    EntityUndeleteCommand,
+)
 from doc_store_server.commands.ingestion_commands import (
     DocumentCreateCommand,
     DocumentUpdateCommand,
@@ -37,6 +45,7 @@ from doc_store_server.ingestion.runtime_boundary import (
 )
 from doc_store_server.query.retrieval_boundary import installed_retrieval_boundary
 from doc_store_server.query.runtime_boundary import installed_search_orchestrator
+from doc_store_server.runtime.entity_lifecycle import installed_entity_lifecycle_service
 
 
 ServerConfig = Mapping[str, Any]
@@ -129,7 +138,7 @@ def create_server_application(config: ServerConfig | None = None) -> Any:
     return create_app(
         title="doc-store",
         description="doc-store adapter server",
-        version="0.1.9",
+        version="0.1.12",
         app_config=dict(config or {}),
     )
 
@@ -141,6 +150,7 @@ def configure_runtime_boundaries(config: ServerConfig) -> None:
     ingestion = RuntimeIngestionBoundary(database_url_from_config(config), status)
     search = installed_search_orchestrator(config)
     retrieval = installed_retrieval_boundary(config)
+    lifecycle = installed_entity_lifecycle_service(config)
     DocumentCreateCommand.ingestion_boundary = ingestion
     DocumentUpdateCommand.ingestion_boundary = ingestion
     DocumentGetCommand.retrieval_boundary = retrieval
@@ -148,6 +158,15 @@ def configure_runtime_boundaries(config: ServerConfig) -> None:
     ParagraphGetCommand.retrieval_boundary = retrieval
     ProcessingStatusCommand.runtime_status_boundary = status
     ChunkQuerySearchCommand.search_orchestrator = search
+    for command in (
+        EntityListCommand,
+        EntityGetCommand,
+        EntitySoftDeleteCommand,
+        EntityUndeleteCommand,
+        EntityHardDeleteCommand,
+        EntityReferencesCommand,
+    ):
+        command.lifecycle_boundary = lifecycle
     DocStoreHealthCommand.runtime_config = dict(config)
 
 

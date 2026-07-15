@@ -194,6 +194,91 @@ class DocumentDeleteResult(PublicModel):
 
 
 @dataclass(frozen=True, kw_only=True)
+class EntityListRequest(PublicModel):
+    entity_type: str
+    fields: tuple[str, ...] | None = None
+    filters: Mapping[str, Any] | None = None
+    limit: int = 50
+    offset: int = 0
+    show_deleted: bool = False
+
+
+@dataclass(frozen=True, kw_only=True)
+class EntityGetRequest(PublicModel):
+    entity_type: str
+    entity_id: str
+    fields: tuple[str, ...] | None = None
+    show_deleted: bool = False
+
+
+@dataclass(frozen=True, kw_only=True)
+class EntityIdsRequest(PublicModel):
+    entity_type: str
+    ids: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if not self.ids:
+            raise ValueError("ids must be non-empty")
+
+
+@dataclass(frozen=True, kw_only=True)
+class EntityReferencesRequest(PublicModel):
+    entity_type: str
+    entity_id: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class EntityListResult(PublicModel):
+    entity_type: str
+    items: tuple[Mapping[str, Any], ...] = ()
+    limit: int = 50
+    offset: int = 0
+    total: int = 0
+    show_deleted: bool = False
+
+    @classmethod
+    def from_payload(cls, payload: Payload) -> Self:
+        values = dict(payload)
+        values["items"] = tuple(values.get("items", ()))
+        return _read(cls, values)
+
+
+@dataclass(frozen=True, kw_only=True)
+class EntityGetResult(PublicModel):
+    entity_type: str
+    id: str
+    value: Mapping[str, Any]
+
+
+@dataclass(frozen=True, kw_only=True)
+class EntityLifecycleResult(PublicModel):
+    outcome: str
+    updated: Mapping[str, int] | None = None
+    deleted: Mapping[str, int] | None = None
+    blocked: tuple[Mapping[str, Any], ...] = ()
+    is_deleted: bool | None = None
+
+    @classmethod
+    def from_payload(cls, payload: Payload) -> Self:
+        values = dict(payload)
+        values["blocked"] = tuple(values.get("blocked", ()))
+        return _read(cls, values)
+
+
+@dataclass(frozen=True, kw_only=True)
+class EntityReferencesResult(PublicModel):
+    entity_type: str
+    id: str
+    references: tuple[Mapping[str, Any], ...] = ()
+
+    @classmethod
+    def from_payload(cls, payload: Payload) -> Self:
+        values = dict(payload)
+        values["references"] = tuple(values.get("references", ()))
+        return _read(cls, values)
+
+
+@dataclass(frozen=True, kw_only=True)
 class ProcessingStatusRequest(PublicModel):
     operation_id: str
     document_id: str | None = None
@@ -373,7 +458,9 @@ __all__ = [
     "DocumentCreateResult", "DocumentChunkRequest", "DocumentChunkResult",
     "DocumentDeleteRequest", "DocumentDeleteResult", "DocumentGetRequest", "DocumentGetResult",
     "DocumentRebindRequest", "DocumentRebindResult", "DocumentUpdateRequest", "DocumentUpdateResult",
-    "DocumentWriteRequest", "DocumentWriteResult", "OperationState", "ParagraphGetRequest",
+    "DocumentWriteRequest", "DocumentWriteResult", "EntityGetRequest", "EntityGetResult",
+    "EntityIdsRequest", "EntityLifecycleResult", "EntityListRequest", "EntityListResult",
+    "EntityReferencesRequest", "EntityReferencesResult", "OperationState", "ParagraphGetRequest",
     "ParagraphGetResult", "ProcessingStatusRequest", "ProcessingStatusResult", "RankedSearchHit",
     "RetrievalRequest", "RetrievalResult", "SearchResult", "ServerError",
 ]

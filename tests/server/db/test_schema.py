@@ -21,6 +21,7 @@ from doc_store_server.db.schema import metadata
 
 ROOT = Path(__file__).resolve().parents[3]
 ROOT_TABLES = {"documents", "chapters", "paragraphs", "semantic_chunks"}
+LIFECYCLE_TABLES = {"entity_uuid_registry"}
 FORBIDDEN_TABLES = {
     "sentences",
     "asts",
@@ -69,6 +70,7 @@ def _offline_baseline_sql() -> str:
 
 def test_metadata_contains_only_root_relations() -> None:
     assert ROOT_TABLES <= set(metadata.tables)
+    assert LIFECYCLE_TABLES <= set(metadata.tables)
     assert not (ROOT_TABLES & FORBIDDEN_TABLES)
 
 
@@ -102,12 +104,13 @@ def test_root_entities_have_uuid_primary_keys_and_owned_foreign_keys() -> None:
 def test_ordering_ranges_traceability_and_soft_delete_contract() -> None:
     for table_name in ROOT_TABLES:
         table = metadata.tables[table_name]
-        assert {"deleted_at", "block_meta"} <= set(table.c.keys())
+        assert {"deleted_at", "is_deleted", "block_meta"} <= set(table.c.keys())
         if table_name != "documents":
             assert "order_index" in table.c
         assert isinstance(table.c.block_meta.type, JSONB)
         assert table.c.block_meta.nullable is False
         assert table.c.deleted_at.nullable is True
+        assert table.c.is_deleted.nullable is False
         check_sql = {
             str(constraint.sqltext)
             for constraint in table.constraints
@@ -127,6 +130,13 @@ def test_ordering_ranges_traceability_and_soft_delete_contract() -> None:
     assert {"source_start", "source_end"} <= set(metadata.tables["semantic_chunks"].c.keys())
     assert {"processing_status", "processing_attempt", "processing_started_at"} <= set(
         metadata.tables["documents"].c.keys()
+    )
+    registry = metadata.tables["entity_uuid_registry"]
+    assert {"entity_table", "entity_id", "created_at"} <= set(registry.c.keys())
+    assert registry.c.entity_id.unique is True or any(
+        isinstance(constraint, UniqueConstraint)
+        and {column.name for column in constraint.columns} == {"entity_id"}
+        for constraint in registry.constraints
     )
 
 
