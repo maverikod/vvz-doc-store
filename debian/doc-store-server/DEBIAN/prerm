@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -e
+
+if [[ "$1" == "remove" || "$1" == "upgrade" || "$1" == "deconfigure" ]]; then
+    systemctl stop doc-store.service 2>/dev/null || true
+    systemctl disable doc-store.service 2>/dev/null || true
+    if command -v docker >/dev/null 2>&1 && [[ -f /etc/doc-store/docker-compose.yml ]]; then
+        docker compose -f /etc/doc-store/docker-compose.yml down 2>/dev/null || true
+    fi
+fi
+
+exit 0

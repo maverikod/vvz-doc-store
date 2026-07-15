@@ -1,0 +1,6 @@
+doc-store-server (0.1.0-1) unstable; urgency=medium
+
+  * Release 0.1.0 - Docker image vasilyvz/doc-store:0.1.0
+
+ -- Vasiliy Zdanovskiy <vasilyvz@gmail.com>  Wed, 15 Jul 2026 08:15:57 +0300
+

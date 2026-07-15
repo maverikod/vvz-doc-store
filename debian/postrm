@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -e
+
+if [[ "$1" == "purge" ]]; then
+    systemctl daemon-reload || true
+    systemctl reset-failed doc-store.service 2>/dev/null || true
+    echo "Note: /var/doc-store data retained; remove manually if required."
+fi
+
+exit 0

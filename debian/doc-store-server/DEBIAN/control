@@ -1,0 +1,14 @@
+Package: doc-store-server
+Version: 0.1.0-1
+Architecture: all
+Maintainer: Vasiliy Zdanovskiy <vasilyvz@gmail.com>
+Installed-Size: 46
+Depends: systemd, adduser, openssl, ca-certificates, locales, docker.io | docker-ce-cli, docker-compose-plugin
+Section: net
+Priority: optional
+Homepage: https://github.com/vasilyvz/doc-store
+Description: doc-store MCP adapter server
+ Installs a thin systemd unit that runs the doc-store Docker image and a
+ PostgreSQL/pgvector container through docker compose. Host runtime files are
+ owned by docstoreuesr:docstoregrp and the same numeric IDs are mapped inside
+ the application container.

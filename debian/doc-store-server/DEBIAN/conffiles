@@ -1,0 +1,8 @@
+/var/doc-store/secrets/.env
+/etc/default/doc-store
+/etc/doc-store/.env
+/etc/doc-store/config.json
+/etc/doc-store/docker-compose.yml
+/etc/doc-store/mtls/ca.crt
+/etc/doc-store/mtls/server.crt
+/etc/doc-store/mtls/server.key

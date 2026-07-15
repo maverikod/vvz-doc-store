@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import importlib.util
 import json
 import os
 from pathlib import Path
@@ -13,8 +12,6 @@ import sys
 import tarfile
 import venv
 import zipfile
-
-import pytest
 
 
 CLIENT_ROOT = Path(__file__).parents[1]

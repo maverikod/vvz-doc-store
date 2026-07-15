@@ -211,15 +211,42 @@ def test_0001_then_0003_round_trip_constraints_and_root_preservation(
         }
         assert names == ROOT_TABLES | T003_TABLES
 
+        doc = uuid4()
+        chapter = uuid4()
+        paragraph = uuid4()
         chunk = uuid4()
+        connection.execute(
+            text(
+                "INSERT INTO documents "
+                "(id, source_upload_id, source_version, title, processing_status, processing_attempt, block_meta) "
+                "VALUES (:id, :id, 1, 'doc', 'pending', 0, '{}'::jsonb)"
+            ),
+            {"id": doc},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO chapters "
+                "(id, document_id, order_index, level, source_start, source_end, block_meta) "
+                "VALUES (:id, :doc, 0, 1, 0, 10, '{}'::jsonb)"
+            ),
+            {"id": chapter, "doc": doc},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO paragraphs "
+                "(id, document_id, chapter_id, order_index, text, source_start, source_end, search_weight, block_meta) "
+                "VALUES (:id, :doc, :chapter, 0, 'searchable', 0, 10, 1, '{}'::jsonb)"
+            ),
+            {"id": paragraph, "doc": doc, "chapter": chapter},
+        )
         connection.execute(
             text(
                 "INSERT INTO semantic_chunks "
                 "(id, document_id, paragraph_id, chapter_id, order_index, text, "
                 "source_start, source_end, char_count, search_weight, block_meta) "
-                "VALUES (:id, :id, :id, :id, 0, 'searchable', 0, 10, 10, 1, '{}'::jsonb)"
+                "VALUES (:id, :doc, :paragraph, :chapter, 0, 'searchable', 0, 10, 10, 1, '{}'::jsonb)"
             ),
-            {"id": chunk},
+            {"id": chunk, "doc": doc, "paragraph": paragraph, "chapter": chapter},
         )
         connection.execute(
             text("INSERT INTO semantic_chunk_tokens VALUES (:id, 'tokens', 0, 'one')"),

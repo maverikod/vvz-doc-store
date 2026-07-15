@@ -19,28 +19,28 @@ def _payload(model: Any, *, omit_none: bool = True) -> dict[str, Any]:
     """Return fields in declaration order using their public server names."""
 
     result: dict[str, Any] = {}
-    for field in fields(model):
-        value = getattr(model, field.name)
+    for model_field in fields(model):
+        value = getattr(model, model_field.name)
         if omit_none and value is None:
             continue
         if isinstance(value, tuple):
             value = list(value)
-        result[field.name] = value
+        result[model_field.name] = value
     return result
 
 
 def _read(cls: type[Any], payload: Payload) -> Any:
     """Build a model while rejecting unknown server fields deterministically."""
 
-    known = {field.name for field in fields(cls)}
+    known = {model_field.name for model_field in fields(cls)}
     unknown = sorted(set(payload) - known)
     if unknown:
         raise ValueError(f"unknown {cls.__name__} fields: {', '.join(unknown)}")
     return cls(
         **{
-            field.name: payload[field.name]
-            for field in fields(cls)
-            if field.name in payload
+            model_field.name: payload[model_field.name]
+            for model_field in fields(cls)
+            if model_field.name in payload
         }
     )
 

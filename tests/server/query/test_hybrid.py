@@ -9,7 +9,6 @@ import pytest
 from chunk_metadata_adapter import (
     ChunkQueryResponse,
     HybridSearchConfig,
-    HybridSearchHelper,
     HybridStrategy,
     SearchResult,
     SemanticChunk,

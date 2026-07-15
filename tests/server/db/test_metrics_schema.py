@@ -251,9 +251,9 @@ def test_0001_then_0002_round_trip_and_constraints_on_isolated_postgresql(
         connection.execute(text("INSERT INTO semantic_chunks (id, document_id, paragraph_id, chapter_id, order_index, text, source_start, source_end, char_count, search_weight, block_meta) VALUES (:id, :doc, :paragraph, :chapter, 0, 't', 0, 1, 1, 1, '{}'::jsonb)"), {"id": chunk, "doc": doc, "paragraph": paragraph, "chapter": chapter})
         assert connection.execute(text("SELECT count(*) FROM semantic_chunk_metrics WHERE chunk_uuid = :id"), {"id": chunk}).scalar() == 0
         connection.execute(text("INSERT INTO semantic_chunk_metrics (chunk_uuid, quality_score, matches) VALUES (:id, 0, 0)"), {"id": chunk})
-        with pytest.raises(Exception):
+        with pytest.raises(Exception), connection.begin_nested():
             connection.execute(text("INSERT INTO semantic_chunk_metrics (chunk_uuid) VALUES (:id)"), {"id": chunk})
-        with pytest.raises(Exception):
+        with pytest.raises(Exception), connection.begin_nested():
             connection.execute(text("INSERT INTO semantic_chunk_feedback (chunk_uuid, accepted) VALUES (:id, -1)"), {"id": chunk})
         connection.execute(text("INSERT INTO semantic_chunk_feedback (chunk_uuid, accepted, rejected, modifications) VALUES (:id, 0, 0, 0)"), {"id": chunk})
         assert connection.execute(text("SELECT accepted, rejected, modifications FROM semantic_chunk_feedback WHERE chunk_uuid = :id"), {"id": chunk}).one() == (0, 0, 0)

@@ -1,0 +1,53 @@
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8000,
+    "protocol": "https",
+    "servername": "doc-store",
+    "advertised_host": "doc-store",
+    "debug": false,
+    "log_level": "INFO",
+    "log_dir": "/var/log/doc-store",
+    "ssl": {
+      "cert": "/etc/doc-store/mtls/server.crt",
+      "key": "/etc/doc-store/mtls/server.key",
+      "ca": "/etc/doc-store/mtls/ca.crt",
+      "check_hostname": false
+    }
+  },
+  "registration": {
+    "enabled": true,
+    "protocol": "https",
+    "register_url": "https://mcp-proxy.techsup.od.ua:3004/register",
+    "unregister_url": "https://mcp-proxy.techsup.od.ua:3004/unregister",
+    "heartbeat_interval": 30,
+    "ssl": {
+      "ca": null,
+      "crl": null,
+      "dnscheck": false,
+      "check_hostname": false
+    },
+    "server_id": "doc-store-vvz",
+    "server_name": "doc-store",
+    "metadata": {
+      "server_id": "doc-store-vvz",
+      "server_name": "doc-store",
+      "description": "doc-store MCP adapter server",
+      "version": "0.1.0"
+    },
+    "instance_uuid": "REPLACE_ON_INSTALL",
+    "auto_on_startup": true,
+    "auto_on_shutdown": true,
+    "heartbeat": {
+      "url": "https://mcp-proxy.techsup.od.ua:3004/proxy/heartbeat",
+      "interval": 30
+    }
+  },
+  "queue_manager": {
+    "enabled": true,
+    "in_memory": true,
+    "shutdown_timeout": 30,
+    "max_concurrent_jobs": 5,
+    "completed_job_retention_seconds": 21600
+  }
+}

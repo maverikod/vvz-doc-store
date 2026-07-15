@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+set -e
+
+DOC_STORE_USER="docstoreuesr"
+DOC_STORE_GROUP="docstoregrp"
+CONFIG_DIR="/etc/doc-store"
+DATA_DIR="/var/doc-store"
+LOG_DIR="/var/log/doc-store"
+SECRETS="${DATA_DIR}/secrets"
+
+create_user() {
+    if ! getent group "$DOC_STORE_GROUP" >/dev/null; then
+        addgroup --system "$DOC_STORE_GROUP"
+    fi
+    if ! id "$DOC_STORE_USER" >/dev/null 2>&1; then
+        adduser --system --ingroup "$DOC_STORE_GROUP" --no-create-home \
+            --shell /usr/sbin/nologin "$DOC_STORE_USER"
+    fi
+}
+
+write_uid_gid_env() {
+    uid="$(id -u "$DOC_STORE_USER")"
+    gid="$(getent group "$DOC_STORE_GROUP" | cut -d: -f3)"
+    touch "${CONFIG_DIR}/.env"
+    sed -i -e '/^DOC_STORE_UID=/d' -e '/^DOC_STORE_GID=/d' "${CONFIG_DIR}/.env"
+    if [[ -f /usr/share/doc-store/docker-image ]]; then
+        ver="$(sed -E 's/.*:([^:]+)$/\1/' /usr/share/doc-store/docker-image | tr -d '[:space:]')"
+        if [[ -n "$ver" ]]; then
+            sed -i -e '/^DOC_STORE_VERSION=/d' "${CONFIG_DIR}/.env"
+            echo "DOC_STORE_VERSION=${ver}" >> "${CONFIG_DIR}/.env"
+        fi
+    fi
+    {
+        echo "DOC_STORE_UID=${uid}"
+        echo "DOC_STORE_GID=${gid}"
+    } >> "${CONFIG_DIR}/.env"
+    chmod 644 "${CONFIG_DIR}/.env"
+}
+
+ensure_instance_uuid() {
+    config="${CONFIG_DIR}/config.json"
+    [[ -f "$config" ]] || return 0
+    if grep -q 'REPLACE_ON_INSTALL' "$config" 2>/dev/null; then
+        instance_uuid="$(cat /proc/sys/kernel/random/uuid)"
+        sed -i "s/REPLACE_ON_INSTALL/${instance_uuid}/g" "$config"
+    fi
+}
+
+create_layout() {
+    install -d -m 0750 -o root -g "$DOC_STORE_GROUP" "$CONFIG_DIR"
+    install -d -m 0750 -o "$DOC_STORE_USER" -g "$DOC_STORE_GROUP" \
+        "$DATA_DIR" "$LOG_DIR" "$SECRETS" "${DATA_DIR}/postgres/data"
+    if [[ -d "${CONFIG_DIR}/mtls" ]]; then
+        chown -R root:"$DOC_STORE_GROUP" "${CONFIG_DIR}/mtls"
+        chmod 0750 "${CONFIG_DIR}/mtls"
+        chmod 0640 "${CONFIG_DIR}/mtls"/* 2>/dev/null || true
+    fi
+    if [[ ! -f "${SECRETS}/.env" ]]; then
+        if [[ -f /usr/share/doc/doc-store-server/secrets.env.template ]]; then
+            cp /usr/share/doc/doc-store-server/secrets.env.template "${SECRETS}/.env"
+        fi
+        if grep -q CHANGE_ME_APP "${SECRETS}/.env" 2>/dev/null; then
+            app_pw="$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)"
+            sed -i "s/CHANGE_ME_APP/${app_pw}/g" "${SECRETS}/.env"
+        fi
+        chown "$DOC_STORE_USER:$DOC_STORE_GROUP" "${SECRETS}/.env"
+        chmod 0640 "${SECRETS}/.env"
+    fi
+    chown -R "$DOC_STORE_USER:$DOC_STORE_GROUP" "$DATA_DIR" "$LOG_DIR"
+    chown -R 999:999 "${DATA_DIR}/postgres/data" 2>/dev/null || true
+}
+
+create_user
+create_layout
+write_uid_gid_env
+ensure_instance_uuid
+systemctl daemon-reload || true
+systemctl enable doc-store.service >/dev/null 2>&1 || true
+
+exit 0

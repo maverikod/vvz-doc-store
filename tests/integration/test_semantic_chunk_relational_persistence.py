@@ -14,6 +14,7 @@ import pytest
 from chunk_metadata_adapter import SemanticChunk
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from doc_store_server.db.semantic_chunk_mapper import from_rows, to_rows
 from doc_store_server.db.semantic_chunk_repository import SemanticChunkRepository
@@ -153,6 +154,13 @@ def _database_url() -> str | None:
     return url.replace("postgresql+psycopg://", "postgresql+asyncpg://").replace("postgresql://", "postgresql+asyncpg://")
 
 
+def _sync_database_url() -> str | None:
+    url = os.getenv("DOC_STORE_TEST_DATABASE_URL") or os.getenv("DATABASE_URL")
+    if not url or "postgres" not in url:
+        return None
+    return url.replace("postgresql+asyncpg://", "postgresql+psycopg://").replace("postgresql://", "postgresql+psycopg://")
+
+
 def _load_migration(name: str) -> Any:
     path = MIGRATIONS / f"{name}.py"
     spec = importlib.util.spec_from_file_location(name, path)
@@ -183,7 +191,11 @@ def database() -> Iterator[tuple[async_sessionmaker[AsyncSession], str]]:
         pytest.skip("asyncpg is required for PostgreSQL integration")
 
     schema = f"semantic_chunk_integration_{uuid4().hex}"
-    engine = create_async_engine(url, connect_args={"server_settings": {"search_path": f'"{schema}",public'}})
+    engine = create_async_engine(
+        url,
+        connect_args={"server_settings": {"search_path": f'"{schema}",public'}},
+        poolclass=NullPool,
+    )
 
     async def setup() -> None:
         async with engine.begin() as connection:
@@ -301,19 +313,24 @@ def test_stale_child_replacement_and_concurrent_writes_never_mix_aggregates(data
 def test_migration_downgrade_upgrade_boundaries_preserve_prior_schema(database) -> None:
     async def scenario() -> None:
         _, schema = database
-        url = _database_url()
+        url = _sync_database_url()
         assert url is not None
         from sqlalchemy import create_engine
+        from alembic.migration import MigrationContext
+        from alembic.operations import Operations
 
         engine = create_engine(url)
         with engine.begin() as connection:
             connection.exec_driver_sql(f'SET search_path TO "{schema}", public')
-            for name in reversed(MIGRATION_NAMES[1:]):
-                _load_migration(name).downgrade()
+            context = MigrationContext.configure(connection)
+            with Operations.context(context):
+                for name in reversed(MIGRATION_NAMES[1:]):
+                    _load_migration(name).downgrade()
             names = {row[0] for row in connection.exec_driver_sql("SELECT tablename FROM pg_tables WHERE schemaname = current_schema()").all()}
             assert names == {"documents", "chapters", "paragraphs", "semantic_chunks"}
-            for name in MIGRATION_NAMES[1:]:
-                _load_migration(name).upgrade()
+            with Operations.context(context):
+                for name in MIGRATION_NAMES[1:]:
+                    _load_migration(name).upgrade()
             names = {row[0] for row in connection.exec_driver_sql("SELECT tablename FROM pg_tables WHERE schemaname = current_schema()").all()}
             assert {"semantic_chunk_metrics", "semantic_chunk_feedback", "semantic_chunk_tokens", "semantic_chunk_tags", "semantic_chunk_links", "semantic_chunk_embeddings"} <= names
         engine.dispose()

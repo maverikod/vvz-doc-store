@@ -1,0 +1,38 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: doc_store
+      POSTGRES_USER: doc_store
+      POSTGRES_PASSWORD: doc_store
+    ports:
+      - "15432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U doc_store -d doc_store"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  doc-store:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      DOC_STORE_UID: "${DOC_STORE_UID:-1000}"
+      DOC_STORE_GID: "${DOC_STORE_GID:-1000}"
+      DATABASE_URL: postgresql+psycopg://doc_store:doc_store@postgres:5432/doc_store
+      DOC_STORE_HOST: 0.0.0.0
+      DOC_STORE_PORT: "8000"
+      DOC_STORE_PROTOCOL: http
+      DOC_STORE_DEBUG: "false"
+      DOC_STORE_LOG_LEVEL: info
+      DOC_STORE_QUEUE_ENABLED: "false"
+    ports:
+      - "18080:8000"
+    volumes:
+      - ./tmp/doc-store/etc:/etc/doc-store
+      - ./tmp/doc-store/data:/var/doc-store
+      - ./tmp/doc-store/log:/var/log/doc-store
+    depends_on:
+      postgres:
+        condition: service_healthy

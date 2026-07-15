@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Mapping
+import json
+import logging
+import os
+from pathlib import Path
 from typing import Any
 
 from mcp_proxy_adapter.api.app import create_app
@@ -11,10 +15,71 @@ from mcp_proxy_adapter.commands.command_registry import CommandRegistry, registr
 from mcp_proxy_adapter.commands.hooks import hooks
 from mcp_proxy_adapter.core.server_engine import ServerEngineFactory
 
-from doc_store_server.commands.registration import register_doc_store_commands
+from doc_store_server.commands.registration import (
+    register_doc_store_commands as register_doc_store_commands,
+)
+from doc_store_server.db.health import check_database_health, database_url_from_config
 
 
 ServerConfig = Mapping[str, Any]
+logger = logging.getLogger(__name__)
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_int(name: str, default: int) -> int:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return int(value)
+
+
+def default_config_from_env() -> dict[str, Any]:
+    """Build the minimal adapter config required for a valid runtime startup."""
+
+    database_url = os.getenv("DOC_STORE_DATABASE_URL") or os.getenv("DATABASE_URL")
+    database_connect_timeout = _env_int("DOC_STORE_DATABASE_CONNECT_TIMEOUT", 3)
+    config: dict[str, Any] = {
+        "server": {
+            "host": os.getenv("DOC_STORE_HOST", "0.0.0.0"),
+            "port": _env_int("DOC_STORE_PORT", 8000),
+            "protocol": os.getenv("DOC_STORE_PROTOCOL", "http"),
+            "debug": _env_bool("DOC_STORE_DEBUG", False),
+            "log_level": os.getenv("DOC_STORE_LOG_LEVEL", "info"),
+        },
+        "queue_manager": {
+            "enabled": _env_bool("DOC_STORE_QUEUE_ENABLED", False),
+        },
+    }
+    if database_url:
+        config["database"] = {"url": database_url, "connect_timeout": database_connect_timeout}
+    return config
+
+
+def load_config(config_path: str | None = None) -> dict[str, Any]:
+    """Load adapter config from a JSON file and add runtime secrets from env."""
+
+    path = config_path or os.getenv("DOC_STORE_CONFIG")
+    if path:
+        config = json.loads(Path(path).read_text(encoding="utf-8"))
+    else:
+        config = default_config_from_env()
+
+    database_url = os.getenv("DOC_STORE_DATABASE_URL") or os.getenv("DATABASE_URL")
+    if database_url:
+        database = dict(config.get("database") or {})
+        database["url"] = database_url
+        database["connect_timeout"] = _env_int(
+            "DOC_STORE_DATABASE_CONNECT_TIMEOUT",
+            int(database.get("connect_timeout", 3) or 3),
+        )
+        config["database"] = database
+    return config
 
 
 def initialize_command_registry(command_registry: CommandRegistry) -> int:
@@ -52,30 +117,63 @@ def create_server_application(config: ServerConfig | None = None) -> Any:
 def run_server(config: ServerConfig | None = None) -> None:
     """Run the adapter server engine with adapter-owned transport handling."""
 
-    server_config = dict((config or {}).get("server", {}))
-    application = create_server_application(config)
+    runtime_config = dict(config or default_config_from_env())
+    _probe_database_without_startup_failure(runtime_config)
+    server_config = dict(runtime_config.get("server", {}))
+    application = create_server_application(runtime_config)
     engine = ServerEngineFactory.get_engine("hypercorn")
     if engine is None:
         raise RuntimeError("mcp-proxy-adapter hypercorn engine is unavailable")
 
+    engine_config: dict[str, Any] = {
+        "host": server_config.get("host", "127.0.0.1"),
+        "port": server_config.get("port", 8000),
+        "log_level": server_config.get("log_level", "info"),
+        "reload": False,
+    }
+    ssl_config = server_config.get("ssl")
+    if isinstance(ssl_config, Mapping):
+        if ssl_config.get("cert"):
+            engine_config["certfile"] = ssl_config["cert"]
+        if ssl_config.get("key"):
+            engine_config["keyfile"] = ssl_config["key"]
+        if ssl_config.get("ca"):
+            engine_config["ca_certs"] = ssl_config["ca"]
+        if ssl_config.get("check_hostname") is not None:
+            engine_config["check_hostname"] = bool(ssl_config["check_hostname"])
+
     engine.run_server(
         application,
-        {
-            "host": server_config.get("host", "127.0.0.1"),
-            "port": server_config.get("port", 8000),
-            "log_level": server_config.get("log_level", "info"),
-            "reload": False,
-        },
+        engine_config,
     )
+
+
+def _probe_database_without_startup_failure(config: ServerConfig) -> None:
+    """Log database status but never prevent command/help server startup."""
+
+    database = config.get("database") if isinstance(config, Mapping) else None
+    connect_timeout = 3
+    if isinstance(database, Mapping):
+        connect_timeout = int(database.get("connect_timeout", connect_timeout) or connect_timeout)
+    status = check_database_health(
+        database_url_from_config(config),
+        connect_timeout=connect_timeout,
+    )
+    if status.ok:
+        logger.info("Database connectivity ok: %s", status.as_dict())
+    elif status.configured:
+        logger.warning("Database connectivity unavailable; server stays up: %s", status.as_dict())
+    else:
+        logger.info("Database URL is not configured; server starts without DB binding")
 
 
 def main() -> None:
     """Start doc-store through the installed adapter runtime."""
 
     parser = argparse.ArgumentParser(description="doc-store adapter server")
-    parser.add_argument("--config", type=str, default=None)
-    parser.parse_args()
-    run_server()
+    parser.add_argument("--config", type=str, default=os.getenv("DOC_STORE_CONFIG"))
+    args = parser.parse_args()
+    run_server(load_config(args.config))
 
 
 if __name__ == "__main__":

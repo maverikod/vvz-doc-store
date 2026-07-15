@@ -10,7 +10,6 @@ from typing import Any
 import pytest
 
 from doc_store_server.server_manager import (
-    ApplicationAssembler,
     ConfigurationError,
     LifecycleError,
     ServerConfig,

@@ -1,0 +1,20 @@
+[Unit]
+Description=doc-store container stack
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/etc/doc-store
+EnvironmentFile=-/etc/default/doc-store
+ExecStartPre=/usr/lib/doc-store/bin/doc-store-init-locales
+ExecStartPre=-/bin/sh -c 'docker network inspect smart-assistant >/dev/null 2>&1 || docker network create smart-assistant'
+ExecStartPre=-/usr/bin/docker compose -f /etc/doc-store/docker-compose.yml pull
+ExecStart=/usr/bin/docker compose -f /etc/doc-store/docker-compose.yml up -d
+ExecStop=/usr/bin/docker compose -f /etc/doc-store/docker-compose.yml down
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from sqlalchemy import delete, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .link_embedding_metadata_schema import (
@@ -63,14 +64,10 @@ class SemanticChunkRepository:
             embedding_active=embedding_active,
         )
         async with self._session.begin():
+            await self._upsert_root(rows.root)
             root = await self._lock_root(rows.root["id"])
             if root is None:
-                root = SemanticChunkRow(**dict(rows.root))
-                self._session.add(root)
-            else:
-                for key, value in rows.root.items():
-                    setattr(root, key, value)
-            await self._session.flush()
+                raise SemanticChunkNotFoundError(f"semantic chunk not found after upsert: {rows.root['id']}")
 
             await self._replace_metrics(rows.root["id"], rows.metrics, rows.feedback)
             await self._replace_ordered_children(rows)
@@ -124,6 +121,21 @@ class SemanticChunkRepository:
                 .with_for_update()
             )
         ).scalar_one_or_none()
+
+    async def _upsert_root(self, row: RootRow) -> None:
+        values = dict(row)
+        update_values = {
+            key: value for key, value in values.items() if key != "id"
+        }
+        statement = (
+            pg_insert(SemanticChunkRow)
+            .values(**values)
+            .on_conflict_do_update(
+                index_elements=[SemanticChunkRow.id],
+                set_=update_values,
+            )
+        )
+        await self._session.execute(statement)
 
     async def _replace_metrics(
         self,
@@ -226,10 +238,15 @@ class SemanticChunkRepository:
             values = {
                 key: value
                 for key, value in payload.items()
-                if key not in {"id", "chunk_uuid"}
+                if key not in {"id", "chunk_uuid"} and not (key == "created_at" and value is None)
             }
             if existing is None:
-                self._session.add(SemanticChunkEmbedding(**dict(payload)))
+                insert_values = {
+                    key: value
+                    for key, value in payload.items()
+                    if not (key == "created_at" and value is None)
+                }
+                self._session.add(SemanticChunkEmbedding(**insert_values))
             else:
                 for key, value in values.items():
                     setattr(existing, key, value)

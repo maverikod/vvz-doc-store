@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, TypeAlias
+from typing import TypeAlias
 from uuid import UUID, uuid4
 
 from chunk_metadata_adapter import SemanticChunk

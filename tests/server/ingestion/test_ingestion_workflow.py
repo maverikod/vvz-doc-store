@@ -32,7 +32,7 @@ from doc_store_server.ingestion.source_normalizer import (
     FormatFilter,
     normalize_source,
 )
-from doc_store_server.ingestion.svo_chunking import SvoChunkingError, chunk_normalized_request
+from doc_store_server.ingestion.svo_chunking import chunk_normalized_request
 
 
 DOCUMENT_ID = UUID("12345678-1234-4234-8234-123456789abc")

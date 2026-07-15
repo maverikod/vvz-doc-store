@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+DEFAULT_FILE="${DOC_STORE_DEFAULT_FILE:-/etc/default/doc-store}"
+LOCALES="${DOC_STORE_LOCALES:-}"
+
+if [[ -f "$DEFAULT_FILE" ]]; then
+    # shellcheck disable=SC1090
+    source "$DEFAULT_FILE"
+    LOCALES="${DOC_STORE_LOCALES:-$LOCALES}"
+fi
+
+if [[ -z "${LOCALES// }" ]]; then
+    exit 0
+fi
+
+if ! command -v locale-gen >/dev/null 2>&1; then
+    echo "ERROR: locale-gen is unavailable; install the locales package" >&2
+    exit 1
+fi
+
+for locale_name in $LOCALES; do
+    locale_entry="$locale_name"
+    if [[ "$locale_entry" != *.* ]]; then
+        locale_entry="${locale_entry}.UTF-8"
+    fi
+    if ! grep -Eq "^[# ]*${locale_entry}[[:space:]]+UTF-8" /etc/locale.gen; then
+        echo "${locale_entry} UTF-8" >> /etc/locale.gen
+    fi
+    sed -i -E "s/^# *(${locale_entry}[[:space:]]+UTF-8)/\\1/" /etc/locale.gen
+done
+
+locale-gen

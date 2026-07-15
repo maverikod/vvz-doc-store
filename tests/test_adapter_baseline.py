@@ -125,7 +125,6 @@ def test_main_and_spawn_worker_register_the_same_adapter_commands() -> None:
     import mcp_proxy_adapter
     from doc_store_server.main import (
         initialize_command_registry,
-        initialize_spawned_worker,
         register_doc_store_commands,
     )
 

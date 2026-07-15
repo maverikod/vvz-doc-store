@@ -14,6 +14,7 @@ import pytest
 from chunk_metadata_adapter import SemanticChunk
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from doc_store_server.db.semantic_chunk_mapper import from_rows, to_rows
 from doc_store_server.db.semantic_chunk_repository import (
@@ -185,7 +186,11 @@ def db() -> Iterator[tuple[async_sessionmaker[AsyncSession], Any]]:
     except ImportError:
         pytest.skip("asyncpg is required for repository integration")
     schema = f"semantic_chunk_test_{uuid4().hex}"
-    engine = create_async_engine(url, connect_args={"server_settings": {"search_path": f'"{schema}",public'}})
+    engine = create_async_engine(
+        url,
+        connect_args={"server_settings": {"search_path": f'"{schema}",public'}},
+        poolclass=NullPool,
+    )
 
     async def setup() -> None:
         async with engine.begin() as connection:
