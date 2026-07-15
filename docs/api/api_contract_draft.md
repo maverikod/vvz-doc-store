@@ -6,7 +6,6 @@ Initial API surface:
 POST /api/v1/documents/text
 POST /api/v1/documents/file
 GET  /api/v1/documents/{document_id}
-POST /api/v1/query
 GET  /api/v1/vectorization/jobs/{job_id}
 ```
 
@@ -34,12 +33,3 @@ Output:
 - ingestion_id
 - filename
 - status
-
-## POST /api/v1/query
-
-Accepts SQL-like query text parsed by Lark.
-
-Output:
-
-- rows
-- diagnostics

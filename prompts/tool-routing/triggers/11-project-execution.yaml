@@ -1,0 +1,11 @@
+schema: codex.tool-trigger/v1
+id: project_execution
+priority: 11
+match:
+  intent: project_execution
+route:
+  adapter: ../CODEX_NATIVE_TOOLS_ADAPTER.yaml
+  help_packs:
+  - ../help/local-project-execution.yaml
+hard_rule: Load the runtime adapter and referenced help packs; preserve scope and
+  escalate rather than guess.

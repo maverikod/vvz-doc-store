@@ -1,24 +1,40 @@
-# doc-store — Хранилище документации
+# doc-store
 
-`doc-store` — сервис хранения и обработки документации.
+`doc-store` is a documentation ingestion, canonical storage, and retrieval
+system. The project publishes two products:
 
-Состав проекта:
+- `doc-store`, the server;
+- `doc-store-client`, the independently installable PyPI client.
 
-- `doc_store_client` — клиентская Python-библиотека для работы с API сервера.
-- `doc_store_filewatcher` — systemd-сервис, который следит за каталогами из конфига, выбирает файлы известных расширений и отправляет их на сервер через клиент.
-- `doc_store_server` — сервер, принимающий файлы или тексты, нормализующий их в JSON-объекты, раскладывающий текст в иерархию и сохраняющий данные в PostgreSQL.
-
-Основная модель текста:
+The server accepts document files and raw text, normalizes their content, and
+publishes a canonical hierarchy only after a complete ingestion succeeds:
 
 ```text
-Project / Book / large block
+Document
 └── Chapter
-    └── Paragraph(level: int)
-        ├── title
-        ├── body
-        └── Sentence(language: str)
+    └── Paragraph
+        └── SemanticChunk
 ```
 
-Параллельно работает векторизатор: для каждого параграфа строятся embedding-векторы. Если параграф слишком большой, он делится на семантические блоки скользящим окном.
+Ingestion is atomic, versioned, and idempotent. A partially built document
+version must never become visible. PostgreSQL is canonical storage, and
+pgvector provides the semantic index.
 
-Запросы к хранилищу выполняются через SQL-подобный язык на базе Lark.
+Semantic processing is delegated to established component boundaries:
+
+- `SvoChunkerClient` produces semantic chunks;
+- `EmbeddingClient` produces vector representations;
+- `chunk-metadata-adapter` creates canonical `SemanticChunk` metadata.
+
+Retrieval supports full-text, semantic, and hybrid modes through the single
+public `ChunkQuery` contract.
+
+The server uses `mcp-proxy-adapter` as its exclusive runtime transport and
+platform boundary, including JSON-RPC, OpenAPI, authorization, TLS or mTLS,
+queues, WebSocket behavior, transfers, and proxy registration. The project does
+not add a parallel transport surface.
+
+`ServerManager` owns an explicit command manifest. The shared
+`register_doc_store_commands(registry)` hook registers the same command set in
+the main process and multiprocessing workers. `help` is derived from the live
+registry, and `info` contains synchronized server documentation.

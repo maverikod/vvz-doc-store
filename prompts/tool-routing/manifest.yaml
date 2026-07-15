@@ -1,0 +1,46 @@
+schema: codex.tool-routing-manifest/v1
+library_root: prompts/tool-routing
+runtime_adapters:
+  project_search_and_analysis: CODEX_MCP_PROXY_ADAPTER.yaml
+  plan_manager: CODEX_MCP_PROXY_ADAPTER.yaml
+  project_edit_and_execution: CODEX_NATIVE_TOOLS_ADAPTER.yaml
+loading_contract:
+- read the adapter selected by the matched trigger
+- select highest-precedence intent
+- read exactly one primary trigger
+- read only referenced help packs
+- use exact current tool schema
+trigger_precedence:
+- id: tool_error_recovery
+  file: triggers/00-tool-error-recovery.yaml
+- id: cross_search
+  file: triggers/01-cross-search.yaml
+- id: detailed_view
+  file: triggers/02-detailed-view.yaml
+- id: code_analysis
+  file: triggers/03-code-analysis.yaml
+- id: project_edit
+  file: triggers/04-project-edit.yaml
+- id: plan_read
+  file: triggers/05-plan-read.yaml
+- id: plan_authoring
+  file: triggers/06-plan-authoring.yaml
+- id: plan_verification
+  file: triggers/07-plan-verification.yaml
+- id: plan_execution
+  file: triggers/08-plan-execution.yaml
+- id: refactoring
+  file: triggers/09-refactoring.yaml
+- id: file_lifecycle
+  file: triggers/10-file-lifecycle.yaml
+- id: project_execution
+  file: triggers/11-project-execution.yaml
+- id: host_emergency
+  file: triggers/12-host-emergency.yaml
+ambiguity_rule: ask direct owner; never choose by convenience
+authority_matrix:
+  project_search_and_analysis: code_analysis_server_first
+  project_edit: local_apply_patch_only
+  project_execution: local_exec_command_with_explicit_workdir
+  normative_plan: plan_manager_via_mcp_proxy_only
+  proxy_or_ai_editor_project_mutation: forbidden

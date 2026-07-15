@@ -1,0 +1,11 @@
+schema: codex.tool-trigger/v1
+id: plan_read
+priority: 5
+match:
+  intent: plan_read
+route:
+  help_packs:
+  - ../help/plan-manager-core.yaml
+  - ../help/plan-manager-read.yaml
+hard_rule: Load the runtime adapter and referenced help packs; preserve scope and
+  escalate rather than guess.

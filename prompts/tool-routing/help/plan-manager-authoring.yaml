@@ -1,0 +1,68 @@
+schema: codex.command-help-pack/v1
+id: plan_manager_authoring
+intent: plan_authoring
+server:
+  route: mcp_proxy
+  server_id: planmgr
+  copy_number: 1
+context_compilation:
+  context_common:
+    required: [plan, node, child_level]
+    optional: [shared_concepts, revision, cascade_uuid]
+    child_level: [3, 4, 5]
+    returns: [common_block_id, hash, scope_concepts, blocks]
+  context_specific:
+    required: [plan, common_block_id, concepts]
+    invariant: concepts must be a subset of the common block scope
+    returns: [block_id, hash, common_block_id, scope_concepts, blocks]
+  context_bundle:
+    required: [plan, node, child_level, children]
+    optional: [shared_concepts, revision, cascade_uuid]
+    child_item:
+      ref: string
+      concepts: concept_id_array
+    returns: one stored common block and ordered child-specific delta blocks
+  block_get:
+    required: [plan, block_id]
+    returns: complete stored ContextBlock
+  block_list:
+    required: [plan]
+    optional: [node, kind, revision, cascade_uuid]
+    kind: [common, specific, compile]
+    returns: ordered summaries with block_id, hash, kind, node_path, child_level, revision_uuid, cascade_uuid
+  workflow:
+    preferred: context_bundle
+    equivalent_sequence: one context_common followed by one context_specific per child
+    retrieval: block_get
+    discovery_and_reuse: block_list
+  boundaries:
+    plan_to_GS: {node: plan, child_level: 3}
+    GS_to_TS: {node: G-NNN, child_level: 4}
+    TS_to_AS: {node: G-NNN/T-NNN, child_level: 5}
+  semantics:
+    - Concept ids join MRS concepts, source-labelled HRS fragments, and in-scope outgoing MRS relations.
+    - Common blocks contain the shared authoring template, standards, field schema, and optionally the parent step definition.
+    - Specific blocks are strict deltas over one common block.
+    - Blocks are stored and reused as derived records keyed by content hash and revision or cascade identity.
+    - revision and cascade_uuid are mutually exclusive.
+    - revision supports current head only; historical reconstruction is unavailable through live compilation.
+    - Open-cascade work must use cascade_uuid.
+    - Compilation does not mutate plan artifacts, head revision, export files, gate state, or cascade status.
+mutation_families:
+  HRS: [hrs_import, para_label_assign, para_mark_non_binding]
+  MRS: [concept_add, concept_update, concept_remove, relation_add, relation_remove]
+  steps: [step_create, step_update, step_move, step_delete, step_transition]
+  dependencies: [step_dependency_preview, step_dependency_apply, step_dependency_add, step_dependency_remove, step_dependency_set, step_dependency_clear]
+  cascade: [cascade_begin, cascade_preview, cascade_commit, cascade_abort]
+rules:
+  - Obtain live help for the exact mutating command before constructing parameters.
+  - Never invent or silently rewrite binding HRS.
+  - Use cascade discipline for frozen or upper-level normative changes.
+  - Preview cascade and dependency impact before commit.
+  - Commit only after the mechanical gate is green.
+  - Never create a local plan cascade as a substitute.
+  - Pass one common_block_id plus only the matching child-specific block_id to each child.
+  - Use the direct root/HRS-MRS -> GS -> TS -> AS owner chain; bridge dispatch is forbidden.
+  - Recommended broad-plan order is horizontal G creation and verification first, followed by vertical T -> A decomposition inside each dependency-ready G branch.
+  - Before descending from G to T, verify HRS/MRS coverage, duplicate ownership, boundaries, dependencies, execution order, and parallel-development options, then snapshot the G level.
+  - For each selected G branch, create all T, verify the T set reproduces G, immediately decompose each T to A, verify one A equals one target_file with inputs, outputs, dependencies, and a completion check, then snapshot the branch.

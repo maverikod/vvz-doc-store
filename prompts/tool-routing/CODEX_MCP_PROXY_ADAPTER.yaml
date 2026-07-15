@@ -1,0 +1,34 @@
+schema: codex.mcp-proxy-adapter/v1
+authority: current_session_callable_tool_catalog
+namespace_policy:
+  hardcoded_namespace: forbidden
+  rule: Discover the exact exposed MCP Proxy callable name and input schema before use.
+logical_operations:
+  list_servers: resolve registered downstream server id and copy
+  help: read MCP Proxy help and callable schema
+  health_check: inspect proxy or registered-server health
+  search_commands: discover candidate downstream commands only
+  call_server: invoke one resolved downstream command with its exact parameter object
+bootstrap:
+  - inspect the callable tools exposed to the current agent
+  - identify the MCP Proxy provider and exact schema for the required logical operation
+  - resolve the downstream server and copy with list_servers
+  - obtain downstream general or command-specific help through call_server when required
+  - invoke the downstream command through call_server with live-schema parameters
+hard_rules:
+  - Logical operation names do not guarantee a Codex namespace or generated function name.
+  - search_commands never substitutes for exact downstream command help.
+  - prepared cards are routing aids; live proxy and downstream schemas win.
+  - an absent proxy capability is an exact blocker, never authority for local project or plan access.
+official_documentation_limitation:
+  manual_helper: unavailable
+  evidence: missing required manual-integrity-header integrity header
+  consequence: no unobserved Codex capability is assumed
+
+bootstrap_hints:
+  project_id: "ff997eab-d809-4cb9-b805-9dff4df60c6d"
+  plan_service: "planmgr"
+  analysis_service: "code-analysis-server-vvz"
+  editor_service: "forbidden"
+  terminal_service: "local exec_command; no proxy terminal route"
+rule: Hints never override live registration, copy, version, help, or health discovery.

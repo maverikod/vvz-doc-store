@@ -1,0 +1,24 @@
+schema: codex.command-help-pack/v1
+id: plan_manager_execution
+intent: plan_execution
+server:
+  route: mcp_proxy
+  server_id: planmgr
+  copy_number: 1
+entry_requirements:
+  - committed plan revision
+  - green plan_validate result for the same scope and revision
+  - lifecycle-admitted executable steps
+command_cards:
+  graph_order: {use: deterministic topological order}
+  graph_parallel_map: {use: dependency waves by prerequisite depth}
+  graph_deps: {use: dependency neighborhood for one step}
+  graph_impact: {use: read-only transitive impact set}
+  plan_prompt_chain: {use: deterministic execution corpus, required: [plan, scope, role]}
+  branch_prompt: {use: one exact branch prompt}
+rules:
+  - A dependency cycle is a hard blocker.
+  - Pass only assembly selectors required by the child.
+  - Serialize same-file AS work by priority.
+  - Execute AS project changes through local native tools only.
+  - Runtime reporting does not imply lifecycle completion.

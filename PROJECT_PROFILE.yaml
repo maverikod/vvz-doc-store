@@ -1,0 +1,54 @@
+schema: codex.project-profile/v1
+project:
+  name: doc-store
+  root: /home/vasilyvz/projects/tools/doc-store
+language:
+  user_chat: Russian
+  artifacts: English
+planning:
+  enabled: true
+  authority: plan_manager_via_mcp_proxy
+  plan_name: doc-store
+  plan_uuid: b847fc0b-7180-4430-a1a3-820d93d8261c
+  expected_export_directory: docs/plans
+  expected_export_filenames: [source_spec.md, spec.yaml]
+  checked_in_plan_authoritative: false
+  checked_in_exports_must_be_byte_identical: true
+  recreate_local_plan_without_explicit_sync_task: false
+  authoring_context: plan_manager_common_plus_specific_blocks
+  authoring_owner_chain: [root_hrs_mrs, gs_owner, ts_owner, as_author]
+  authoring_dispatch: horizontal_g_then_vertical_ta_by_ready_g
+  authoring_process:
+    g_phase:
+      - create_all_g_without_t_or_a
+      - verify_hrs_mrs_coverage_no_duplication_boundaries_dependencies_order_and_parallelism
+      - snapshot_g_level
+    branch_phase:
+      - select_next_ready_g_branch_by_dependency_graph
+      - create_all_t_for_that_g
+      - verify_t_sum_semantically_reproduces_g
+      - immediately_decompose_each_t_to_a
+      - verify_a_file_scope_target_file_inputs_outputs_dependencies_and_completion_criteria
+      - snapshot_completed_g_branch
+      - repeat_for_next_ready_g
+  sibling_admission: serialized_when_required_for_four_slots
+  bridge_dispatch: forbidden
+project_access:
+  source_of_edit_truth: local_checkout
+  search: code_analysis_server_via_mcp_proxy_first
+  viewing: code_analysis_server_detailed_preview_first
+  analysis: code_analysis_server_via_mcp_proxy_first
+  code_analysis_project_id: ff997eab-d809-4cb9-b805-9dff4df60c6d
+  code_analysis_server_id: code-analysis-server-vvz
+  editing: local_apply_patch_only
+  git_and_execution: local_exec_command
+  proxy_project_mutation: forbidden
+  ai_editor: forbidden
+verification:
+  default_test_command: pytest
+  default_lint_command: "ruff check ."
+  default_typecheck_command: "mypy ."
+prompt_bundle:
+  variant: local
+  orchestration_contract: prompts/codex/ORCHESTRATION_CONTRACT.md
+  tool_routing_manifest: prompts/tool-routing/manifest.yaml

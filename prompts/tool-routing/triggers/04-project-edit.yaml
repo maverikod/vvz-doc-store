@@ -1,0 +1,12 @@
+schema: codex.tool-trigger/v1
+id: project_edit
+priority: 4
+match:
+  intent: project_edit
+route:
+  adapter: ../CODEX_NATIVE_TOOLS_ADAPTER.yaml
+  help_packs:
+  - ../help/local-editing.yaml
+hard_rule: Load the runtime adapter and referenced help packs; preserve scope and
+  escalate rather than guess.
+mutation_boundary: Local apply_patch only; Code Analysis Server and proxy or AI Editor mutation are forbidden.

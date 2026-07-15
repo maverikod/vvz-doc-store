@@ -1,0 +1,11 @@
+schema: codex.tool-trigger/v1
+id: tool_error_recovery
+priority: 0
+match:
+  intent: error_recovery
+route:
+  help_packs:
+  - ../help/tool-error-recovery.yaml
+  - ../help/server-error-recovery.yaml
+hard_rule: Load the runtime adapter and referenced help packs; preserve scope and
+  escalate rather than guess.

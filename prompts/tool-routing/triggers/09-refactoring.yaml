@@ -1,0 +1,17 @@
+schema: codex.tool-trigger/v1
+id: refactoring
+priority: 9
+match:
+  intent: refactoring
+route:
+  adapters:
+  - ../CODEX_MCP_PROXY_ADAPTER.yaml
+  - ../CODEX_NATIVE_TOOLS_ADAPTER.yaml
+  help_packs:
+  - ../help/cas-code-analysis.yaml
+  - ../help/cas-detailed-preview.yaml
+  - ../help/local-refactoring.yaml
+  - ../help/local-file-lifecycle.yaml
+  - ../help/local-editing.yaml
+hard_rule: Load the runtime adapter and referenced help packs; preserve scope and
+  escalate rather than guess.

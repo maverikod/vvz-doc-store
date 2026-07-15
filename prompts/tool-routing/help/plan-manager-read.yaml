@@ -1,0 +1,22 @@
+schema: codex.command-help-pack/v1
+id: plan_manager_read
+intent: plan_read
+server:
+  route: mcp_proxy
+  server_id: planmgr
+  copy_number: 1
+command_cards:
+  plan_list: {use: locate plans and project bindings}
+  plan_status: {use: read lifecycle, revision, gate, and scoring summary, required: [plan]}
+  para_list: {use: list HRS paragraphs, required: [plan]}
+  para_get: {use: read one HRS paragraph, required: [plan, label]}
+  concept_list: {use: list MRS concepts, required: [plan]}
+  concept_get: {use: read one complete MRS concept, required: [plan, concept_id]}
+  relation_list: {use: list typed MRS relations, required: [plan]}
+  concept_coverage: {use: read concept coverage, required: [plan, concept_id]}
+  step_tree: {use: read authoritative GS TS AS tree and step status, required: [plan]}
+rules:
+  - Treat binding HRS as human-owned.
+  - Use concept_get when full concept properties are required.
+  - Do not infer lifecycle status from runtime reports.
+  - Do not read local plan artifacts as a fallback.

@@ -1,0 +1,130 @@
+schema: codex.command-help-pack/v1
+id: cas_code_analysis
+server:
+  server_id: code-analysis-server-vvz
+  copy_number: 1
+  project_id: ff997eab-d809-4cb9-b805-9dff4df60c6d
+
+selection_rule: Use the narrowest structural or analysis command first.
+
+command_cards:
+  search_ast_nodes:
+    use: Locate indexed classes, functions, or methods structurally.
+    required: [project_id]
+    key_optional: [node_type, file_path, limit]
+
+  get_ast:
+    use: Retrieve the AST for one Python file.
+    required: [project_id, file_path]
+    key_optional:
+      include_json: "true for full AST; false for metadata/existence"
+
+  ast_statistics:
+    use: Measure AST/entity coverage for a project or file.
+    required: [project_id]
+    key_optional: [file_path]
+
+  file_structure:
+    use: Map classes, methods, and top-level functions in one Python file.
+    required: [project_id, file_path]
+    critical_params:
+      include_functions: "default true"
+
+  list_code_entities:
+    use: Enumerate classes, functions, or methods.
+    required: [project_id]
+    key_optional: [entity_type, file_path, page_size, block_position]
+
+  get_code_entity_info:
+    use: Resolve one known entity in detail.
+    required: [project_id, entity_type, entity_name]
+    disambiguators: [file_path, line, target_class]
+
+  find_usages:
+    use: Find references to a symbol.
+    required: [project_id, target_name]
+    disambiguators: [target_type, target_class, file_path]
+
+  find_dependencies:
+    use: Find where an entity is used.
+    required: [project_id, entity_name]
+    disambiguators: [entity_type, target_class]
+
+  get_entity_dependencies:
+    use: Find callees/entities used by a target.
+    required: [project_id, entity_type]
+    identity: "entity_id or entity_name"
+
+  get_entity_dependents:
+    use: Find callers/entities depending on a target.
+    required: [project_id, entity_type]
+    identity: "entity_id or entity_name"
+
+  get_class_hierarchy:
+    use: Inspect inheritance.
+    required: [project_id]
+    key_optional: [class_name, file_path]
+
+  get_imports:
+    use: Inspect imports for a project or file.
+    required: [project_id]
+    key_optional: [file_path, import_type, module_name, limit, offset]
+
+  analyze_tree:
+    use: Analyze package boundaries, dependencies, structure, cycles, or dead code.
+    required: [project_id, roots, mode]
+    modes: [package_boundary, dependencies, structure, cycles, dead_code]
+    critical_defaults:
+      format: json
+      include_stdlib: false
+
+  analyze_complexity:
+    use: Cyclomatic complexity by project or file.
+    required: [project_id]
+    key_optional: [file_path, min_complexity]
+
+  find_duplicates:
+    use: AST-normalized duplicate detection.
+    required: [project_id]
+    critical_defaults:
+      min_lines: 5
+      min_similarity: 0.8
+      use_semantic: true
+
+  comprehensive_analysis:
+    use: Queued broad quality analysis.
+    required: [project_id]
+    critical_defaults:
+      max_lines: 400
+      core_checks: true
+    monitor_with: [queue_get_job_status, queue_get_job_logs]
+    read_saved_with: get_comprehensive_analysis_results
+
+  lint_code:
+    use: Flake8 one Python file.
+    required: [project_id, file_path]
+
+  type_check_code:
+    use: Mypy one Python file.
+    required: [project_id, file_path]
+
+  list_long_files:
+    use: Find files over a line threshold.
+    required: [project_id]
+    default_max_lines: 400
+
+  list_errors_by_category:
+    use: Group indexed code errors.
+    required: [project_id]
+
+workflow:
+  - select structural command by intent
+  - use CAS cross-search only for unknown candidate discovery
+  - verify relevant files with universal_file_preview
+  - retain exact entity/file evidence
+
+hard_errors:
+  PROJECT_NOT_FOUND: rediscover project_id
+  ENTITY_NOT_FOUND: refine identity or escalate ambiguity
+  AST_NOT_FOUND: check indexing and file identity
+  VALIDATION_ERROR: obtain exact live help

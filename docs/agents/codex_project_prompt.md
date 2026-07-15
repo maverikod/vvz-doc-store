@@ -1,29 +1,65 @@
-# Codex project prompt - doc-store
+# Codex project context: doc-store
 
-Read actual standards moved from planning first:
-1. docs/standards/originals/planning_README.md
-2. docs/standards/originals/terminal_workflow.yaml
-3. docs/standards/originals/atomic_step_creation_standard.yaml
-4. docs/standards/originals/code_analysis_fs_instructions.yaml
-5. docs/standards/originals/code_analysis_search_instructions.yaml
-6. docs/standards/originals/code_analysis_universal_editing_instructions.yaml
-7. docs/standards/originals/editor_ca_workflow_prompt.yaml
-8. docs/standards/originals/hrs_mrs_gs_consistency_verification_standard.yaml
-9. docs/standards/originals/metadatastd.yaml
-10. docs/standards/originals/plan_standard_machine.yaml
-11. docs/standards/originals/tactical_step_creation_standard.yaml
+## Authority split
 
-Then read project structure and plan cascade:
-1. docs/architecture/file_structure.md
-2. docs/plans/doc-store/source_spec.md
-3. docs/plans/doc-store/spec.yaml
-4. docs/plans/doc-store/G-*/README.yaml
-5. docs/plans/doc-store/G-*/T-*/README.yaml
+Use Code Analysis Server project `ff997eab-d809-4cb9-b805-9dff4df60c6d`
+through MCP Proxy first for project search, detailed preview, AST, usage,
+dependency, import, complexity, duplication, lint, type, and quality analysis.
+Use the checkout at `/home/vasilyvz/projects/tools/doc-store` for project
+content mutation, Git, tests, builds, and project execution. Editing is local
+`apply_patch` only; proxy mutation, CAS mutation, and AI Editor are prohibited.
 
-OpenAI model analogs:
-- frontier reasoning: GPT-5.5
-- balanced coding: GPT-5.4
-- fast checks: GPT-5.4 mini or GPT-5.4 nano
-- embedding models are used only inside vectorizer provider layer.
+Use the registered `doc-store` plan in Plan Manager through MCP Proxy as the
+only normative plan truth. Files in the configured local plan-export directory,
+when present, must be byte-identical copies produced by `plan_export`; they are
+explicitly non-normative and must not be reconstructed or edited. Do not use
+them to answer current plan-state questions when Plan Manager is available.
 
-Rules: source_spec is HRS; spec.yaml is MRS; G-* is GS; T-* is TS. Use zero-trust reread. Do not bypass cascade order. AS touches exactly one code file.
+## Product boundary
+
+The plan defines two published products:
+
+- `doc-store`, the documentation server;
+- `doc-store-client`, the independently installable PyPI client.
+
+The server uses `mcp-proxy-adapter` exclusively for transport, JSON-RPC,
+OpenAPI, authorization, TLS or mTLS, queues, WebSocket behavior, and proxy
+registration. Do not introduce a separate FastAPI or REST transport surface.
+
+## Domain and storage model
+
+The canonical hierarchy is:
+
+`Document -> Chapter -> Paragraph -> SemanticChunk`
+
+PostgreSQL is canonical storage and pgvector is the semantic index. Document
+ingestion is atomic, versioned, and idempotent; a partially built document
+version must never become visible.
+
+Chunking uses `SvoChunkerClient`. Embeddings use `EmbeddingClient`. Canonical
+`SemanticChunk` metadata is produced through `chunk-metadata-adapter`.
+
+## Search and command surface
+
+Support full-text, semantic, and hybrid search. `ChunkQuery` is the single
+public search contract.
+
+`ServerManager` owns an explicit command manifest. A single
+`register_doc_store_commands(registry)` hook must register the same command set
+in the main process and multiprocessing workers. `help` is generated from the
+live registry, while `info` contains complete synchronized server
+documentation.
+
+## Planning and implementation discipline
+
+HRS is human-owned. MRS is structured and implementation-free. GS, TS, and AS
+must reproduce their parents semantically. One AS changes exactly one
+project-relative code file and includes explicit verification. Mechanical plan
+validation precedes semantic scoring. Project edits remain local even when the
+work is driven by a Plan Manager AS.
+
+The intended fresh decomposition starts with removal of conflicting legacy
+implementation, then a minimal adapter-based skeleton, then early
+`ServerManager` and shared registration infrastructure, followed by ingestion,
+storage, and search behavior. Treat this ordering as project context, not as a
+substitute for live Plan Manager state.

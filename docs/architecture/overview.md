@@ -4,7 +4,7 @@
 
 1. Client library.
 2. File watcher systemd service.
-3. Server with PostgreSQL storage, filters, canonical text tree builder, vectorizer and Lark-based query language.
+3. Server with PostgreSQL storage, filters, canonical text tree builder, vectorizer.
 
 Canonical ingestion path:
 

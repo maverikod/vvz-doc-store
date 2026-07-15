@@ -1,0 +1,88 @@
+schema: codex.command-help-pack/v1
+id: server_error_recovery
+scope: MCP Proxy and every registered downstream server
+
+classification:
+  invalid_parameter:
+    indicators:
+      - INVALID_PARAMETER
+      - INVALID_PARAMS
+      - VALIDATION_ERROR
+      - missing required parameter
+      - unexpected parameter
+      - wrong parameter type
+      - additionalProperties rejected
+    immediate_action:
+      server_command: help
+      params:
+        cmdname: "<the exact failed command name>"
+    required_result:
+      - current command schema
+      - required and optional parameters
+      - defaults and enums
+    retry_rule: Retry only after reconstructing parameters from returned help.
+
+  command_not_found:
+    indicators:
+      - COMMAND_NOT_FOUND
+      - unknown command
+      - command is not registered
+      - "Command '<name>' not found"
+    immediate_action:
+      server_command: help
+      params: {}
+    required_result:
+      - live downstream command catalog
+    next:
+      - select only an actually listed command
+      - obtain command-specific help for the selected command
+    forbidden:
+      - guess a replacement name
+      - use a remembered legacy alias
+      - retry the absent command unchanged
+
+  server_unavailable:
+    indicators:
+      - SERVER_UNAVAILABLE
+      - server unreachable
+      - connection refused
+      - registration missing
+      - transport unavailable
+      - timeout before command admission
+    immediate_actions:
+      - proxy health
+      - list_servers to confirm target registration and copy_number
+      - downstream health when the target accepts calls
+    next:
+      healthy_and_registered:
+        - obtain downstream general help
+        - obtain command-specific help
+        - retry once with the live server identity and schema
+      unhealthy_or_unregistered:
+        - escalate exact health, registration, and transport evidence
+    forbidden:
+      - local fallback
+      - SSH fallback
+      - another server with guessed equivalence
+      - repeated blind retries
+
+diagnostic_boundary:
+  authorization: Inherits the authorization of the failed tool action.
+  diagnostics_are_not_fallback: true
+  allowed_without_new_permission:
+    - command-specific help for the failed command
+    - downstream general help
+    - proxy health
+    - downstream health
+    - list_servers
+  mutation: forbidden
+
+completion:
+  success:
+    - live schema or server state explains the failure
+    - corrected retry is bounded to one attempt
+  failure:
+    - diagnostic help or health also fails
+    - server remains unavailable
+    - no valid command exists
+  failure_action: Escalate to the direct owner with verbatim errors and diagnostic evidence.

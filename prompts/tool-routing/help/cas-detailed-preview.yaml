@@ -1,0 +1,49 @@
+schema: codex.command-help-pack/v1
+id: cas_detailed_preview
+server:
+  server_id: code-analysis-server-vvz
+  copy_number: 1
+  project_id: ff997eab-d809-4cb9-b805-9dff4df60c6d
+
+commands:
+  universal_file_preview:
+    use: Detailed read-only inspection of one known project file.
+    required: [project_id, file_path, full_text_max_lines]
+    critical_params:
+      full_text_max_lines:
+        rule: Always pass explicitly.
+        behavior: Root preview includes annotated full source only when file line count is strictly less than this value.
+        examples:
+          tree_only: 0
+          include_up_to_400_lines: 401
+          include_up_to_1000_lines: 1001
+      node_ref: "positive integer short_id returned by a prior preview"
+      selector: "slice such as 0:5 or a list of indexes/node identifiers"
+      preview_lines: "default 20 when selector is omitted"
+      preview_offset: "invalid-source fallback only"
+      max_chars: "invalid-source fallback only"
+    returns: [focus, blocks, total_blocks, selector_applied]
+    rules:
+      - Use the returned integer node_ref; internal UUIDs are MAP-only.
+      - Re-preview to refresh node_ref after structural change.
+      - File paths are project-relative literals without globs.
+
+  get_file_lines:
+    use_only_when:
+      - an exact bounded line range is explicitly required
+      - parse failure prevents structured preview
+    required: [project_id, file_path, start_line, end_line]
+    line_model: "1-based inclusive"
+    forbidden: guessed out-of-bounds ranges
+
+invalid_source:
+  detection: is_invalid=true
+  action: use preview_offset and max_chars at root
+  forbidden: [node_ref, selector]
+
+hard_errors:
+  UNKNOWN_NODE_REF: refresh root preview
+  REQUIRES_LINE_ADDRESSING: use invalid-source pagination
+  FILE_LOCKED: use the owning editor session or ask the owner
+  INVALID_RANGE: discover exact bounds before retry
+  VALIDATION_ERROR: obtain live command-specific help

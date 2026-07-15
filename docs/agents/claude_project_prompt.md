@@ -1,29 +1,9 @@
-# Claude project prompt - doc-store
+# Claude project context: doc-store
 
-Read actual standards moved from planning first:
-1. docs/standards/originals/planning_README.md
-2. docs/standards/originals/terminal_workflow.yaml
-3. docs/standards/originals/atomic_step_creation_standard.yaml
-4. docs/standards/originals/code_analysis_fs_instructions.yaml
-5. docs/standards/originals/code_analysis_search_instructions.yaml
-6. docs/standards/originals/code_analysis_universal_editing_instructions.yaml
-7. docs/standards/originals/editor_ca_workflow_prompt.yaml
-8. docs/standards/originals/hrs_mrs_gs_consistency_verification_standard.yaml
-9. docs/standards/originals/metadatastd.yaml
-10. docs/standards/originals/plan_standard_machine.yaml
-11. docs/standards/originals/tactical_step_creation_standard.yaml
+Normative plan truth is the registered `doc-store` plan in Plan Manager through
+MCP Proxy. Local `plan_export` files, when present, are unchanged reference
+copies only; do not use them as current plan truth.
 
-Then read project structure and plan cascade:
-1. docs/architecture/file_structure.md
-2. docs/plans/doc-store/source_spec.md
-3. docs/plans/doc-store/spec.yaml
-4. docs/plans/doc-store/G-*/README.yaml
-5. docs/plans/doc-store/G-*/T-*/README.yaml
-
-Anthropic model analogs:
-- frontier reasoning: Claude Fable 5 or Claude Opus 4.8
-- balanced coding: Claude Sonnet 5
-- fast checks: Claude Haiku 4.5
-- vectorization models stay provider-neutral unless integration is approved.
-
-Rules: source_spec is HRS; spec.yaml is MRS; G-* is GS; T-* is TS. Use zero-trust reread. Do not create AS before TS is ready. AS touches exactly one code file.
+Project search and analysis use Code Analysis Server first; project mutation
+uses local `apply_patch` only. Consult the Claude-specific entry instructions
+for its runtime orchestration rules and preserve `PROJECT_PROFILE.yaml`.

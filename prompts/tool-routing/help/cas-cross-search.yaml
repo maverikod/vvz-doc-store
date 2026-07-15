@@ -1,0 +1,60 @@
+schema: codex.command-help-pack/v1
+id: cas_cross_search
+server:
+  server_id: code-analysis-server-vvz
+  copy_number: 1
+  project_id: ff997eab-d809-4cb9-b805-9dff4df60c6d
+
+commands:
+  search:
+    use: Generic full-text and semantic cross-search over one registered project.
+    required: [project_id, query]
+    critical_params:
+      enable_semantic: "default true"
+      enable_grep: "default false; enable only for indexed gaps or explicit literal evidence"
+      grep_patterns: "defaults to query"
+      file_pattern: "optional project-relative narrowing"
+      fulltext_limit: "default 30"
+      semantic_limit: "default 30"
+      page_size: "default 20"
+      first_block_wait_seconds: "default 30"
+    returns: [job_id, items, block_position, has_more, search_still_running, progress]
+    rules:
+      - BM25 full text always runs.
+      - Do not use the removed legacy name project_cross_search.
+
+  search_get_status:
+    use: Poll phase and completion without fetching rows.
+    required: [job_id]
+
+  search_get_page:
+    use: Read one published result block.
+    required: [job_id]
+    critical_params:
+      block_position: "1-based; increment explicitly"
+      ordering: "temporal while running; relevance after completion"
+      wait_for_new_results: "default false"
+      wait_timeout_seconds: "0..30"
+
+  search_cancel:
+    use: Mark an unwanted search cancelled.
+    required: [job_id]
+    note: Does not interrupt an already in-process search task.
+
+  search_close:
+    use: Release search buffers after completion or cancellation.
+    required: [job_id]
+    mandatory: true
+
+workflow:
+  - call search
+  - consume inline items
+  - poll search_get_status while search_still_running
+  - read pages by increasing block_position
+  - call search_close
+
+hard_errors:
+  SESSION_NOT_FOUND: restart search
+  BLOCK_NOT_READY: poll status or wait for the block
+  CLOSED_SESSION: restart search
+  VALIDATION_ERROR: obtain live command-specific help and correct parameters

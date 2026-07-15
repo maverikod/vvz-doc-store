@@ -11,10 +11,8 @@ doc-store/
   docs/plans/doc-store/spec.yaml
   docs/plans/doc-store/G-NNN-<slug>/README.yaml
   docs/plans/doc-store/G-NNN-<slug>/T-NNN-<slug>/README.yaml
-  src/doc_store_client/
-  src/doc_store_filewatcher/
-  src/doc_store_server/{api,core,db,filters,ingestion,query,vectorization}/
+  src/doc_store_server/{api,core,db,ingestion,vectorization}/
   migrations/
   systemd/
-  tests/{client,server,filewatcher,integration}/
+  tests/{client,server,integration}/
 ```

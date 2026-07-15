@@ -1,0 +1,48 @@
+schema: codex.local-execution-workflow/v1
+authority: current repository workspace
+steps:
+- inspect repository state
+- run exec_command with explicit cwd
+- capture returned session id only when present
+- poll only that id
+- inspect exit code and output
+- run follow-up verification
+host_rule: host-system actions are separate and explicitly authorized
+hybrid_project_methodology:
+  authority: CAS for search and analysis; local checkout for mutation and execution; Plan Manager for plan truth
+  discovery:
+  - CAS cross-search for discovery
+  - CAS universal_file_preview for known-file inspection
+  structural_analysis:
+  - use the narrowest CAS AST or analysis command first
+  impact_preflight:
+  - use CAS usages dependencies imports and detailed preview
+  - run targeted tests before and after high-risk changes
+  editing:
+  - reread exact disk target
+  - apply_patch
+  - independent full reread
+  - git diff
+  - targeted lint type build and tests
+  file_lifecycle:
+  - validate exact project-relative source and destination
+  - preview impact
+  - use mkdir mv cp or rm only within authority
+  - protect destructive work with explicit approval and backup
+  - verify git status and references
+  execution:
+  - exec_command with explicit workdir
+  - write_stdin only when exec_command returns a session id
+  - require completion exit code and inspected output
+  plan_workflow:
+  - read HRS MRS GS TS AS from Plan Manager through MCP Proxy
+  - binding HRS remains human-owned
+  - apply top-down cascade through live Plan Manager commands
+  - run Plan Manager plan_validate then plan_score against the same revision
+  - topologically order depends_on and block cycles
+  - serialize same-file AS by priority
+  recovery:
+  - retain exact command cwd arguments exit code stdout stderr
+  - inspect actual tool schema for invalid arguments
+  - retry at most once
+  - never invent a tool or broaden destructive authority

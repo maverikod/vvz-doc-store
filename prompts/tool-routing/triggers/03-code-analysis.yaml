@@ -1,0 +1,14 @@
+schema: codex.tool-trigger/v1
+id: code_analysis
+priority: 90
+match:
+  intent: structural_or_quality_analysis
+route:
+  adapter: ../CODEX_MCP_PROXY_ADAPTER.yaml
+  server_id: code-analysis-server-vvz
+  help_packs: [../help/cas-code-analysis.yaml, ../help/cas-detailed-preview.yaml]
+first_action: Select the narrowest CAS AST or analysis command.
+fallback:
+  trigger: cross_search
+  only_when: structural commands cannot locate the candidate
+hard_rule: Code Analysis Server analysis commands precede generic search and local analysis tools.

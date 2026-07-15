@@ -1,0 +1,24 @@
+schema: codex.command-help-pack/v1
+id: plan_manager_verification
+intent: plan_verification
+server:
+  route: mcp_proxy
+  server_id: planmgr
+  copy_number: 1
+mechanical:
+  command: plan_validate
+  required: [plan]
+  critical_params: {fail_fast: false, format: json}
+semantic:
+  command: plan_score
+  required: [plan, expected_revision]
+  critical_params: {verbose: false, require_embeddings: false}
+mandatory_sequence:
+  - run plan_validate
+  - require green true
+  - run plan_score with expected_revision equal to plan_validate revision_uuid
+  - require matching revision_uuid
+rules:
+  - Never reconstruct the semantic color locally.
+  - A red or stale result restarts verification from plan_validate.
+  - Do not use local validators as normative Plan Manager proof.

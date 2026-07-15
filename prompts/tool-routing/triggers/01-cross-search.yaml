@@ -1,0 +1,11 @@
+schema: codex.tool-trigger/v1
+id: cross_search
+priority: 80
+match:
+  intent: project_search_or_discovery
+route:
+  adapter: ../CODEX_MCP_PROXY_ADAPTER.yaml
+  server_id: code-analysis-server-vvz
+  help_packs: [../help/cas-cross-search.yaml]
+first_command: search
+hard_rule: Project search is Code Analysis Server cross-search first; local rg is allowed only after a proven CAS capability or availability gap and owner-approved fallback.

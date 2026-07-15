@@ -1,0 +1,10 @@
+schema: codex.tool-trigger/v1
+id: host_emergency
+priority: 12
+match:
+  intent: host_emergency
+route:
+  help_packs:
+  - ../help/local-host-emergency.yaml
+hard_rule: Load the runtime adapter and referenced help packs; preserve scope and
+  escalate rather than guess.

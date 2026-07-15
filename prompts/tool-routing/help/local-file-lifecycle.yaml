@@ -1,0 +1,82 @@
+schema: codex.command-help-pack/v1
+id: local_file_lifecycle
+intent: file_lifecycle
+rules:
+- Use rg --files or native listing.
+- Preview destructive actions.
+- Use mkdir/mv/cp/rm only with explicit authority.
+- Preserve unrelated changes.
+planning_invariants: []
+preconditions:
+- confirm current repository root
+- confirm task scope and mutation authority
+- preserve unrelated dirty changes
+native_tools:
+  discovery:
+    command: rg --files
+    fallback: next available read-only native listing; report substitution
+  search:
+    command: rg
+    inputs:
+    - pattern
+    - project-relative path or glob
+    evidence: exact file and matching line
+  known_file_read:
+    command: sed or another bounded native read
+    inputs:
+    - exact path
+    - bounded range
+    rule: never invent node identifiers
+  structural_analysis:
+    command: project-configured language tool or AST parser
+    admission: prove availability with command -v or project config
+    fallback: rg, import inspection, and explicit capability-gap report
+  mutation:
+    command: apply_patch
+    precondition: immediate target reread
+    postconditions:
+    - git diff
+    - full target reread
+    - relevant lint type build and test
+  file_lifecycle:
+    commands:
+    - mkdir
+    - mv
+    - cp
+    - rm
+    destructive_gate: explicit authorization plus preview and backup when feasible
+  git:
+    read_only:
+    - git status --short
+    - git diff
+    - git log
+    destructive: not admitted without explicit current authorization
+  execution:
+    command: exec_command
+    inputs:
+    - cmd
+    - workdir
+    - yield_time
+    poll: write_stdin only when exec_command returned a session id
+    success:
+    - process completed
+    - exit code checked
+    - output inspected
+error_handling:
+  tool_missing: use command -v and report exact capability gap
+  invalid_argument: inspect exact current schema and retry once
+  command_failed: retain command cwd exit code stdout and stderr; distinguish environment
+    from implementation
+  stale_context: reread target and reconstruct patch
+  destructive_risk: stop and request scoped authorization through parent
+postconditions:
+- all changed paths remain in scope
+- git diff reviewed
+- full reread completed
+- relevant checks reported
+- no active child or process remains
+evidence_contract:
+- exact project-relative paths
+- exact command and workdir
+- exit status and relevant output
+- separate preflight and postflight findings

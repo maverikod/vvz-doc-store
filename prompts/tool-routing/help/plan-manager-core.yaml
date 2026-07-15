@@ -1,0 +1,20 @@
+schema: codex.command-help-pack/v1
+id: plan_manager_core
+server:
+  route: mcp_proxy
+  server_id: planmgr
+  copy_number: 1
+source_of_truth: Plan Manager database
+rules:
+  - Use plan name or UUID exactly as returned by plan_list.
+  - Do not infer plan state from local files, cached exports, or deleted legacy artifacts.
+  - Obtain live command-specific help before a mutation or when prepared help conflicts with the server.
+  - On command errors, follow server_error_recovery and never fall back to local plan files.
+  - Plan Manager access does not authorize proxy-based project mutation.
+planning_invariants:
+  - HRS is human-owned binding prose.
+  - MRS contains structured concepts and typed relations without implementation prose.
+  - Children semantically reproduce their parent.
+  - Normative changes flow top-down under cascade discipline.
+  - One AS touches exactly one project-relative code file.
+  - Mechanical validation precedes semantic scoring.

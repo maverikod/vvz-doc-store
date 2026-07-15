@@ -1,0 +1,490 @@
+meta:
+  title: Atomic Step Creation Standard
+  version: '1.0'
+  locale: en
+  description: "Procedure for writing the atomic step layer (level 5) of a development
+    plan after the tactical step layer has reached overall_green under tactical_step_creation_standard.yaml.
+    Complements plan_standard_machine.yaml (which defines the artifact hierarchy and
+    atomic step required fields) and tactical_step_creation_standard.yaml (which governs
+    the level above).\n"
+  scope:
+    covers:
+    - input parameters for atomic step authoring (model tier, context budget)
+    - reading order and context loading
+    - per-TS decomposition into atomic steps
+    - one-file rule and file size constraint
+    - priority assignment within a file
+    - prompt completeness requirements
+    - matrix-driven object extraction and concept traceability
+    - concept-to-AS and object-to-AS coverage verification
+    - per HRS/MRS/GS/TS branch completion before moving to the next branch
+    - verification field
+    - the per-TS loop and the global fixpoint loop
+    - check list for one atomic step
+    excludes:
+    - tactical step authoring (covered by tactical_step_creation_standard.yaml)
+    - code execution or CI integration
+    - tooling and automation
+  alias_map:
+    HRS: source_spec
+    MRS: machine_spec
+    GS: global_step
+    TS: tactical_step
+# ─────────────────────────────────────────────
+# CORE PRINCIPLE
+# ─────────────────────────────────────────────
+    AS: atomic_step
+core_principle:
+  identity: "For each tactical step TS_m, the set SUM(AS_i for TS_m) is the complete
+    implementation-ready decomposition of TS_m. Executing all AS_i for TS_m in priority
+    order fully realises TS_m in code.\n"
+  atomicity: "An atomic step cannot be logically subdivided: splitting produces either
+    a half-step with no standalone meaning, or two steps where one is meaningless
+    without the other.\n"
+  one_file_rule: "One AS touches exactly one code file. One code file may be touched
+    by multiple AS (in priority order). One AS touching multiple files is forbidden
+    without exception.\n"
+  self_sufficiency: "The quadruple (MRS + parent GS + parent TS + AS prompt) is fully
+    self-contained. The coder model executing the AS reads no other files, no sibling
+    AS, and no sibling TS. Every piece of information needed to write the code is
+    present in the prompt itself.\n"
+  immutability:
+    source_spec: not modified by this procedure
+    machine_spec: not modified by this procedure
+    global_step: not modified by this procedure
+    tactical_step: not modified by this procedure
+# ─────────────────────────────────────────────
+# MATRIX-DRIVEN CANONICAL AUTHORING
+# ─────────────────────────────────────────────
+    atomic_step: created and modified by this procedure
+matrix_driven_canonical_authoring:
+  status: canonical
+  origin: "Added after the first completed HRS(part) -> MRS(part) -> GS -> TS branch
+    to make the successful authoring algorithm explicit and repeatable.\n"
+  principle: "AS authoring is driven by source-derived concept and object matrices,
+    then verified by manual semantic reading. Matrices are traceability aids; they
+    do not replace full-file reading or semantic review.\n"
+  required_matrices:
+    concept_python_object_matrix:
+      default_path: docs/plans/object_matrix.yaml
+      purpose: "Map HRS/MRS concepts to concrete Python packages, modules, classes,
+        functions, constants, and configuration objects required by the plan.\n"
+      source_of_truth: "Derived only from the current HRS, MRS, GS, and TS artifacts.
+        It must not be inferred from existing AS files.\n"
+    tactical_step_concept_matrix:
+      default_path: docs/plans/t_concept_matrix.yaml
+      purpose: "Map every TS to the MRS concepts it must realise.\n"
+      source_of_truth: "Created and verified at the tactical level (tactical_step_creation_standard.yaml,
+        authoring.step_4_build_ts_concept_matrix). At the atomic level it is a READ-ONLY
+        input: consumed to know which concepts each TS must realise, never rebuilt
+        or modified here.\n"
+      origin_level: tactical (level 4); this standard consumes it as input
+    concept_atomic_step_matrix:
+      default_path: docs/plans/concept_atomic_matrix.yaml
+      purpose: "Map each concept to the AS files and concrete objects that realise
+        it.\n"
+      source_of_truth: "Filled incrementally from authored AS files and verified against
+        the two source-derived matrices above.\n"
+    axis_note: 'object_matrix and concept_atomic_step_matrix live on the object/work
+      axis (they materialize I2 objects/operations: every object realized by >= 1
+      AS). tactical_step_concept_matrix lives on the concept axis and is only an input
+      here. Per plan_standard_machine.yaml axes: an object realizes one or more concepts
+      (many-to-many) and is not a part of a concept.'
+  canonical_branch_loop:
+    scope: "Process one HRS(part) -> MRS(part) -> GS -> TS branch at a time. Complete
+      and verify that branch before moving to the next branch.\n"
+    procedure:
+      '1': "Re-read the relevant HRS part, MRS part, parent GS, and current TS from
+        source files in full. Treat memory of prior reads as stale.\n"
+      '2': "Update concept_python_object_matrix for the branch. Enumerate every Python
+        package, module, class, function, constant, CLI command, configuration object,
+        and generated artifact needed to realise the branch.\n"
+      '3': "Update tactical_step_concept_matrix for the current TS. Record the exact
+        concept set that SUM(AS for this TS) must cover.\n"
+      '4': "For the current TS, derive the AS set from both matrices. Each AS must
+        be indivisible and must create or modify exactly one file.\n"
+      '5': "Create or update each AS file with the normal AS required fields and prompt
+        rules. For new files, open the target artifact with create=true and initial_content
+        before editing.\n"
+      '6': "Update concept_atomic_step_matrix immediately after AS creation. Record
+        concept -> AS and concept -> object correspondences.\n"
+      '7': "Verify table completeness: TS concepts equal the union of concepts in
+        the AS set; TS objects equal the union of objects in the AS set; every object
+        in the TS row is assigned to at least one AS.\n"
+      '8': "Verify semantic completeness manually: SUM(AS for the current TS) equals
+        the corresponding HRS/MRS/TS range. Empty table differences are not enough
+        for green status.\n"
+      '9': "Run the standard per-AS checks a1..a10, including full prompt self-sufficiency
+        and exact file-state checks. Any finding restarts the current branch loop
+        from the first relevant source read.\n"
+      '10': "Move to the next HRS(part) -> MRS(part) -> GS -> TS branch only after
+        the current branch has table completeness and manual semantic completeness.\n"
+  artifact_editing_rule:
+# ─────────────────────────────────────────────
+# INPUT PARAMETERS
+# ─────────────────────────────────────────────
+    statement: "When AS authoring is performed through an editing service, the editing
+      chain must include open, preview, edit, preview, write preview, write commit,
+      full post-write preview, identifier drilldown when applicable, and close. New
+      artifact creation uses open with create=true.\n"
+input_parameters:
+  model_tier:
+    description: "The capability tier of the coder model that will execute the AS
+      prompts. Determines how much context the model can reliably use and how self-contained
+      each prompt must be.\n"
+    values:
+      small:
+        context_budget_tokens: 4000
+        granularity: "Maximum subdivision. Each AS covers one function, one method,
+          or one clearly bounded code section. Prompts are terse and precise. No implicit
+          knowledge assumed.\n"
+      medium:
+        context_budget_tokens: 8000
+        granularity: "Moderate subdivision. Each AS may cover a small class or a group
+          of closely related functions in one file. Prompts include full signatures
+          and docstrings for all touched entities.\n"
+      large:
+        context_budget_tokens: 16000
+        granularity: "Coarser subdivision. Each AS may cover a full module if the
+          file fits within size limits. Prompts still include all required signatures,
+          types, and constraints explicitly.\n"
+    effect_on_decomposition: "The context_budget governs how many AS a single TS produces.
+      A TS whose full implementation would exceed one context_budget must be split
+      across multiple AS targeting the same file in priority order. If a single logical
+      unit (one class, one function) exceeds the budget, escalate to TS level: the
+      TS scope is too large.\n"
+  target_file_max_lines:
+    description: "Maximum allowed line count for any code file touched by an AS. From
+      plan_standard_machine.yaml: max 400 lines, recommended 350.\n"
+    rule: "If implementing a TS would produce a file exceeding 400 lines, the TS must
+      be split at the TS level before AS authoring begins. AS authoring does not solve
+      file size violations; it only detects them.\n"
+# ─────────────────────────────────────────────
+# VOCABULARY
+# ─────────────────────────────────────────────
+    on_violation: halt AS authoring for this TS; escalate to TS level
+vocabulary:
+  atomic_step: "Level-5 artifact (per plan_standard_machine.yaml). A self-contained
+    prompt for a coder model. Targets exactly one code file. Cannot be logically subdivided.\n"
+  target_file: "The single code file the AS creates or modifies. Specified as an exact
+    project-relative path.\n"
+  priority: "An integer unique among all AS targeting the same code file within the
+    same TS. Execution order is ascending priority. Priority is local to a (file,
+    TS) pair — not compared across files or across TSs.\n"
+  context_budget: "The token ceiling for the full execution context of one AS: MRS
+    excerpt (only needed concepts) + parent GS + parent TS + current full file content
+    (after all lower-priority AS applied) + the AS prompt itself. When this budget
+    would be exceeded, the AS must be subdivided further.\n"
+# ─────────────────────────────────────────────
+# PRECONDITIONS
+# ─────────────────────────────────────────────
+  green_pass: "A full traversal of the verification loop producing an empty finding
+    list across every AS of every TS in the current snapshot.\n"
+preconditions:
+  required_state:
+  - tactical layer overall_green under tactical_step_creation_standard.yaml
+  - every TS has status draft or ready_for_review
+  - model_tier and target_file_max_lines are specified by the caller
+  if_any_precondition_fails:
+# ─────────────────────────────────────────────
+# AUTHORING PROCEDURE
+# ─────────────────────────────────────────────
+    action: "Halt. Resolve the tactical layer first. Do not author AS on an unstable
+      tactical layer.\n"
+authoring:
+  step_1_load_mrs:
+    name: Load MRS
+    action: "Re-read spec.yaml in full from source. Hold every concept_id, definition,
+      properties, and relation. This is the zero-trust read: do not rely on any prior
+      reading of MRS from this session.\n"
+    output: MRS fully loaded
+  step_2_iterate_ts_in_order:
+    name: Iterate tactical steps in GS order then TS order
+    action: "Process G-001/T-001, G-001/T-002, ..., G-001/T-NNN, G-002/T-101, ...,
+      G-NNN/T-NNN strictly in order. For each TS: re-read MRS in full, re-read the
+      parent GS README, re-read the TS README. Build working context MRS + GS + TS.
+      No partial reading. No reliance on memory from earlier iterations.\n"
+    zero_trust_at_authoring:
+      rule: "Re-read MRS, parent GS, and the current TS from source files before authoring
+        any AS for that TS. Memory of prior reads is treated as stale regardless of
+        how recent the read was.\n"
+  step_3_plan_files:
+    name: Plan target files for the TS
+    action: "Before writing any AS, enumerate all code files the TS requires. For
+      each file, estimate the post-implementation line count. If any file would exceed
+      target_file_max_lines: halt and escalate to TS level. Only proceed when all
+      files are within size limits.\n"
+    output: "A file plan: list of (file_path, operation, estimated_lines) per file
+      the TS touches.\n"
+  step_4_assign_priorities:
+    name: Assign priorities within each file
+    action: "For each target file, list the AS that will touch it in the order they
+      must be applied (dependencies first). Assign distinct integer priority values
+      in ascending order starting from 1. Priority is local to a (file, TS) pair.
+      Two AS targeting different files never share a priority namespace.\n"
+    rule: "Priority assignment must be total and non-overlapping within a file. No
+      two AS for the same file in the same TS may share a priority value.\n"
+  step_5_write_atomic_steps:
+    name: Write atomic steps
+    action: "For each AS in priority order per file, write the AS file at docs/plans/<plan_name>/G-NNN-<slug>/T-NNN-<slug>/atomic_steps/A-NNN-<slug>.yaml
+      conforming to required_fields_per_as and prompt_rules below.\n"
+    required_fields_per_as:
+      step_id: A-NNN; unique within parent TS; zero-padded
+      parent_tactical_step: T-NNN of the parent
+      name: short descriptive name
+      target_file: exact project-relative path to the code file
+      operation: 'one of: create_file | modify_file | delete_file | rename_file'
+      priority: integer; distinct among AS targeting the same file
+      depends_on: list of A-NNN step_ids that must complete first; may be empty
+      concepts: list of concept_ids from MRS referenced in the prompt
+      prompt: full self-contained prompt for the coder model (see prompt_rules)
+      verification:
+        type: 'one of: pytest | import | static_analysis | manual'
+        target: file path, test name, or entity name
+        expected: expected result description in prose; no code
+      status: draft on first write
+    prompt_rules:
+      must_include:
+      - exact path of target file
+      - operation type (create_file / modify_file / delete_file / rename_file)
+      - 'for modify_file and delete_file: full current content of the target file
+        as it exists after all lower-priority AS on the same file have been applied
+        (not the original file; the post-prior-AS state)'
+      - all imports that will be used, with exact module paths
+      - exact function or class signature(s) being created or modified
+      - docstring text and format requirements
+      - typing annotations for all parameters and return values
+      - all constraints, explicitly enumerated (no "as appropriate")
+      - 'the MRS excerpt: only the concept definitions and relations relevant to this
+        specific AS (not the full MRS)'
+      must_not_include:
+      - references to other AS by step_id
+      - instructions to read other files not included in the prompt
+      - open design decisions or alternatives
+      - phrases like "implement as appropriate"
+      - phrases like "add necessary imports" without listing them
+      - phrases like "following the existing pattern" without showing the
+        pattern
+# ─────────────────────────────────────────────
+# VERIFICATION
+# ─────────────────────────────────────────────
+      self_sufficiency_test: "Read the prompt in isolation, with no other context.
+        A competent coder model must be able to produce the correct implementation
+        from the prompt alone. Any ambiguity or missing detail is a finding.\n"
+verification:
+  triple_definition: "For each AS_i of TS_m, the verification quadruple is (MRS +
+    parent GS + parent TS + AS_i). Every check is performed under zero_trust_reread
+    below.\n"
+  zero_trust_reread:
+    rule: "Before every single check pass, re-read MRS, the parent GS README, the
+      parent TS README, and AS_i from their source files in full. Do not rely on memory
+      of prior reads, even reads performed seconds ago on the same artifacts. Treat
+      each pass as if the verifier has never seen these files before.\n"
+    rationale: "Models compress context across passes to save tokens. Compression
+      replaces actual file content with assumptions. Forced re-reading on every pass
+      blocks this compression and surfaces gaps that memory-based verification misses.\n"
+    applies_to:
+    - every per_as_check (a1 through a10)
+    - every iteration of inner_loop_per_ts
+    - every iteration of outer_loop_full_pass
+    forbidden_shortcuts:
+    - I already read MRS earlier in this session
+    - the parent TS hasn't changed since I last read it
+    - AS_i is short, I remember it
+    - the file content is the same as before
+    - summarizing artifacts in working memory instead of holding full text
+    enforcement:
+      operational_rule: "Each check pass begins with explicit re-reads of MRS, parent
+        GS, parent TS, and the AS under check. Re-reads are observable file operations.
+        A pass that does not start with these re-reads is invalid and must be redone.\n"
+  per_as_checks:
+    a1_concept_references_valid:
+      statement: "Every concept_id listed in the AS concepts field exists in current
+        MRS. The prompt does not use free-form names for entities that have a concept_id
+        in MRS.\n"
+      failure_modes:
+      - concept_id listed but not in MRS
+      - entity named in prompt without its concept_id when one exists
+    a2_one_file_rule:
+      statement: "The AS targets exactly one code file. The prompt does not instruct
+        the coder model to read, create, or modify any other file.\n"
+      failure_modes:
+      - target_file field lists multiple paths
+      - prompt instructs reading or writing a second file
+    a3_file_size_within_limit:
+      statement: "The post-implementation line count of target_file does not exceed
+        target_file_max_lines (400). Estimated for create_file; verified against post-prior-AS
+        state for modify_file.\n"
+      failure_modes:
+      - estimated or actual post-implementation line count exceeds 400
+      - file size violation not caught before AS authoring began
+    a4_prompt_self_sufficiency:
+      statement: "Reading the prompt alone, with no other artifacts, a competent coder
+        model can produce the correct implementation. No ambiguity, no missing signatures,
+        no missing imports, no open decisions.\n"
+      probe: "For every entity, function, class, type, and import mentioned in the
+        prompt, confirm it is either defined in the prompt itself or included as an
+        explicit excerpt (signature, type, import path). If any is referenced without
+        definition — finding.\n"
+      failure_modes:
+      - function signature not shown in prompt
+      - import path not specified
+      - type not defined or not quoted from MRS
+      - constraint stated as "as appropriate" or "as needed"
+      - pattern referenced as "existing pattern" without being shown
+    a5_no_cross_as_references:
+      statement: "The prompt does not reference other AS by step_id or by name. It
+        does not say \"after A-002 completes\" or \"as defined in A-001\". Execution
+        order is expressed by priority, not by prose references.\n"
+      failure_modes:
+      - step_id of another AS appears in the prompt
+      - phrase "after the previous step" or equivalent appears
+    a6_priority_unique_within_file:
+      statement: "Within all AS of the parent TS targeting the same file, this AS
+        has a distinct priority value. No two AS for the same file share a priority.\n"
+      failure_modes:
+      - two AS for the same file have the same priority value
+    a7_depends_on_valid:
+      statement: "Every A-NNN in depends_on refers to an AS that exists within the
+        same parent TS. No dangling references.\n"
+      failure_modes:
+      - depends_on lists an A-NNN that does not exist in this TS
+    a8_file_state_in_prompt:
+      statement: "For modify_file operations: the prompt includes the full content
+        of the target file as it exists after all lower-priority AS on the same file
+        have been applied. Not the original file content; the post-prior-AS state.
+        For create_file operations: the prompt does not assume any pre-existing content
+        in the target file.\n"
+      failure_modes:
+      - modify_file prompt shows original file content instead of post-prior-AS
+        state
+      - modify_file prompt omits the current file content entirely
+      - create_file prompt assumes content that a prior AS would create
+    a9_verification_complete:
+      statement: "The verification field has type (one of the four allowed values),
+        target (specific file path, test name, or entity name — not vague), and expected
+        (prose description of the expected result — no code).\n"
+      failure_modes:
+      - verification.type not in [pytest, import, static_analysis, manual]
+      - verification.target is vague (e.g. "the file" without path)
+      - verification.expected contains code instead of prose description
+    a10_ts_coverage_by_as_set:
+      statement: "SUM(AS_i for TS_m) fully realises TS_m. Every entity TS_m creates
+        or modifies is created or modified by at least one AS. Every action TS_m performs
+        is performed by at least one AS. Every output TS_m produces is produced by
+        at least one AS.\n"
+      scope: "This check operates on the whole AS set of TS_m, not on a single AS
+        in isolation.\n"
+      failure_modes:
+      - TS entity not touched by any AS
+      - TS action not performed by any AS
+      - TS output not produced by any AS
+# ─────────────────────────────────────────────
+# RESOLUTION RULES
+# ─────────────────────────────────────────────
+      - AS set implements only part of TS scope
+finding_resolution:
+  rule: "Findings are resolved by modifying the AS layer of TS_m only. If a finding
+    requires changing the TS, GS, or MRS, halt and escalate to the appropriate upper-level
+    standard.\n"
+  operations_allowed_on_as_layer:
+  - add a new AS to TS_m
+  - remove an AS from TS_m
+  - rewrite an AS prompt
+  - adjust an AS concepts list
+  - adjust priority values (maintaining uniqueness within file)
+  - split an AS into two AS (to fit context budget or resolve a2)
+  - merge two AS into one (when split is too fine for the model tier)
+  - adjust verification field
+  escalation:
+    file_size_violation:
+      action: "Halt AS authoring for this TS. Return to TS level: split the TS so
+        each resulting TS targets a file within size limits.\n"
+    context_budget_exceeded_unsplittable:
+      action: "If an AS cannot be subdivided further (atomicity criterion), the TS
+        scope is too large for the model tier. Either increase model_tier or return
+        to TS level to reduce TS scope.\n"
+    finding_requires_ts_change:
+      action: halt; mark which TS field is incomplete; return to
+        tactical_step_creation_standard.yaml
+    finding_requires_gs_or_mrs_change:
+# ─────────────────────────────────────────────
+# LOOPS
+# ─────────────────────────────────────────────
+      action: halt; escalate through tactical standard to consistency
+        verification standard as appropriate
+loops:
+  inner_loop_per_ts:
+    name: Per-TS green pass
+    purpose: bring the AS set of one TS_m to green under per_as_checks
+    procedure:
+      '1': re-read MRS, parent GS, parent TS from source (zero_trust_reread)
+      '2': for each AS_i of TS_m in priority order, run a1..a9 under
+        zero_trust_reread
+      '3': run a10 (coverage) over the full AS set of TS_m under
+        zero_trust_reread
+      '4': if findings exist, resolve under finding_resolution
+      '5': any modification to the AS set restarts the inner loop from step 1
+      '6': pass when finding list is empty
+  outer_loop_full_pass:
+    name: Full plan pass
+    purpose: "Confirm that no AS set regressed when later TS were authored. Catches
+      file-state inconsistencies (a8) where a later AS for the same file assumed a
+      different prior state than was actually written.\n"
+    procedure:
+      '1': after inner_loop_per_ts is green for every TS in order
+      '2': re-run inner_loop_per_ts for every TS in order again
+      '3': if any AS set is modified during this pass, return to step 1
+      '4': pass when a full sweep finds no new findings anywhere
+    special_focus: "In the outer loop, pay particular attention to a8 (file state
+      in prompt): when multiple TS touch the same file, the file state assumed by
+      each AS must be consistent with what prior AS actually produce. A later TS's
+      modify_file AS must show the file content after all prior-TS AS on that file
+      have been applied.\n"
+  termination:
+# ─────────────────────────────────────────────
+# CROSS-TS FILE STATE TRACKING
+# ─────────────────────────────────────────────
+    overall_green: "The atomic layer is complete when the outer_loop_full_pass completes
+      without modifying any AS set. At this point every TS has a frozen-eligible AS
+      set ready for code execution.\n"
+cross_ts_file_state:
+  problem: "Multiple TS may touch the same code file. Each subsequent TS's modify_file
+    AS must show the file content as it exists after all prior TS's AS on that file
+    have been applied — not the original file content and not the content after only
+    the current TS's AS.\n"
+  tracking_rule: "Before authoring AS for any TS that modifies an existing file, identify
+    all prior TS (lower G-step or lower T-step number) that have already produced
+    AS for the same file. The file content to include in the current TS's modify_file
+    prompt is the result of applying all prior AS to that file in priority order.\n"
+# ─────────────────────────────────────────────
+# RELATIONSHIP TO OTHER STANDARDS
+# ─────────────────────────────────────────────
+  enforcement: "Check a8 in the outer loop specifically verifies cross-TS file state
+    consistency. Inner loop a8 verifies within-TS consistency only.\n"
+relationship:
+  to_plan_standard_machine:
+    statement: "plan_standard_machine.yaml defines what an AS is (level 5, required
+      fields, one-file rule, priority, context_budget, prompt rules, verification).
+      This standard defines HOW to author and verify AS sets once level 4 is overall_green.\n"
+  to_tactical_step_creation_standard:
+    statement: "tactical_step_creation_standard.yaml governs level 4. This standard
+      runs after that standard's overall_green. Findings that require TS changes escalate
+      back to that standard.\n"
+  to_code_execution:
+# ─────────────────────────────────────────────
+# ARTIFACT LOCATION
+# ─────────────────────────────────────────────
+    statement: "After this standard's overall_green, AS prompts are ready for execution
+      by coder models. Execution order follows priority within each file. Cross-file
+      execution order follows TS depends_on order and then AS priority within each
+      file.\n"
+artifact_location:
+  this_standard:
+    path: docs/standards/atomic_step_creation_standard.yaml
+    rationale: "Stored with the other standards in docs/standards, next to the tactical
+      and consistency verification standards.\n"
+  atomic_step_files:
+    path:
+      docs/plans/<plan_name>/G-NNN-<slug>/T-NNN-<slug>/atomic_steps/A-NNN-<slug>.yaml
+    rationale: per plan_standard_machine.yaml layout section

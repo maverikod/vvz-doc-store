@@ -1,0 +1,14 @@
+schema: codex.tool-trigger/v1
+id: file_lifecycle
+priority: 10
+match:
+  intent: file_lifecycle
+route:
+  adapters:
+  - ../CODEX_MCP_PROXY_ADAPTER.yaml
+  - ../CODEX_NATIVE_TOOLS_ADAPTER.yaml
+  help_packs:
+  - ../help/cas-cross-search.yaml
+  - ../help/local-file-lifecycle.yaml
+hard_rule: Load the runtime adapter and referenced help packs; preserve scope and
+  escalate rather than guess.

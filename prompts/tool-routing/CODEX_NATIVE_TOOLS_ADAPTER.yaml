@@ -1,0 +1,18 @@
+schema: codex.local-runtime-adapter/v1
+discovery:
+- rg --files
+- rg
+- native bounded reads
+mutation: apply_patch
+execution: exec_command with explicit workdir
+state:
+- git status
+- git diff
+rules:
+- preserve unrelated dirty changes
+- poll only returned session ids
+- report unavailable capabilities
+- project mutation and execution require no external service
+- normative plan work is the sole service exception and uses Plan Manager through MCP Proxy
+- Code Analysis Server is first for search and analysis but is forbidden for mutation
+- proxy-based and AI Editor project mutation are forbidden

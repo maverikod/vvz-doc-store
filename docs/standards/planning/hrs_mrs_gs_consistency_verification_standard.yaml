@@ -1,0 +1,233 @@
+meta:
+  title: Plan Consistency Verification Standard
+  version: '1.0'
+  locale: en
+  description: "Procedure for verifying internal consistency of a development plan
+    after it has been drafted but before lower levels (tactical, atomic) are written.
+    Complements the cascade change procedure defined in plan_standard_machine.yaml.
+    Cascade enforces top-down propagation of changes; this procedure detects pre-existing
+    drift between levels and closes it without introducing new drift.\n"
+  scope:
+    covers:
+    - alignment between source_spec and machine_spec
+    - autonomy of each (source_spec + machine_spec + global_step) triple
+    - rules for moving content between levels when gaps are found
+    excludes:
+    - source_spec content authoring (owned by the human)
+    - tactical and atomic step verification (covered by invariants I2, I3)
+    - automation of the procedure (manual or LLM-assisted execution)
+  alias_map:
+    HRS: source_spec
+    MRS: machine_spec
+    G-step: global_step
+core_principle:
+  statement: "source_spec is the source of truth. machine_spec is a tezic conspectus
+    of source_spec. Each global_step is a detailed expansion of one tezis of machine_spec
+    to the level required by an executor.\n"
+  identity: "source_spec content = machine_spec tezises + union over global_steps
+    of their detailed expansions. No content lives only in machine_spec or only in
+    a global_step that is not derivable from source_spec.\n"
+  immutability:
+    source_spec: not modified by this procedure under any circumstance
+    machine_spec: may be modified to restore alignment with source_spec
+    global_step: may be modified to restore autonomy of its triple
+  autonomy_criterion: "A reader of (source_spec + machine_spec + one global_step)
+    has every piece of information required to execute that step. No reading of sibling
+    global_steps is required.\n"
+vocabulary:
+  tezis: "A coherent semantic claim in source_spec. May span one sentence or multiple
+    sentences. One tezis typically maps to one concept or one relation in machine_spec,
+    but mappings are not strictly one-to-one.\n"
+  detailed_expansion: "Content in a global_step that elaborates a machine_spec tezis
+    to the level required by an executor: parameters, edge cases, ordering, rejection
+    rules, output shape, references to existing infrastructure.\n"
+  drift: "Any discrepancy between levels that violates core_principle.identity. Forms:
+    orphan concept (in machine_spec, not in source_spec), missing tezis (in source_spec,
+    not in machine_spec), insufficient global_step (executor cannot act with source_spec
+    + machine_spec + this step), redundant global_step (repeats content already complete
+    in source_spec or machine_spec without adding executor-facing detail).\n"
+  green_pass: "A full traversal of the verification procedure that produces an empty
+    finding list. Each cycle terminates when the next pass is green.\n"
+cycle_1:
+  name: Source-to-Machine Alignment
+  purpose: "Confirm that machine_spec is a faithful tezic conspectus of source_spec.
+    Every binding tezis of source_spec is represented in machine_spec as a concept,
+    a relation, or a property of one of those. Nothing in machine_spec is unsupported
+    by source_spec.\n"
+  inputs:
+  - source_spec  (read-only in this cycle)
+  - machine_spec (may be modified)
+  - gs_concept_matrix (built at global step level; checked here for
+    completeness, may be updated when concepts are redistributed)
+  outputs:
+  - finding_list  (empty when green)
+  - updated machine_spec when findings were closed
+  checks:
+    c1_machine_to_source:
+      statement: "For every concept and every relation in machine_spec, identify the
+        binding paragraphs of source_spec that justify it. Use source_labels as the
+        declared mapping. The cited paragraphs must actually express what the concept
+        or relation claims.\n"
+      failure_modes:
+      - source_labels points to paragraphs that do not justify the claim
+      - source_labels is missing for an entity in machine_spec
+      - concept name in machine_spec contradicts terminology in source_spec
+    c2_source_to_machine:
+      statement: "For every binding tezis of source_spec, identify the concept(s)
+        or relation(s) in machine_spec that represent it. Every binding paragraph
+        outside <!-- non-binding --> blocks must be covered by at least one machine_spec
+        entity.\n"
+      failure_modes:
+      - binding tezis with no representation in machine_spec
+      - tezis represented only partially (key invariants dropped)
+    c3_relation_typing:
+      statement: "Every relation in machine_spec uses one of the seven allowed types
+        from plan_standard_machine.yaml. No free-form types.\n"
+      failure_modes:
+      - relation type outside the allowed set
+      - relation direction inverted vs the claim in source_spec
+    c4_concept_quality:
+      statement: "Each concept qualifies as an entity with behavior or invariant,
+        not a plain property of another entity (per plan_standard_machine.yaml machine_spec.concept_definition).\n"
+      failure_modes:
+      - concept is actually a property of another concept
+      - two concepts collapse into one entity
+    c5_gs_concept_matrix_complete:
+      axis: concept axis (per plan_standard_machine.yaml axes); concept overlap
+        across global steps is allowed and is not a finding
+      failure_modes:
+      - 'empty column: a machine_spec concept is not assigned to any global step'
+      - matrix cell exists for a concept absent from the GS README concepts list
+      - GS README lists a concept that has no cell in the matrix
+      materializes: invariant I1.a (union of G-step concepts == concepts of
+        machine_spec)
+      note: This check requires the global step set and its gs_concept_matrix to
+        exist; it is the gate that materializes I1.a before the global step set
+        is frozen.
+      statement: 'The gs_concept_matrix (per plan_standard_machine.yaml coverage_matrices)
+        exists and is complete: every machine_spec concept is covered by at least
+        one global step (no empty column), and the matrix agrees with each global
+        step README concepts list in both directions.'
+  finding_resolution:
+    rule: "Findings in cycle_1 are resolved by modifying machine_spec only. source_spec
+      is not touched. If a finding seems to require changing source_spec, this procedure
+      halts and the human is consulted, since source_spec is owned by the human.\n"
+    operations_allowed_on_machine_spec:
+    - add concept (with full required_fields)
+    - remove concept (with all incoming and outgoing relations)
+    - rename concept (if drifted from source_spec terminology)
+    - add or remove property of a concept
+    - add relation
+    - remove relation
+    - change relation type within the allowed set
+    - adjust source_labels
+  termination:
+    pass_definition: cycle_1 traversal produces an empty finding_list
+    on_change: any modification to machine_spec restarts cycle_1 from the
+      beginning; partial verification is not credited
+    output_on_pass: machine_spec considered aligned with source_spec; proceed to
+      cycle_2
+cycle_2:
+  name: Global Step Triple Autonomy
+  purpose: "Confirm that every (source_spec + machine_spec + global_step) triple is
+    a complete brief for the executor of that step. The reader of one such triple
+    needs nothing else to act.\n"
+  precondition: cycle_1 currently green
+  inputs:
+  - source_spec   (read-only in this cycle)
+  - machine_spec  (may be modified; modification re-enters cycle_1)
+  - one global_step at a time (may be modified)
+  outputs:
+  - finding_list per global_step (empty when its pair is green)
+  - updated global_step files when findings were closed
+  - updated machine_spec when expansion is shared by multiple steps
+  per_step_checks:
+    c5_concept_references_valid:
+      statement: "Every concept_id and relation referenced in the global_step exists
+        in the current machine_spec with matching from_concept, to_concept, and type.
+        No dangling references.\n"
+    c6_source_labels_relevant:
+      statement: "Every source_label in the global_step points to a binding paragraph
+        of source_spec that actually describes content relevant to this step. Off-target
+        labels are findings.\n"
+    c7_executor_completeness:
+      statement: "Reading source_spec + machine_spec + this global_step gives the
+        executor full knowledge required to perform the step. No deferral to a sibling
+        global_step. No open design decisions.\n"
+      probe: "For each entity, operation, or constraint mentioned in the step's description,
+        locate it either in source_spec, in machine_spec, or in the step itself. If
+        it is mentioned only in another global_step, this is a finding.\n"
+    c8_no_silent_dependency_on_siblings:
+      statement: "depends_on lists are permitted and express execution order. They
+        must not be used as substitutes for content. If the step's text relies on
+        a sibling step's content to be understood, the missing content must be brought
+        into this step or into machine_spec.\n"
+    c9_no_redundancy_with_upper_levels:
+      statement: "The global_step does not repeat source_spec or machine_spec content
+        without adding executor-facing detail. Bare paraphrase is a finding unless
+        the paraphrase exists to localize multi-source material in one place for the
+        executor.\n"
+  finding_resolution:
+    rule: "Findings in cycle_2 are resolved according to where the missing or extra
+      material naturally lives.\n"
+    resolution_table:
+      missing_content_unique_to_this_step:
+        action: add the missing content to the global_step itself
+        rationale: detailed expansion belongs in the step that needs it
+      missing_content_shared_by_two_or_more_steps:
+        action: lift the content into machine_spec (as a concept property, a new
+          relation, or a refined concept definition); then re-enter cycle_1
+        rationale: shared meaning belongs in the conspectus
+      missing_content_absent_from_source_spec:
+        action: halt the procedure and consult the human; source_spec is the
+          source of truth and is owned by the human
+      content_in_global_step_not_in_source_spec:
+        action: remove from global_step (likely accidental insertion)
+        exception: if the content is executor-facing detail that legitimately
+          expands a tezis, keep it; verify it does not contradict source_spec
+      reference_to_sibling_global_step:
+        action: remove the cross-reference; bring the needed content into this
+          step or into machine_spec per the rules above
+      dangling_concept_reference:
+        action: either remove the reference, or fix the global_step to use an
+          existing concept_id, or recognize that machine_spec is missing a
+          concept and re-enter cycle_1
+  termination:
+    per_pair_pass: "A pair (source_spec + machine_spec + one global_step) is green
+      when its finding_list is empty under the current machine_spec snapshot.\n"
+    full_cycle_pass: "cycle_2 is green when every global_step pair is green under
+      the same machine_spec snapshot.\n"
+    invalidation: "Any modification to machine_spec during cycle_2 invalidates all
+      previously-green pairs in this cycle and re-enters cycle_1. cycle_2 then restarts
+      from the first global_step.\n"
+termination:
+  overall_green: "The plan is consistency-verified when cycle_1 is green AND every
+    global_step pair in cycle_2 is green, all under the same machine_spec snapshot.
+    At this point the plan is ready for the tactical level under the cascade procedure
+    defined in plan_standard_machine.yaml.\n"
+  ordering:
+    '1': run cycle_1 to green
+    '2': run cycle_2 to green
+    '3': if cycle_2 modified machine_spec, return to step 1
+    '4': when step 2 completes without modifying machine_spec, plan is green
+relationship:
+  to_cascade:
+    statement: "Cascade procedure governs how a change in source_spec propagates downward.
+      This verification procedure governs how to detect and close drift that already
+      exists in a draft plan before lower levels are written.\n"
+    interaction: "Findings whose resolution requires changing source_spec halt this
+      procedure and hand control to the human; once source_spec is changed, cascade
+      procedure takes over for downward propagation. Findings resolvable in machine_spec
+      or in a global_step are closed by this procedure directly.\n"
+  to_invariants:
+    statement: "cycle_1 enforces a stronger form of invariant I1 (Coverage) limited
+      to machine_spec vs source_spec. cycle_2 prepares the plan for I2 (Branch Semantic
+      Coverage) by ensuring each global step branch is self-contained before tactical
+      decomposition begins. I3 (Equivalence) remains a post-implementation check,
+      unaffected by this procedure.\n"
+    gs_concept_matrix: 'cycle_1 check c5_gs_concept_matrix_complete is the materialized
+      form of I1.a: it verifies the gs_concept_matrix has no empty column before the
+      global step set is frozen.'
+  artifact_location:
+    path: docs/standards/hrs_mrs_gs_consistency_verification_standard.yaml
+    rationale: Stored with the other standards in docs/standards.

@@ -24,5 +24,3 @@ Project / Book / large block
         ├── body
         └── Sentence(language: str)
 ```
-
-The server also provides a SQL-like query language based on Lark.
