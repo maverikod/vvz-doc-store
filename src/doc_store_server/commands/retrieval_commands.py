@@ -83,6 +83,7 @@ class _RetrievalCommand(Command):
     return_contract: ClassVar[dict[str, Any]]
     usage_examples: ClassVar[list[dict[str, Any]]]
     best_practices: ClassVar[list[str]]
+    retrieval_boundary: ClassVar[RetrievalBoundary | None] = None
 
     @classmethod
     def get_schema(cls) -> dict[str, Any]:
@@ -146,6 +147,8 @@ class _RetrievalCommand(Command):
     async def execute(self, **kwargs: Any) -> CommandResult:
         context = kwargs.pop("context", {})
         boundary = context.get("retrieval_boundary") if isinstance(context, Mapping) else None
+        if boundary is None:
+            boundary = self.retrieval_boundary
         if boundary is None or not hasattr(boundary, self.boundary_method):
             return CommandResult(success=False, error="INTERNAL_ERROR: retrieval boundary unavailable")
 

@@ -18,8 +18,8 @@
   "registration": {
     "enabled": true,
     "protocol": "https",
-    "register_url": "https://mcp-proxy.techsup.od.ua:3004/register",
-    "unregister_url": "https://mcp-proxy.techsup.od.ua:3004/unregister",
+    "register_url": "https://mcp-proxy:3004/register",
+    "unregister_url": "https://mcp-proxy:3004/unregister",
     "heartbeat_interval": 30,
     "ssl": {
       "ca": null,
@@ -33,13 +33,13 @@
       "server_id": "doc-store-vvz",
       "server_name": "doc-store",
       "description": "doc-store MCP adapter server",
-      "version": "0.1.8"
+      "version": "0.1.9"
     },
     "instance_uuid": "REPLACE_ON_INSTALL",
     "auto_on_startup": true,
     "auto_on_shutdown": true,
     "heartbeat": {
-      "url": "https://mcp-proxy.techsup.od.ua:3004/proxy/heartbeat",
+      "url": "https://mcp-proxy:3004/proxy/heartbeat",
       "interval": 30
     }
   },

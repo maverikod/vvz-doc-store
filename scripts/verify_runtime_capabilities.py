@@ -272,6 +272,14 @@ def _vectorization_status(health: Mapping[str, Any], document_id: str) -> Mappin
             value = metrics.get(key)
             if value is not None:
                 candidates.append(value)
+    components = health.get("components")
+    if isinstance(components, Mapping):
+        database = components.get("database")
+        if isinstance(database, Mapping):
+            for key in ("vectorization_by_document", "documents"):
+                value = database.get(key)
+                if value is not None:
+                    candidates.append(value)
     for candidate in candidates:
         if isinstance(candidate, Mapping):
             value = candidate.get(document_id)
@@ -288,8 +296,16 @@ def _has_vectorization_surface(health: Mapping[str, Any]) -> bool:
     if any(key in health for key in ("vectorization_by_document", "documents")):
         return True
     metrics = health.get("database") or health.get("db")
-    return isinstance(metrics, Mapping) and any(
+    if isinstance(metrics, Mapping) and any(
         key in metrics for key in ("vectorization_by_document", "documents")
+    ):
+        return True
+    components = health.get("components")
+    if not isinstance(components, Mapping):
+        return False
+    database = components.get("database")
+    return isinstance(database, Mapping) and any(
+        key in database for key in ("vectorization_by_document", "documents")
     )
 
 

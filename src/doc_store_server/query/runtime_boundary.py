@@ -21,7 +21,7 @@ from .semantic import _statement as _semantic_statement
 
 RUNTIME_EMBEDDING_PROVIDER = "doc-store-runtime"
 RUNTIME_EMBEDDING_MODEL = "doc-store-runtime-2d"
-RUNTIME_EMBEDDING_VERSION = "0.1.8"
+RUNTIME_EMBEDDING_VERSION = "0.1.9"
 RUNTIME_EMBEDDING_DIMENSION = 2
 
 

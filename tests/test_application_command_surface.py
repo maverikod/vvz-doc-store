@@ -252,3 +252,30 @@ def test_representative_failure_paths_keep_stable_error_contracts() -> None:
     search = ChunkQuerySearchCommand()
     with pytest.raises(Exception, match="legacy filter_expr"):
         search.validate_params({"query": {"filter_expr": "status = 'indexed'"}})
+
+
+def test_runtime_configuration_installs_retrieval_boundary(monkeypatch: pytest.MonkeyPatch) -> None:
+    from doc_store_server import main
+
+    class FakeBoundary:
+        pass
+
+    boundary = FakeBoundary()
+    monkeypatch.setattr(DocumentCreateCommand, "ingestion_boundary", None)
+    monkeypatch.setattr(DocumentUpdateCommand, "ingestion_boundary", None)
+    monkeypatch.setattr(DocumentGetCommand, "retrieval_boundary", None)
+    monkeypatch.setattr(ChapterGetCommand, "retrieval_boundary", None)
+    monkeypatch.setattr(ParagraphGetCommand, "retrieval_boundary", None)
+    monkeypatch.setattr(ProcessingStatusCommand, "runtime_status_boundary", None)
+    monkeypatch.setattr(ChunkQuerySearchCommand, "search_orchestrator", None)
+    monkeypatch.setattr(DocStoreHealthCommand, "runtime_config", {})
+    monkeypatch.setattr(main, "RuntimeIngestionBoundary", lambda *_args: object())
+    monkeypatch.setattr(main, "installed_runtime_status", lambda: object())
+    monkeypatch.setattr(main, "installed_search_orchestrator", lambda _config: object())
+    monkeypatch.setattr(main, "installed_retrieval_boundary", lambda _config: boundary)
+
+    main.configure_runtime_boundaries({"database": {"url": "postgresql://example/db"}})
+
+    assert DocumentGetCommand.retrieval_boundary is boundary
+    assert ChapterGetCommand.retrieval_boundary is boundary
+    assert ParagraphGetCommand.retrieval_boundary is boundary

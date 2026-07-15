@@ -1,6 +1,6 @@
-doc-store-server (0.1.8-1) unstable; urgency=medium
+doc-store-server (0.1.9-1) unstable; urgency=medium
 
-  * Release 0.1.8 - Docker image vasilyvz/doc-store:0.1.8
+  * Release 0.1.9 - Docker image vasilyvz/doc-store:0.1.9
 
  -- Vasiliy Zdanovskiy <vasilyvz@gmail.com>  Wed, 15 Jul 2026 13:32:32 +0300
 
