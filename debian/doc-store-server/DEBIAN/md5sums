@@ -1,6 +1,6 @@
 640741d2ca44595921ccd58507f96fa1  lib/systemd/system/doc-store.service
 c356945f2150a403fe54f1e58010d50f  usr/lib/doc-store/bin/doc-store-init-locales
-793dd13702629d81775b8fdc376c53d7  usr/share/doc-store/docker-image
-88623715f629647db1bb4a4892e551dc  usr/share/doc/doc-store-server/changelog.Debian.gz
+22c78aafe14c6b7c4bcec137052c2b9d  usr/share/doc-store/docker-image
+0e3faf530aadee0dacc91c12d95d2d4a  usr/share/doc/doc-store-server/changelog.Debian.gz
 fc35cb52e8ece556ff679f379128a0b0  usr/share/doc/doc-store-server/copyright
 4a81a0d223743c7a06bcd32022fd6485  usr/share/doc/doc-store-server/secrets.env.template

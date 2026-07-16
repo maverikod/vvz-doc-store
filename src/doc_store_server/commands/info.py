@@ -199,7 +199,11 @@ def build_info_document(registry: CommandHelpRegistry) -> InfoDocument:
             "semantic chunk classifier descriptions from dictionary assignment rows "
             "and export must perform the reverse mapping: database identifiers are "
             "projected back to adapter-visible enum/category/language values without "
-            "duplicating canonical child-table data."
+            "duplicating canonical child-table data. For semantic text search through "
+            "chunk_query_search, clients send search_query with hybrid_search=true, "
+            "bm25_weight=0, and semantic_weight=1; the server obtains the query vector "
+            "through embed-client and executes the semantic branch against active "
+            "semantic_chunk_embeddings."
         ),
         "semantic_relations": (
             "semantic_relations is the public corpus-wide embedding comparison API. "

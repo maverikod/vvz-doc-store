@@ -53,13 +53,16 @@ class RuntimeSearchBoundary:
         self,
         database_url: str | None,
         embedding_config: RuntimeEmbeddingConfig | None = None,
+        embedding_client: Any | None = None,
     ) -> None:
         self._database_url = database_url
         self._embedding_config = embedding_config or runtime_embedding_config()
+        self._embedding_client = embedding_client
 
     async def __call__(self, query: ChunkQuery, **_context: Any) -> Any:
         if not self._database_url:
             raise RuntimeError("database URL is not configured")
+        query = await self._query_with_runtime_embedding(query)
         plan = compile_query(query)
         engine = create_async_engine(_async_database_url(self._database_url), pool_pre_ping=True)
         session_factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -89,6 +92,49 @@ class RuntimeSearchBoundary:
         result = await session.execute(statement, params)
         rows = result.mappings().all()
         return tuple(_semantic_result_from_row(row, index) for index, row in enumerate(rows, 1))
+
+    async def _query_with_runtime_embedding(self, query: ChunkQuery) -> ChunkQuery:
+        text_value = query.search_query.strip() if isinstance(query.search_query, str) else ""
+        if query.embedding is not None or not text_value:
+            return query
+        explicit_fields = getattr(query, "model_fields_set", set())
+        explicit_semantic_weight = "semantic_weight" in explicit_fields
+        wants_runtime_embedding = bool(query.hybrid_search) or (
+            explicit_semantic_weight and query.semantic_weight is not None and float(query.semantic_weight) > 0
+        )
+        if not wants_runtime_embedding:
+            return query
+        vector = await self._embed_query_text(text_value)
+        embedding = list(vector)
+        if not query.hybrid_search or float(query.bm25_weight or 0.0) == 0.0:
+            return query.model_copy(
+                update={
+                    "search_query": None,
+                    "embedding": embedding,
+                    "hybrid_search": False,
+                }
+            )
+        return query.model_copy(update={"embedding": embedding})
+
+    async def _embed_query_text(self, text_value: str) -> tuple[float, ...]:
+        client = self._embedding_client
+        if client is None:
+            from doc_store_server.runtime.vectorization import installed_embedding_client
+
+            client = installed_embedding_client(self._embedding_config)
+        response = client.embed(
+            [text_value],
+            model=self._embedding_config.model,
+            dimension=self._embedding_config.dimension,
+            wait=True,
+            wait_timeout=self._embedding_config.wait_timeout,
+            poll_interval=self._embedding_config.poll_interval,
+            device=self._embedding_config.device,
+        )
+        import inspect
+
+        response = await response if inspect.isawaitable(response) else response
+        return _embedding_response_vector(response, self._embedding_config.dimension)
 
     async def _execute_structured(self, session: Any, plan: ExecutionPlan) -> tuple[SearchResult, ...]:
         params: dict[str, Any] = {}
@@ -141,6 +187,28 @@ def _single_vector(value: Any) -> tuple[float, ...]:
 
 def _vector_literal(values: tuple[float, ...]) -> str:
     return "[" + ",".join(f"{value:.8f}" for value in values) + "]"
+
+
+def _embedding_response_vector(response: Any, dimension: int) -> tuple[float, ...]:
+    if not isinstance(response, Mapping):
+        raise RuntimeError("embedding client returned a non-mapping response")
+    results = response.get("results", response.get("embeddings"))
+    if not isinstance(results, list | tuple) or not results:
+        raise RuntimeError("embedding response has no results")
+    item = results[0]
+    if isinstance(item, Mapping):
+        error = item.get("error")
+        if error:
+            raise RuntimeError(f"embedding response item failed: {error}")
+        raw = item.get("embedding", item.get("vector"))
+    else:
+        raw = item
+    if not isinstance(raw, list | tuple):
+        raise RuntimeError("embedding response vector is not a sequence")
+    vector = tuple(float(value) for value in raw)
+    if len(vector) != dimension:
+        raise RuntimeError("embedding response vector dimension mismatch")
+    return vector
 
 
 def _predicate_sql(plan: ExecutionPlan, params: dict[str, Any]) -> list[str]:

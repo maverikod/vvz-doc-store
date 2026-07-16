@@ -90,7 +90,10 @@ class ChunkQuerySearchCommand(Command):
             "detailed_description": (
                 "Accepts only a normalized ChunkQuery and delegates execution to "
                 "the G-007 search orchestrator. Results retain ranking, provenance, "
-                "and diagnostics supplied by that orchestrator."
+                "and diagnostics supplied by that orchestrator. For semantic text "
+                "search, send search_query with hybrid_search=true and bm25_weight=0; "
+                "the server obtains the query embedding through embed-client before "
+                "executing the semantic branch."
             ),
             "parameters": {"query": cls.get_schema()["properties"]["query"]},
             "return_value": {
@@ -98,6 +101,7 @@ class ChunkQuerySearchCommand(Command):
             },
             "usage_examples": [
                 {"query": {"search_query": "canonical retrieval", "max_results": 10}},
+                {"query": {"search_query": "semantic concept", "hybrid_search": True, "bm25_weight": 0.0, "semantic_weight": 1.0, "max_results": 10}},
                 {"query": {"project": "doc-store", "type": "DocBlock", "tags": ["api"]}},
             ],
             "error_cases": {

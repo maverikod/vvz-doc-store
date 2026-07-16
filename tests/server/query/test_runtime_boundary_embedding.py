@@ -1,0 +1,123 @@
+from __future__ import annotations
+
+import asyncio
+from typing import Any
+
+from chunk_metadata_adapter import ChunkQuery
+
+from doc_store_server.query.compiler import ExecutionMode, compile_query
+from doc_store_server.query.runtime_boundary import RuntimeSearchBoundary
+from doc_store_server.runtime.embedding_config import RuntimeEmbeddingConfig
+
+
+class _EmbeddingClient:
+    def __init__(self) -> None:
+        self.calls: list[tuple[list[str], dict[str, Any]]] = []
+
+    async def embed(self, texts: list[str], **kwargs: Any) -> dict[str, Any]:
+        self.calls.append((texts, dict(kwargs)))
+        return {
+            "model": "model-a",
+            "dimension": 3,
+            "results": [{"embedding": [0.1, 0.2, 0.3]}],
+        }
+
+
+def _config() -> RuntimeEmbeddingConfig:
+    return RuntimeEmbeddingConfig(
+        protocol="https",
+        host="embedding-service",
+        port=8001,
+        cert=None,
+        key=None,
+        ca=None,
+        check_hostname=False,
+        token=None,
+        token_header=None,
+        timeout=300.0,
+        wait_timeout=300,
+        poll_interval=1.0,
+        provider="embedding-service-vvz",
+        model="model-a",
+        model_version="v1",
+        dimension=3,
+        device=None,
+        batch_size=16,
+    )
+
+
+def test_runtime_search_embeds_semantic_text_query_before_compilation() -> None:
+    client = _EmbeddingClient()
+    boundary = RuntimeSearchBoundary(
+        "postgresql://unused",
+        embedding_config=_config(),
+        embedding_client=client,
+    )
+
+    query = asyncio.run(
+        boundary._query_with_runtime_embedding(
+            ChunkQuery(
+                search_query="semantic query",
+                hybrid_search=True,
+                bm25_weight=0.0,
+                semantic_weight=1.0,
+                max_results=5,
+            )
+        )
+    )
+    plan = compile_query(query)
+
+    assert plan.mode is ExecutionMode.SEMANTIC
+    assert plan.embedding == (0.1, 0.2, 0.3)
+    assert plan.search_query is None
+    assert client.calls == [
+        (
+            ["semantic query"],
+            {
+                "model": "model-a",
+                "dimension": 3,
+                "wait": True,
+                "wait_timeout": 300,
+                "poll_interval": 1.0,
+                "device": None,
+            },
+        )
+    ]
+
+
+def test_runtime_search_does_not_embed_plain_full_text_query() -> None:
+    client = _EmbeddingClient()
+    boundary = RuntimeSearchBoundary(
+        "postgresql://unused",
+        embedding_config=_config(),
+        embedding_client=client,
+    )
+
+    query = asyncio.run(boundary._query_with_runtime_embedding(ChunkQuery(search_query="plain query")))
+    plan = compile_query(query)
+
+    assert plan.mode is ExecutionMode.FULL_TEXT
+    assert plan.search_query == "plain query"
+    assert plan.embedding is None
+    assert client.calls == []
+
+
+def test_runtime_search_embeds_explicit_semantic_weight_text_query() -> None:
+    client = _EmbeddingClient()
+    boundary = RuntimeSearchBoundary(
+        "postgresql://unused",
+        embedding_config=_config(),
+        embedding_client=client,
+    )
+
+    query = asyncio.run(
+        boundary._query_with_runtime_embedding(
+            ChunkQuery(search_query="semantic weighted query", semantic_weight=1.0, max_results=5)
+        )
+    )
+    plan = compile_query(query)
+
+    assert plan.mode is ExecutionMode.SEMANTIC
+    assert plan.embedding == (0.1, 0.2, 0.3)
+    assert plan.search_query is None
+    assert client.calls[0][0] == ["semantic weighted query"]
