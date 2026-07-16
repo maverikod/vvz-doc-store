@@ -1,17 +1,21 @@
 from __future__ import annotations
 
 import json
+import inspect
 from uuid import uuid4
 from typing import Any
 
 import pytest
 
-from doc_store_server.runtime.embedding_config import RuntimeEmbeddingConfig
+from doc_store_server.runtime.embedding_config import RuntimeEmbeddingConfig, runtime_embedding_config
 from doc_store_server.runtime.vectorization import (
     ChunkVectorInput,
     ChunkVectorRecord,
+    InMemoryVectorizationStatus,
     RuntimeVectorizationService,
     VectorizationError,
+    _extract_vectors,
+    _last_vectorizer_activity_event,
 )
 
 
@@ -58,11 +62,17 @@ def _config(*, batch_size: int = 2, dimension: int = 2) -> RuntimeEmbeddingConfi
 
 
 class _BatchSelectingVectorizationService(RuntimeVectorizationService):
-    def __init__(self, document_ids: list[Any]) -> None:
-        super().__init__("postgresql://unused", _EmbeddingClient(), _config(batch_size=2))
+    def __init__(
+        self,
+        document_ids: list[Any],
+        *,
+        status: InMemoryVectorizationStatus | None = None,
+    ) -> None:
+        super().__init__("postgresql://unused", _EmbeddingClient(), _config(batch_size=2), status)
         self.document_ids = document_ids
         self.select_calls: list[dict[str, Any]] = []
         self.persisted_batches: list[list[Any]] = []
+        self.vectorizer_snapshots: list[dict[str, Any]] = []
 
     def _select_documents(self, **kwargs: Any) -> tuple[Any, ...]:
         self.select_calls.append(dict(kwargs))
@@ -80,7 +90,20 @@ class _BatchSelectingVectorizationService(RuntimeVectorizationService):
             for document_id in document_ids
         )
 
+    def _document_details(self, document_ids: Any) -> tuple[dict[str, Any], ...]:
+        return tuple(
+            {
+                "document_id": str(document_id),
+                "title": f"Document {document_id}",
+                "source_name": f"{document_id}.md",
+                "file": f"/docs/{document_id}.md",
+            }
+            for document_id in document_ids
+        )
+
     async def _embed_chunks(self, chunks: Any) -> tuple[ChunkVectorRecord, ...]:
+        if self._status is not None:
+            self.vectorizer_snapshots.append(self._status.snapshot())
         return tuple(
             ChunkVectorRecord(chunk_id=chunk.chunk_id, vector=(1.0, 2.0))
             for chunk in chunks
@@ -137,6 +160,42 @@ async def test_vectorizer_reads_all_documents_in_document_batches() -> None:
 
 
 @pytest.mark.asyncio
+async def test_vectorizer_status_exposes_current_file_while_embedding(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("DOC_STORE_VECTORIZER_LOG_DIR", str(tmp_path))
+    document_id = uuid4()
+    status = InMemoryVectorizationStatus()
+    service = _BatchSelectingVectorizationService([document_id], status=status)
+
+    result = await service.rebuild(all_documents=True, document_batch_size=1)
+
+    assert result["status"] == "ok"
+    current = service.vectorizer_snapshots[0]["current_activity"]
+    assert current["current_document_id"] == str(document_id)
+    assert current["current_file"] == f"/docs/{document_id}.md"
+    assert status.snapshot()["state"] == "idle"
+    assert status.snapshot()["last_activity"]["action"] == "embedded_documents"
+
+
+@pytest.mark.asyncio
+async def test_vectorizer_activity_log_records_document_before_embedding(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("DOC_STORE_VECTORIZER_LOG_DIR", str(tmp_path))
+    document_id = uuid4()
+    service = _BatchSelectingVectorizationService([document_id])
+
+    await service.rebuild(all_documents=True, document_batch_size=1)
+
+    events = [
+        json.loads(line)
+        for line in (tmp_path / "vectorizer_activity.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert events[0]["event"] == "document_vectorization_started"
+    assert events[0]["document_id"] == str(document_id)
+    assert events[0]["file"] == f"/docs/{document_id}.md"
+    assert events[-1]["event"] == "document_vectorized"
+    assert _last_vectorizer_activity_event()["event"] == "document_vectorized"
+
+
+@pytest.mark.asyncio
 async def test_vectorizer_rejects_wrong_embedding_dimension() -> None:
     client = _EmbeddingClient(dimension=3)
     service = RuntimeVectorizationService("postgresql://unused", client, _config(dimension=2))
@@ -145,6 +204,42 @@ async def test_vectorizer_rejects_wrong_embedding_dimension() -> None:
         await service._embed_chunks(
             (ChunkVectorInput(chunk_id=uuid4(), document_id=uuid4(), body="chunk"),)
         )
+
+
+def test_runtime_embedding_config_defaults_to_safe_text_batch_size(monkeypatch) -> None:
+    monkeypatch.delenv("DOC_STORE_EMBEDDING_BATCH_SIZE", raising=False)
+
+    config = runtime_embedding_config({})
+
+    assert config.batch_size == 16
+
+
+def test_vectorizer_reports_embedding_item_error_before_vector_validation() -> None:
+    with pytest.raises(VectorizationError, match="embedding response item 0 failed"):
+        _extract_vectors(
+            {
+                "results": [
+                    {
+                        "embedding": None,
+                        "error": {
+                            "code": "encode_error",
+                            "message": "model server rejected the batch",
+                        },
+                    }
+                ],
+                "model": "model-a",
+                "dimension": 2,
+            },
+            expected_count=1,
+            config=_config(),
+        )
+
+
+def test_vectorizer_embedding_persistence_is_idempotent_for_same_model_version() -> None:
+    source = inspect.getsource(RuntimeVectorizationService._persist_vectors)
+
+    assert "ON CONFLICT ON CONSTRAINT uq_semantic_chunk_embeddings_version" in source
+    assert "DO UPDATE SET vector = EXCLUDED.vector, active = TRUE" in source
 
 
 def test_vectorizer_unavailable_log_is_suppressed_until_recovery(tmp_path, monkeypatch) -> None:

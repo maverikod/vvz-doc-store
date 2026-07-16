@@ -1,6 +1,6 @@
-doc-store-server (0.1.34-1) unstable; urgency=medium
+doc-store-server (0.1.37-1) unstable; urgency=medium
 
-  * Release 0.1.34 - Docker image vasilyvz/doc-store:0.1.34
+  * Release 0.1.37 - Docker image vasilyvz/doc-store:0.1.37
 
- -- Vasiliy Zdanovskiy <vasilyvz@gmail.com>  Thu, 16 Jul 2026 16:23:27 +0300
+ -- Vasiliy Zdanovskiy <vasilyvz@gmail.com>  Thu, 16 Jul 2026 17:44:32 +0300
 

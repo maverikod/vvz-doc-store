@@ -78,7 +78,7 @@ def runtime_embedding_config(config: Mapping[str, Any] | None = None) -> Runtime
         dimension=int(os.getenv("DOC_STORE_EMBEDDING_DIMENSION", str(section.get("dimension", 384)))),
         device=_optional(os.getenv("DOC_STORE_EMBEDDING_DEVICE", str(section.get("device", "")))),
         batch_size=int(
-            os.getenv("DOC_STORE_EMBEDDING_BATCH_SIZE", str(section.get("batch_size", 128)))
+            os.getenv("DOC_STORE_EMBEDDING_BATCH_SIZE", str(section.get("batch_size", 16)))
         ),
     )
 

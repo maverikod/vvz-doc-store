@@ -386,6 +386,7 @@ def test_runtime_configuration_installs_retrieval_boundary(monkeypatch: pytest.M
     monkeypatch.setattr(main, "installed_entity_lifecycle_service", lambda _config: boundary)
     monkeypatch.setattr(main, "installed_document_export_service", lambda _config: boundary)
     monkeypatch.setattr(main, "installed_document_service", lambda _config: boundary)
+    monkeypatch.setattr(main, "installed_vectorization_service", lambda _config: boundary)
 
     main.configure_runtime_boundaries({"database": {"url": "postgresql://example/db"}})
 

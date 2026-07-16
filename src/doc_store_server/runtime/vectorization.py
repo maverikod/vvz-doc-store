@@ -14,6 +14,7 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import SQLAlchemyError
 
 from doc_store_server.db.health import database_url_from_config
 from doc_store_server.runtime.embedding_config import RuntimeEmbeddingConfig, runtime_embedding_config
@@ -34,6 +35,113 @@ class ChunkVectorRecord:
     vector: tuple[float, ...]
 
 
+class InMemoryVectorizationStatus:
+    """Process-local vectorizer activity snapshot for health reporting."""
+
+    def __init__(self) -> None:
+        self._current: dict[str, Any] | None = None
+        self._last: dict[str, Any] | None = None
+
+    def record_current(
+        self,
+        *,
+        action: str,
+        documents: Sequence[Mapping[str, Any]],
+        chunk_count: int,
+    ) -> None:
+        payload = {
+            "action": action,
+            "documents": [dict(item) for item in documents],
+            "chunk_count": chunk_count,
+            "timestamp": _utc_now(),
+        }
+        if len(documents) == 1:
+            document = documents[0]
+            payload["current_document_id"] = document.get("document_id")
+            payload["current_file"] = document.get("file") or document.get("source_name")
+            payload["current_title"] = document.get("title")
+        else:
+            payload["current_document_ids"] = [item.get("document_id") for item in documents]
+            payload["current_files"] = [
+                item.get("file") or item.get("source_name")
+                for item in documents
+            ]
+        self._current = payload
+        self._write_snapshot()
+
+    def record_completed(
+        self,
+        *,
+        action: str,
+        documents: Sequence[Mapping[str, Any]],
+        chunk_count: int,
+    ) -> None:
+        payload = {
+            "action": action,
+            "documents": [dict(item) for item in documents],
+            "chunk_count": chunk_count,
+            "timestamp": _utc_now(),
+        }
+        self._last = payload
+        self._current = None
+        self._write_snapshot()
+
+    def snapshot(
+        self,
+        *,
+        database_url: str | None = None,
+        embedding_config: RuntimeEmbeddingConfig | None = None,
+    ) -> dict[str, Any]:
+        log_current = _current_activity_from_logs(
+            database_url=database_url,
+            embedding_config=embedding_config,
+        )
+        persisted = self._read_snapshot()
+        if log_current is not None:
+            current = log_current
+            last = persisted.get("last_activity") if persisted else self._last
+            return {
+                "state": "running",
+                "current_activity": current,
+                "last_activity": last,
+                "note": "log-backed best-effort vectorizer snapshot",
+            }
+        if self._current is None and persisted is not None:
+            return persisted
+        return {
+            "state": "running" if self._current else "idle",
+            "current_activity": self._current,
+            "last_activity": self._last,
+            "note": "process-local and persisted best-effort vectorizer snapshot",
+        }
+
+    def _write_snapshot(self) -> None:
+        try:
+            path = _vectorizer_status_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "state": "running" if self._current else "idle",
+                "current_activity": self._current,
+                "last_activity": self._last,
+                "note": "process-local and persisted best-effort vectorizer snapshot",
+            }
+            tmp_path = path.with_suffix(path.suffix + ".tmp")
+            tmp_path.write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+            tmp_path.replace(path)
+        except OSError:
+            return
+
+    def _read_snapshot(self) -> dict[str, Any] | None:
+        try:
+            path = _vectorizer_status_path()
+            if not path.exists():
+                return None
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        return payload if isinstance(payload, dict) else None
+
+
 class VectorizationError(RuntimeError):
     """Raised when external embedding or vector persistence fails."""
 
@@ -46,10 +154,12 @@ class RuntimeVectorizationService:
         database_url: str | None,
         embedding_client: Any,
         embedding_config: RuntimeEmbeddingConfig,
+        status: InMemoryVectorizationStatus | None = None,
     ) -> None:
         self._database_url = database_url
         self._embedding_client = embedding_client
         self._embedding_config = embedding_config
+        self._status = status
         self._embedding_unavailable_logged = False
 
     async def rebuild(
@@ -107,14 +217,28 @@ class RuntimeVectorizationService:
                 if not docs:
                     break
             chunks = self._select_chunks(docs)
+            document_details = self._document_details(docs)
             if dry_run:
                 processed_docs.extend(docs)
                 processed_chunks.extend(chunks)
                 continue
+            self._log_documents_started(document_details, chunks)
+            if self._status is not None:
+                self._status.record_current(
+                    action="embedding_documents",
+                    documents=document_details,
+                    chunk_count=len(chunks),
+                )
             try:
                 vectors = await self._embed_chunks(chunks)
             except VectorizationError as exc:
                 self._log_embedding_unavailable(exc)
+                if self._status is not None:
+                    self._status.record_completed(
+                        action="embedding_unavailable",
+                        documents=document_details,
+                        chunk_count=len(chunks),
+                    )
                 return self._result(
                     "embedding_unavailable",
                     processed_docs,
@@ -124,7 +248,14 @@ class RuntimeVectorizationService:
                 )
             self._persist_vectors(docs, vectors)
             self._log_embedding_recovered_if_needed()
+            self._log_documents_completed(document_details, chunks)
             self._log_processed_chunks(chunks)
+            if self._status is not None:
+                self._status.record_completed(
+                    action="embedded_documents",
+                    documents=document_details,
+                    chunk_count=len(chunks),
+                )
             processed_docs.extend(docs)
             processed_chunks.extend(chunks)
         return self._result("dry_run" if dry_run else "ok", processed_docs, processed_chunks, dry_run=dry_run)
@@ -199,6 +330,27 @@ class RuntimeVectorizationService:
             for row in rows
         )
 
+    def _document_details(self, document_ids: Sequence[UUID]) -> tuple[dict[str, Any], ...]:
+        if not document_ids:
+            return ()
+        engine = create_engine(self._database_url, pool_pre_ping=True)
+        try:
+            with engine.connect() as connection:
+                rows = connection.execute(
+                    text(
+                        "SELECT d.id::text AS document_id, d.title, d.source_name, "
+                        "d.source_path, f.name AS file_name, f.path AS file_path "
+                        "FROM documents AS d "
+                        "LEFT JOIN files AS f ON f.id = d.owner_id "
+                        "WHERE d.id = ANY(CAST(:document_ids AS uuid[])) "
+                        "ORDER BY d.id ASC"
+                    ),
+                    {"document_ids": [str(item) for item in document_ids]},
+                ).mappings().all()
+        finally:
+            engine.dispose()
+        return tuple(_document_detail(row) for row in rows)
+
     async def _embed_chunks(
         self,
         chunks: Sequence[ChunkVectorInput],
@@ -253,7 +405,10 @@ class RuntimeVectorizationService:
                             "INSERT INTO semantic_chunk_embeddings "
                             "(chunk_uuid, vector, model, dimension, provider, model_version, active) "
                             "VALUES (:chunk_uuid, CAST(:vector AS vector), :model, :dimension, "
-                            ":provider, :model_version, TRUE)"
+                            ":provider, :model_version, TRUE) "
+                            "ON CONFLICT ON CONSTRAINT uq_semantic_chunk_embeddings_version "
+                            "DO UPDATE SET vector = EXCLUDED.vector, active = TRUE, "
+                            "created_at = now()"
                         ),
                         {
                             "chunk_uuid": record.chunk_id,
@@ -291,6 +446,50 @@ class RuntimeVectorizationService:
                     "chunk_id": str(chunk.chunk_id),
                     "document_id": str(chunk.document_id),
                     "preview": chunk_preview(chunk.body),
+                },
+            )
+
+    def _log_documents_started(
+        self,
+        documents: Sequence[Mapping[str, Any]],
+        chunks: Sequence[ChunkVectorInput],
+    ) -> None:
+        counts = _chunk_counts_by_document(chunks)
+        for document in documents:
+            _append_vectorizer_log(
+                "vectorizer_activity.jsonl",
+                {
+                    "event": "document_vectorization_started",
+                    "document_id": document.get("document_id"),
+                    "file": document.get("file") or document.get("source_name"),
+                    "title": document.get("title"),
+                    "chunk_count": counts.get(str(document.get("document_id")), 0),
+                    "provider": self._embedding_config.provider,
+                    "model": self._embedding_config.model,
+                    "model_version": self._embedding_config.model_version,
+                    "dimension": self._embedding_config.dimension,
+                },
+            )
+
+    def _log_documents_completed(
+        self,
+        documents: Sequence[Mapping[str, Any]],
+        chunks: Sequence[ChunkVectorInput],
+    ) -> None:
+        counts = _chunk_counts_by_document(chunks)
+        for document in documents:
+            _append_vectorizer_log(
+                "vectorizer_activity.jsonl",
+                {
+                    "event": "document_vectorized",
+                    "document_id": document.get("document_id"),
+                    "file": document.get("file") or document.get("source_name"),
+                    "title": document.get("title"),
+                    "chunk_count": counts.get(str(document.get("document_id")), 0),
+                    "provider": self._embedding_config.provider,
+                    "model": self._embedding_config.model,
+                    "model_version": self._embedding_config.model_version,
+                    "dimension": self._embedding_config.dimension,
                 },
             )
 
@@ -365,6 +564,30 @@ def installed_vectorization_service(
         database_url,
         installed_embedding_client(embedding_config),
         embedding_config,
+        installed_vectorization_status(),
+    )
+
+
+_INSTALLED_VECTORIZATION_STATUS: InMemoryVectorizationStatus | None = None
+
+
+def installed_vectorization_status() -> InMemoryVectorizationStatus:
+    global _INSTALLED_VECTORIZATION_STATUS
+    if _INSTALLED_VECTORIZATION_STATUS is None:
+        _INSTALLED_VECTORIZATION_STATUS = InMemoryVectorizationStatus()
+    return _INSTALLED_VECTORIZATION_STATUS
+
+
+def installed_vectorization_snapshot(
+    config: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    database_url = database_url_from_config(config or {})
+    if not database_url:
+        database_url = os.getenv("DOC_STORE_DATABASE_URL") or os.getenv("DATABASE_URL")
+    embedding_config = runtime_embedding_config(config)
+    return installed_vectorization_status().snapshot(
+        database_url=database_url,
+        embedding_config=embedding_config,
     )
 
 
@@ -406,7 +629,13 @@ def _extract_vectors(
         raise VectorizationError("embedding response count does not match input count")
     vectors: list[tuple[float, ...]] = []
     for index, item in enumerate(results):
-        raw = item.get("embedding", item.get("vector")) if isinstance(item, Mapping) else item
+        if isinstance(item, Mapping):
+            error = item.get("error")
+            if error:
+                raise VectorizationError(f"embedding response item {index} failed: {error}")
+            raw = item.get("embedding", item.get("vector"))
+        else:
+            raw = item
         vectors.append(_vector(raw, index, config.dimension))
     return tuple(vectors)
 
@@ -426,9 +655,158 @@ def _vector_literal(values: Sequence[float]) -> str:
     return "[" + ",".join(f"{value:.8f}" for value in values) + "]"
 
 
+def _chunk_counts_by_document(chunks: Sequence[ChunkVectorInput]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for chunk in chunks:
+        key = str(chunk.document_id)
+        counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def _document_detail(row: Mapping[str, Any]) -> dict[str, Any]:
+    file_value = (
+        row.get("file_path")
+        or row.get("file_name")
+        or row.get("source_path")
+        or row.get("source_name")
+        or row.get("title")
+        or row.get("document_id")
+    )
+    return {
+        "document_id": str(row.get("document_id")),
+        "title": row.get("title"),
+        "source_name": row.get("source_name"),
+        "source_path": row.get("source_path"),
+        "file_name": row.get("file_name"),
+        "file_path": row.get("file_path"),
+        "file": file_value,
+    }
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _vectorizer_log_dir() -> Path:
+    return Path(
+        os.getenv("DOC_STORE_VECTORIZER_LOG_DIR")
+        or os.getenv("DOC_STORE_EVENT_LOG_DIR", DEFAULT_LOG_DIR)
+    )
+
+
+def _vectorizer_status_path() -> Path:
+    return _vectorizer_log_dir() / "vectorizer_status.json"
+
+
+def _vectorizer_activity_path() -> Path:
+    return _vectorizer_log_dir() / "vectorizer_activity.jsonl"
+
+
+def _current_activity_from_logs(
+    *,
+    database_url: str | None,
+    embedding_config: RuntimeEmbeddingConfig | None,
+) -> dict[str, Any] | None:
+    event = _last_vectorizer_activity_event()
+    if not event or event.get("event") != "document_vectorization_started":
+        return None
+    document_id = event.get("document_id")
+    if not document_id:
+        return None
+    if not _document_needs_active_vectors(
+        database_url=database_url,
+        document_id=str(document_id),
+        embedding_config=embedding_config,
+    ):
+        return None
+    return {
+        "action": "embedding_documents",
+        "current_document_id": str(document_id),
+        "current_file": event.get("file"),
+        "current_title": event.get("title"),
+        "chunk_count": event.get("chunk_count"),
+        "timestamp": event.get("timestamp"),
+        "source": "vectorizer_activity_log",
+    }
+
+
+def _last_vectorizer_activity_event() -> dict[str, Any] | None:
+    path = _vectorizer_activity_path()
+    try:
+        with path.open("rb") as stream:
+            stream.seek(0, os.SEEK_END)
+            position = stream.tell()
+            buffer = bytearray()
+            while position > 0:
+                read_size = min(8192, position)
+                position -= read_size
+                stream.seek(position)
+                chunk = stream.read(read_size)
+                buffer[:0] = chunk
+                while b"\n" in buffer:
+                    line = bytes(buffer.rsplit(b"\n", 1)[-1]).strip()
+                    buffer = bytearray(buffer.rsplit(b"\n", 1)[0])
+                    if not line:
+                        continue
+                    try:
+                        event = json.loads(line.decode("utf-8"))
+                    except (UnicodeDecodeError, json.JSONDecodeError):
+                        continue
+                    return event if isinstance(event, dict) else None
+            line = bytes(buffer).strip()
+            if line:
+                event = json.loads(line.decode("utf-8"))
+                return event if isinstance(event, dict) else None
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    return None
+
+
+def _document_needs_active_vectors(
+    *,
+    database_url: str | None,
+    document_id: str,
+    embedding_config: RuntimeEmbeddingConfig | None,
+) -> bool:
+    if not database_url or embedding_config is None:
+        return True
+    engine = create_engine(database_url, pool_pre_ping=True)
+    try:
+        with engine.connect() as connection:
+            missing = connection.execute(
+                text(
+                    "SELECT EXISTS ("
+                    "SELECT 1 FROM semantic_chunks AS c "
+                    "LEFT JOIN semantic_chunk_embeddings AS e "
+                    "ON e.chunk_uuid = c.id "
+                    "AND e.active IS TRUE "
+                    "AND e.provider = :provider "
+                    "AND e.model = :model "
+                    "AND e.model_version = :model_version "
+                    "AND e.dimension = :dimension "
+                    "WHERE c.deleted_at IS NULL "
+                    "AND c.document_id = CAST(:document_id AS uuid) "
+                    "AND e.id IS NULL "
+                    ")"
+                ),
+                {
+                    "document_id": document_id,
+                    "provider": embedding_config.provider,
+                    "model": embedding_config.model,
+                    "model_version": embedding_config.model_version,
+                    "dimension": embedding_config.dimension,
+                },
+            ).scalar_one()
+    except SQLAlchemyError:
+        return True
+    finally:
+        engine.dispose()
+    return bool(missing)
+
+
 def _append_vectorizer_log(filename: str, payload: Mapping[str, Any]) -> None:
     try:
-        directory = Path(os.getenv("DOC_STORE_VECTORIZER_LOG_DIR") or os.getenv("DOC_STORE_EVENT_LOG_DIR", DEFAULT_LOG_DIR))
+        directory = _vectorizer_log_dir()
         directory.mkdir(parents=True, exist_ok=True)
         event = {"timestamp": datetime.now(timezone.utc).isoformat(), **dict(payload)}
         with (directory / filename).open("a", encoding="utf-8") as stream:
@@ -438,8 +816,11 @@ def _append_vectorizer_log(filename: str, payload: Mapping[str, Any]) -> None:
 
 
 __all__ = [
+    "InMemoryVectorizationStatus",
     "RuntimeVectorizationService",
     "VectorizationError",
     "installed_embedding_client",
     "installed_vectorization_service",
+    "installed_vectorization_snapshot",
+    "installed_vectorization_status",
 ]

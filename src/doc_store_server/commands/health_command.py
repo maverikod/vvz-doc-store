@@ -20,6 +20,7 @@ from mcp_proxy_adapter.core.proxy_registration import get_proxy_registration_sta
 from doc_store_server.db.health import check_database_health, database_url_from_config
 from doc_store_server.ingestion.runtime_boundary import installed_runtime_status
 from doc_store_server.runtime.health_metrics import database_metrics, empty_database_metrics
+from doc_store_server.runtime.vectorization import installed_vectorization_snapshot
 
 
 class DocStoreHealthCommand(Command):
@@ -43,7 +44,9 @@ class DocStoreHealthCommand(Command):
         metrics = database_metrics(database_url, connect_timeout=connect_timeout) if db_health.ok else empty_database_metrics()
         components = _platform_components()
         components["database"] = {"available": db_health.ok, **db_health.as_dict(), **metrics}
-        components["worker"] = installed_runtime_status().snapshot()
+        worker = installed_runtime_status().snapshot()
+        worker["vectorizer"] = installed_vectorization_snapshot(config)
+        components["worker"] = worker
         return SuccessResult(
             {
                 "status": "ok" if db_health.ok else "error",
@@ -75,7 +78,8 @@ class DocStoreHealthCommand(Command):
             "detailed_description": (
                 "Extends the adapter health command with doc-store database availability, "
                 "document and paragraph counts, current ingestion worker activity, per-document "
-                "vectorization percentage, and recent vectorized-document throughput."
+                "vectorization percentage, recent vectorized-document throughput, and the "
+                "current vectorizer file/document when embeddings_rebuild is running."
             ),
             "parameters": {},
             "return_value": {
@@ -87,7 +91,7 @@ class DocStoreHealthCommand(Command):
             },
             "best_practices": [
                 "Use this command through MCP proxy to verify registration, database availability, and indexing progress.",
-                "Treat worker activity as a best-effort process-local snapshot.",
+                "Treat worker activity as a best-effort process-local and persisted snapshot.",
             ],
         }
 

@@ -81,23 +81,40 @@ image_on_hub() {
     docker manifest inspect "$ref" >/dev/null 2>&1
 }
 
-sync_client_version() {
+sync_versions() {
     python3 - "$VERSION" <<'PY'
 from pathlib import Path
 import re
 import sys
 
 version = sys.argv[1]
-path = Path("doc-store-client/pyproject.toml")
-text = path.read_text(encoding="utf-8")
-updated = re.sub(r'(?m)^version = "([^"]+)"$', f'version = "{version}"', text, count=1)
+
+for filename in ("pyproject.toml", "doc-store-client/pyproject.toml"):
+    path = Path(filename)
+    text = path.read_text(encoding="utf-8")
+    updated = re.sub(r'(?m)^version = "([^"]+)"$', f'version = "{version}"', text, count=1)
+    if text != updated:
+        path.write_text(updated, encoding="utf-8")
+
+main = Path("src/doc_store_server/main.py")
+text = main.read_text(encoding="utf-8")
+updated = re.sub(r'version="[^"]+"', f'version="{version}"', text, count=1)
 if text != updated:
-    path.write_text(updated, encoding="utf-8")
+    main.write_text(updated, encoding="utf-8")
+
+for filename in ("packaging/config.json", "debian/doc-store-server/etc/doc-store/config.json"):
+    path = Path(filename)
+    if not path.exists():
+        continue
+    text = path.read_text(encoding="utf-8")
+    updated = re.sub(r'("version":\s*)"[^"]+"', rf'\g<1>"{version}"', text, count=1)
+    if text != updated:
+        path.write_text(updated, encoding="utf-8")
 PY
 }
 
 build_publish_client() {
-    sync_client_version
+    sync_versions
     command -v python3 >/dev/null 2>&1 || error "python3 is required"
     python3 -m build --version >/dev/null 2>&1 || error "python3 -m build is required"
     rm -rf doc-store-client/dist dist/client
@@ -149,7 +166,7 @@ ensure_image_published() {
     build_push_image
 }
 
-sync_client_version
+sync_versions
 
 if (( DO_DOCKER )); then
     build_push_image
