@@ -81,7 +81,8 @@ def test_validate_params_preserves_typed_filters_limits_and_semantic_threshold(
                 "is_public": True,
                 "tags": ["canonical", "search"],
                 "min_score": 0.82,
-                "max_results": 7,
+                "limit": 7,
+                "offset": 14,
             }
         }
     )["query"]
@@ -93,7 +94,8 @@ def test_validate_params_preserves_typed_filters_limits_and_semantic_threshold(
     assert query.is_public is True
     assert query.tags == ["canonical", "search"]
     assert query.min_score == pytest.approx(0.82)
-    assert query.max_results == 7
+    assert query.max_results == 100
+    assert query.model_extra == {"limit": 7, "offset": 14}
 
 
 def test_validate_params_rejects_unknown_fields_and_legacy_lark_filter_text(
@@ -179,7 +181,8 @@ def test_schema_and_metadata_are_complete_live_contracts() -> None:
     assert schema["required"] == ["query"]
     assert schema["additionalProperties"] is False
     assert schema["properties"]["query"]["additionalProperties"] is False
-    assert set(schema["properties"]["query"]["properties"]) == set(ChunkQuery.model_fields)
+    assert set(schema["properties"]["query"]["properties"]) == set(ChunkQuery.model_fields) | {"limit", "offset"}
+    assert "offset" in metadata["parameters"]["query"]["properties"]
     assert metadata["name"] == "chunk_query_search"
     assert metadata["parameters"] == {"query": schema["properties"]["query"]}
     assert metadata["usage_examples"]

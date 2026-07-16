@@ -142,6 +142,8 @@ class RuntimeSearchBoundary:
         where = ["sc.deleted_at IS NULL", *predicates]
         if plan.limit is not None:
             params["limit"] = plan.limit
+        if plan.offset:
+            params["offset"] = plan.offset
         sql = f"""
             SELECT sc.id, sc.document_id, sc.paragraph_id, sc.chapter_id,
                    sc.order_index, sc.text, sc.source_start, sc.source_end,
@@ -154,6 +156,7 @@ class RuntimeSearchBoundary:
             WHERE {' AND '.join(where)}
             ORDER BY d.created_at ASC, sc.order_index ASC, sc.id ASC
             {"LIMIT :limit" if plan.limit is not None else ""}
+            {"OFFSET :offset" if plan.offset else ""}
         """
         result = await session.execute(text(sql), params)
         rows = result.mappings().all()

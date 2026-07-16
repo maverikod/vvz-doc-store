@@ -82,7 +82,8 @@ class ExecutionPlan:
         return self.text
 
 
-_QUERY_FIELDS = frozenset(ChunkQuery.model_fields)
+_QUERY_EXTENSION_FIELDS = frozenset({"limit", "offset"})
+_QUERY_FIELDS = frozenset(ChunkQuery.model_fields) | _QUERY_EXTENSION_FIELDS
 _CHUNK_FIELDS = frozenset(SemanticChunk.model_fields)
 _CONTROL_FIELDS = frozenset(
     {
@@ -95,6 +96,8 @@ _CONTROL_FIELDS = frozenset(
         "semantic_weight",
         "min_score",
         "max_results",
+        "limit",
+        "offset",
         "filter_expr",
     }
 )
@@ -119,6 +122,34 @@ def _validate_public_fields(values: Mapping[str, Any]) -> None:
     unknown = sorted(set(values) - _QUERY_FIELDS)
     if unknown:
         raise QueryFieldError(f"unknown ChunkQuery fields: {', '.join(unknown)}")
+
+
+def _bounded_int(value: Any, name: str, *, minimum: int, maximum: int) -> int:
+    if isinstance(value, bool):
+        raise QueryContractError(f"{name} must be an integer")
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise QueryContractError(f"{name} must be an integer") from exc
+    if parsed < minimum or parsed > maximum:
+        raise QueryContractError(f"{name} must be between {minimum} and {maximum}")
+    return parsed
+
+
+def _limit(values: Mapping[str, Any], provided: frozenset[str]) -> int | None:
+    max_results = values.get("max_results")
+    if "limit" not in provided:
+        return max_results
+    limit = _bounded_int(values.get("limit"), "limit", minimum=1, maximum=1000)
+    if "max_results" in provided and max_results is not None and int(max_results) != limit:
+        raise QueryContractError("limit and max_results must match when both are provided")
+    return limit
+
+
+def _offset(values: Mapping[str, Any], provided: frozenset[str]) -> int:
+    if "offset" not in provided:
+        return 0
+    return _bounded_int(values.get("offset"), "offset", minimum=0, maximum=100000)
 
 
 def _normalise_embedding(value: Any) -> tuple[float, ...] | tuple[tuple[float, ...], ...] | None:
@@ -203,7 +234,8 @@ def compile_query(query: ChunkQuery | Mapping[str, Any]) -> ExecutionPlan:
         bm25_weight=values.get("bm25_weight") if mode is ExecutionMode.HYBRID else None,
         semantic_weight=values.get("semantic_weight") if mode is ExecutionMode.HYBRID else None,
         min_score=values.get("min_score") if mode is not ExecutionMode.STRUCTURED else None,
-        limit=values.get("max_results"),
+        limit=_limit(values, provided),
+        offset=_offset(values, provided),
     )
 
 

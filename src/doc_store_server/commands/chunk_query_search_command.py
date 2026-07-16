@@ -22,6 +22,22 @@ class SearchOrchestrator(Protocol):
 
 def _query_schema() -> dict[str, Any]:
     schema = ChunkQuery.model_json_schema()
+    schema.setdefault("properties", {}).update(
+        {
+            "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000,
+                "description": "Server-side page size alias for max_results.",
+            },
+            "offset": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 100000,
+                "description": "Zero-based result offset for sequential scans.",
+            },
+        }
+    )
     schema["additionalProperties"] = False
     return schema
 
@@ -68,7 +84,9 @@ class ChunkQuerySearchCommand(Command):
                     **_query_schema(),
                     "description": (
                         "Canonical chunk_metadata_adapter ChunkQuery request, "
-                        "including typed filters, mode, thresholds, limits, and controls."
+                        "including typed filters, mode, thresholds, limits, and controls. "
+                        "The server also accepts limit as an alias for max_results and "
+                        "offset for ordered paging."
                     ),
                 }
             },
@@ -93,7 +111,8 @@ class ChunkQuerySearchCommand(Command):
                 "and diagnostics supplied by that orchestrator. For semantic text "
                 "search, send search_query with hybrid_search=true and bm25_weight=0; "
                 "the server obtains the query embedding through embed-client before "
-                "executing the semantic branch."
+                "executing the semantic branch. For ordered corpus scans, send "
+                "block_meta filters with limit/max_results and offset."
             ),
             "parameters": {"query": cls.get_schema()["properties"]["query"]},
             "return_value": {
@@ -101,6 +120,7 @@ class ChunkQuerySearchCommand(Command):
             },
             "usage_examples": [
                 {"query": {"search_query": "canonical retrieval", "max_results": 10}},
+                {"query": {"block_meta": {"source_name": "7d-55-Периодический_закон_Менделеева.md"}, "limit": 100, "offset": 100}},
                 {"query": {"search_query": "semantic concept", "hybrid_search": True, "bm25_weight": 0.0, "semantic_weight": 1.0, "max_results": 10}},
                 {"query": {"project": "doc-store", "type": "DocBlock", "tags": ["api"]}},
             ],
@@ -112,6 +132,7 @@ class ChunkQuerySearchCommand(Command):
             },
             "best_practices": [
                 "Use chunk_metadata_adapter ChunkQuery fields and typed filter values only.",
+                "Use limit plus offset to scan a large filtered corpus page by page.",
                 "Do not submit a second query language, SQL, or backend-specific parameters.",
             ],
         }
@@ -126,7 +147,8 @@ class ChunkQuerySearchCommand(Command):
                 "INVALID_PARAMS: query must be a canonical ChunkQuery object",
                 data={"field": "query", "remediation": "Provide an object matching ChunkQuery."},
             )
-        unknown = sorted(set(query_value) - set(ChunkQuery.model_fields))
+        extension_fields = {"limit", "offset"}
+        unknown = sorted(set(query_value) - set(ChunkQuery.model_fields) - extension_fields)
         if unknown:
             raise AdapterValidationError(
                 f"INVALID_PARAMS: unknown ChunkQuery fields: {', '.join(unknown)}",

@@ -203,7 +203,10 @@ def build_info_document(registry: CommandHelpRegistry) -> InfoDocument:
             "chunk_query_search, clients send search_query with hybrid_search=true, "
             "bm25_weight=0, and semantic_weight=1; the server obtains the query vector "
             "through embed-client and executes the semantic branch against active "
-            "semantic_chunk_embeddings."
+            "semantic_chunk_embeddings. For deterministic source scans, clients may "
+            "filter by block_meta.source_name or document identifiers and page with "
+            "limit/max_results plus zero-based offset; structured scans are ordered "
+            "by document creation, chunk order_index, and chunk id."
         ),
         "semantic_relations": (
             "semantic_relations is the public corpus-wide embedding comparison API. "

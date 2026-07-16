@@ -23,6 +23,25 @@ class _EmbeddingClient:
         }
 
 
+class _Mappings:
+    def all(self) -> list[dict[str, Any]]:
+        return []
+
+
+class _Result:
+    def mappings(self) -> _Mappings:
+        return _Mappings()
+
+
+class _Session:
+    def __init__(self) -> None:
+        self.calls: list[tuple[Any, dict[str, Any]]] = []
+
+    async def execute(self, statement: Any, params: dict[str, Any]) -> _Result:
+        self.calls.append((statement, params))
+        return _Result()
+
+
 def _config() -> RuntimeEmbeddingConfig:
     return RuntimeEmbeddingConfig(
         protocol="https",
@@ -121,3 +140,25 @@ def test_runtime_search_embeds_explicit_semantic_weight_text_query() -> None:
     assert plan.embedding == (0.1, 0.2, 0.3)
     assert plan.search_query is None
     assert client.calls[0][0] == ["semantic weighted query"]
+
+
+def test_runtime_structured_search_uses_compiled_limit_and_offset() -> None:
+    boundary = RuntimeSearchBoundary("postgresql://unused", embedding_config=_config())
+    session = _Session()
+    plan = compile_query(
+        {
+            "block_meta": {"source_name": "7d-55-Периодический_закон_Менделеева.md"},
+            "limit": 20,
+            "offset": 40,
+        }
+    )
+
+    results = asyncio.run(boundary._execute_structured(session, plan))
+
+    assert results == ()
+    statement, params = session.calls[0]
+    sql = str(statement)
+    assert params["limit"] == 20
+    assert params["offset"] == 40
+    assert "LIMIT :limit" in sql
+    assert "OFFSET :offset" in sql

@@ -49,7 +49,11 @@ def test_chunk_query_fields_are_normalized_and_bound_separately() -> None:
         ({"filter_expr": "project = 'x' OR 1=1"}, QueryPredicateError),
         ({"max_results": 0}, QueryContractError),
         ({"max_results": -1}, QueryContractError),
-        ({"offset": 10}, QueryFieldError),
+        ({"offset": -1}, QueryContractError),
+        ({"offset": 100001}, QueryContractError),
+        ({"limit": 0}, QueryContractError),
+        ({"limit": 1001}, QueryContractError),
+        ({"limit": 5, "max_results": 6}, QueryContractError),
         ({"order_by": ["project"]}, QueryFieldError),
         ({"search_fields": ["body", "not-a-public-field"]}, QueryContractError),
     ],
@@ -74,7 +78,7 @@ def test_injection_like_values_remain_bound_data() -> None:
 
 
 def test_structured_filter_only_payload_is_exact() -> None:
-    plan = compile_query({"project": "doc-store", "max_results": 12})
+    plan = compile_query({"project": "doc-store", "max_results": 12, "offset": 3})
 
     assert plan == compiler.ExecutionPlan(
         mode=ExecutionMode.STRUCTURED,
@@ -83,7 +87,16 @@ def test_structured_filter_only_payload_is_exact() -> None:
         ),
         search_fields=("body", "text", "summary", "title"),
         limit=12,
+        offset=3,
     )
+
+
+def test_limit_alias_compiles_to_execution_plan_limit() -> None:
+    plan = compile_query({"project": "doc-store", "limit": "12", "offset": "4"})
+
+    assert plan.mode is ExecutionMode.STRUCTURED
+    assert plan.limit == 12
+    assert plan.offset == 4
 
 
 def test_block_meta_object_filter_compiles_to_jsonb_containment() -> None:
