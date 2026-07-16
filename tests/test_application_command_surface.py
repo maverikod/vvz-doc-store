@@ -38,12 +38,14 @@ from doc_store_server.commands.retrieval_commands import (
     ParagraphGetByNumberCommand,
     ParagraphGetCommand,
 )
+from doc_store_server.commands.uuid4_command import Uuid4Command
 
 
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_COMMANDS = {
     "health": (DocStoreHealthCommand, "sync"),
     "info": (InfoCommand, "sync"),
+    "uuid4": (Uuid4Command, "sync"),
     "document_get": (DocumentGetCommand, "sync"),
     "chapter_get": (ChapterGetCommand, "sync"),
     "paragraph_get": (ParagraphGetCommand, "sync"),
@@ -299,7 +301,8 @@ class FakeLifecycle:
             {"document_rebind_boundary": FakeRebind()},
         ),
         (ProcessingStatusCommand, {"operation_id": "op-1"}, {"runtime_status_boundary": FakeStatus()}),
-        (DocumentDeleteCommand, {"document_id": "doc-1", "version_token": "v1"}, {"canonical_document_service": FakeDelete()}),
+        (DocumentDeleteCommand, {"document_id": "550e8400-e29b-41d4-a716-446655440001", "version_token": "v1"}, {"canonical_document_service": FakeDelete()}),
+        (Uuid4Command, {"count": 2}, {}),
         (EntityCreateCommand, {"entity_type": "files", "values": {"id": "550e8400-e29b-41d4-a716-446655440009", "path": "/tmp/doc.txt", "name": "doc.txt", "body_sha256": "0" * 64}}, {"entity_lifecycle_boundary": FakeLifecycle()}),
         (EntityListCommand, {"entity_type": "documents"}, {"entity_lifecycle_boundary": FakeLifecycle()}),
         (EntityGetCommand, {"entity_type": "documents", "entity_id": "550e8400-e29b-41d4-a716-446655440001"}, {"entity_lifecycle_boundary": FakeLifecycle()}),

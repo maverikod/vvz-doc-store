@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import Any, ClassVar, Protocol
-from uuid import UUID
 
 from mcp_proxy_adapter.commands.base import Command, CommandResult
 from mcp_proxy_adapter.commands.result import ErrorResult
 
+from doc_store_server.commands.validation import parse_optional_uuid4, parse_uuid4
 from doc_store_server.runtime.document_export import installed_document_export_service
 
 
@@ -83,11 +83,13 @@ class DocumentExportCommand(Command):
         context: Mapping[str, Any] | None = None,
     ) -> CommandResult | ErrorResult:
         try:
-            UUID(str(document_id))
-            if file_id is not None:
-                UUID(str(file_id))
-        except (TypeError, ValueError) as exc:
-            return ErrorResult("document_id and file_id must be UUID4 strings", details={"code": "INVALID_PARAMS", "error": str(exc)})
+            normalized_document_id = str(parse_uuid4(document_id, "document_id", self.name))
+            normalized_file_id = parse_optional_uuid4(file_id, "file_id", self.name)
+        except Exception as exc:
+            return ErrorResult(
+                "document_id and file_id must be UUID4 strings",
+                details={"code": "INVALID_PARAMS", "error": str(exc)},
+            )
         if not isinstance(path, str) or not path.strip():
             return ErrorResult("path must be a non-empty string", details={"code": "INVALID_PARAMS"})
         boundary = context.get("document_export_boundary") if isinstance(context, Mapping) else None
@@ -98,9 +100,9 @@ class DocumentExportCommand(Command):
         try:
             return CommandResult(
                 data=boundary.export_document(
-                    document_id=document_id,
+                    document_id=normalized_document_id,
                     path=path,
-                    file_id=file_id,
+                    file_id=str(normalized_file_id) if normalized_file_id is not None else None,
                     overwrite=overwrite,
                 )
             )

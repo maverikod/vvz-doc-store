@@ -1,29 +1,35 @@
 from __future__ import annotations
 
+import asyncio
 import json
 
 from doc_store_server.ingestion.runtime_boundary import (
     InMemoryRuntimeStatus,
     RuntimeIngestionBoundary,
     _chunk_features,
-    _chunk_units,
+    _clear_reprocessing_flags,
     _insert_semantic_chunk_default_metrics,
-    _paragraphs,
+    _mark_existing_hierarchy_deleted,
+    _revectorize_active_chunks,
 )
+
+
+def _run(awaitable):
+    return asyncio.run(awaitable)
 
 
 def test_runtime_boundary_reports_database_unconfigured_without_crashing() -> None:
     status = InMemoryRuntimeStatus()
     boundary = RuntimeIngestionBoundary(None, status)
 
-    result = boundary(
+    result = _run(boundary(
         document_id="550e8400-e29b-41d4-a716-446655440000",
         source_version_id="source-v1",
         operation_id="550e8400-e29b-41d4-a716-446655440001",
         command="document_create",
         chunking_strategy="paragraph",
         raw_text="runtime source",
-    )
+    ))
 
     assert result["status"] == "rolled_back"
     assert result["failure"]["code"] == "DATABASE_NOT_CONFIGURED"
@@ -65,51 +71,6 @@ def test_runtime_status_uses_persisted_fallback_when_process_snapshot_is_missing
     assert snapshot["failure"] is None
 
 
-def test_runtime_paragraph_split_preserves_blank_line_order() -> None:
-    text = (
-        "# Title\n\n"
-        "First paragraph mentions PostgreSQL indexes.\n\n"
-        "Second paragraph explains semantic retrieval.\n\n"
-        "Third paragraph carries project doc-store and tag api."
-    )
-
-    paragraphs = _paragraphs(text)
-
-    assert [paragraph for paragraph, _, _ in paragraphs] == [
-        "# Title",
-        "First paragraph mentions PostgreSQL indexes.",
-        "Second paragraph explains semantic retrieval.",
-        "Third paragraph carries project doc-store and tag api.",
-    ]
-    assert [text[start:end] for _, start, end in paragraphs] == [
-        "# Title",
-        "First paragraph mentions PostgreSQL indexes.",
-        "Second paragraph explains semantic retrieval.",
-        "Third paragraph carries project doc-store and tag api.",
-    ]
-
-
-def test_runtime_chunk_units_support_document_strategies() -> None:
-    text = "First sentence. Second sentence!\n\nThird paragraph keeps semantic context."
-
-    paragraph_units = _chunk_units(text, "paragraph")
-    sentence_units = _chunk_units(text, "sentence")
-    semantic_units = _chunk_units(text, "semantic")
-
-    assert [unit[0] for unit in paragraph_units] == [
-        "First sentence. Second sentence!",
-        "Third paragraph keeps semantic context.",
-    ]
-    assert [unit[0] for unit in sentence_units] == [
-        "First sentence.",
-        "Second sentence!",
-        "Third paragraph keeps semantic context.",
-    ]
-    assert [unit[0] for unit in semantic_units] == [
-        "First sentence. Second sentence!\n\nThird paragraph keeps semantic context."
-    ]
-
-
 def test_runtime_chunk_features_use_per_classifier_default_category_when_missing() -> None:
     plain = _chunk_features(
         "Plain paragraph without explicit classifier properties.",
@@ -147,20 +108,87 @@ def test_runtime_default_metrics_preserve_quality_for_later_worker() -> None:
     assert feedback_params == {"chunk_uuid": chunk_id}
 
 
+class _ScalarResult:
+    def __init__(self, rows: list[object]) -> None:
+        self._rows = rows
+
+    def scalars(self) -> "_ScalarResult":
+        return self
+
+    def all(self) -> list[object]:
+        return self._rows
+
+    def __iter__(self) -> object:
+        return iter(self._rows)
+
+
+class _MappingResult:
+    def __init__(self, rows: list[dict[str, object]]) -> None:
+        self._rows = rows
+
+    def mappings(self) -> "_MappingResult":
+        return self
+
+    def all(self) -> list[dict[str, object]]:
+        return self._rows
+
+
+class _RecordingSqlConnection:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict[str, object]]] = []
+
+    def execute(self, statement: object, params: dict[str, object]) -> object:
+        sql = str(statement)
+        self.calls.append((sql, params))
+        if "SELECT id FROM semantic_chunks" in sql:
+            return _ScalarResult(["550e8400-e29b-41d4-a716-446655440010"])
+        if "SELECT id, text FROM semantic_chunks" in sql:
+            return _MappingResult(
+                [{"id": "550e8400-e29b-41d4-a716-446655440010", "text": "chunk text"}]
+            )
+        return _ScalarResult([])
+
+
+def test_runtime_checksum_rechunk_marks_existing_chunks_deleted_in_batch() -> None:
+    connection = _RecordingSqlConnection()
+
+    _mark_existing_hierarchy_deleted(connection, "550e8400-e29b-41d4-a716-446655440000")  # type: ignore[arg-type]
+
+    sql = "\n".join(call[0] for call in connection.calls)
+    assert "UPDATE semantic_chunk_embeddings SET active = FALSE" in sql
+    assert "UPDATE semantic_chunks SET is_deleted = TRUE, deleted_at = now()" in sql
+    assert "UPDATE paragraphs SET is_deleted = TRUE, deleted_at = now()" in sql
+    assert "UPDATE chapters SET is_deleted = TRUE, deleted_at = now()" in sql
+    assert "UPDATE chapters SET order_index = order_index +" in sql
+
+
+def test_runtime_revectorize_branch_replaces_active_embeddings_and_clears_flags() -> None:
+    connection = _RecordingSqlConnection()
+
+    _revectorize_active_chunks(connection, "550e8400-e29b-41d4-a716-446655440000")  # type: ignore[arg-type]
+    _clear_reprocessing_flags(connection, "550e8400-e29b-41d4-a716-446655440000")  # type: ignore[arg-type]
+
+    sql = "\n".join(call[0] for call in connection.calls)
+    assert "UPDATE semantic_chunk_embeddings SET active = FALSE" in sql
+    assert "INSERT INTO semantic_chunk_embeddings" in sql
+    assert "UPDATE documents SET needs_revectorize = FALSE" in sql
+    assert "UPDATE files SET needs_revectorize = FALSE, needs_rechunk = FALSE" in sql
+
+
 def test_runtime_boundary_writes_separated_error_and_text_logs(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("DOC_STORE_EVENT_LOG_DIR", str(tmp_path))
     monkeypatch.setenv("DOC_STORE_TEXT_LOG_PREVIEW_CHARS", "7")
     status = InMemoryRuntimeStatus()
     boundary = RuntimeIngestionBoundary(None, status)
 
-    boundary(
+    _run(boundary(
         document_id="550e8400-e29b-41d4-a716-446655440000",
         source_version_id="source-v1",
         operation_id="550e8400-e29b-41d4-a716-446655440001",
         command="document_create",
         chunking_strategy="paragraph",
         raw_text="runtime source",
-    )
+    ))
 
     text_events = [
         json.loads(line)
@@ -180,7 +208,7 @@ def test_runtime_boundary_writes_processed_file_log_without_full_content(tmp_pat
     status = InMemoryRuntimeStatus()
     boundary = RuntimeIngestionBoundary(None, status)
 
-    boundary(
+    _run(boundary(
         document_id="550e8400-e29b-41d4-a716-446655440000",
         source_version_id="source-file-v1",
         operation_id="550e8400-e29b-41d4-a716-446655440002",
@@ -191,7 +219,7 @@ def test_runtime_boundary_writes_processed_file_log_without_full_content(tmp_pat
             "media_type": "text/markdown",
             "content": "# Sample\n\nfile source",
         },
-    )
+    ))
 
     file_events = [
         json.loads(line)

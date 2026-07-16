@@ -11,11 +11,13 @@ import inspect
 import os
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, ClassVar
-from uuid import UUID, NAMESPACE_URL, uuid5
+from uuid import NAMESPACE_URL, uuid5
 
 from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 from mcp_proxy_adapter.core.errors import ValidationError
+
+from doc_store_server.commands.validation import parse_uuid4
 
 
 Boundary = Callable[
@@ -71,12 +73,7 @@ def _validate_identity(params: dict[str, Any], *, chunking_required: bool) -> di
         raise ValidationError(
             "document_id must be a non-empty UUID string", {"field": "document_id"}
         )
-    try:
-        document_uuid = UUID(document_id)
-    except (ValueError, AttributeError) as exc:
-        raise ValidationError(
-            "document_id must be a valid UUID", {"field": "document_id"}
-        ) from exc
+    document_uuid = parse_uuid4(document_id, "document_id", "ingestion")
 
     source_version_id = params.get("source_version_id")
     if not isinstance(source_version_id, str) or not source_version_id.strip():
@@ -368,12 +365,7 @@ class DocumentChunkCommand(_IngestionCommand):
             raise ValidationError(
                 "document_id must be a non-empty UUID string", {"field": "document_id"}
             )
-        try:
-            document_uuid = UUID(document_id)
-        except (ValueError, AttributeError) as exc:
-            raise ValidationError(
-                "document_id must be a valid UUID", {"field": "document_id"}
-            ) from exc
+        document_uuid = parse_uuid4(document_id, "document_id", self.name)
         normalized = dict(params)
         normalized["document_id"] = str(document_uuid)
         strategy = _validate_chunking_strategy(normalized, required=False)

@@ -8,10 +8,12 @@ boundary through ``chunk_metadata_adapter`` factories and serializers.
 from __future__ import annotations
 
 import inspect
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Protocol, TypeAlias
+from uuid import UUID
 
 from chunk_metadata_adapter import SemanticChunk
 
@@ -54,6 +56,259 @@ class SvoChunkingResult:
     chunks: tuple[SemanticChunk, ...]
     serialized_chunks: tuple[SerializedChunk, ...]
     contract_metadata: Mapping[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeChunk:
+    """One validated chunk returned by the external chunking service."""
+
+    uuid: UUID
+    text: str
+    start: int
+    end: int
+    ordinal: int
+    metadata: Mapping[str, Any]
+
+
+class ChunkerError(RuntimeError):
+    """Domain error raised by the runtime chunker wrapper."""
+
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        details: Mapping[str, Any] | None = None,
+    ) -> None:
+        self.code = code
+        self.details = dict(details or {})
+        super().__init__(message)
+
+
+class SvoRuntimeChunker:
+    """Thin runtime wrapper over the public SvoChunkerClient."""
+
+    def __init__(
+        self,
+        client: PublicSvoChunker,
+        *,
+        chunk_sets: Mapping[str, str | None] | None = None,
+        language: str | None = None,
+        project: str | None = None,
+    ) -> None:
+        self._client = client
+        self._chunk_sets = dict(chunk_sets or {})
+        self._language = language
+        self._project = project
+
+    async def chunk(
+        self,
+        *,
+        text: str,
+        strategy: str,
+        source_id: str,
+    ) -> tuple[RuntimeChunk, ...]:
+        params = _strategy_params(strategy)
+        chunk_set = self._chunk_sets.get(strategy)
+        if chunk_set:
+            params["chunk_set"] = chunk_set
+        if self._language:
+            params["language"] = self._language
+        if self._project:
+            params["project"] = self._project
+        try:
+            raw_chunks = await self._client.chunk(
+                text,
+                source_id=source_id,
+                chunk_only=True,
+                chunk_type="DocBlock",
+                chunking_version="1.0",
+                **params,
+            )
+        except ChunkerError:
+            raise
+        except (TimeoutError, OSError) as exc:
+            raise ChunkerError(
+                "CHUNKER_UNAVAILABLE",
+                "external chunker is unavailable",
+                {"error_type": type(exc).__name__, "message": str(exc)},
+            ) from exc
+        except Exception as exc:
+            if _looks_like_connection_error(exc):
+                raise ChunkerError(
+                    "CHUNKER_UNAVAILABLE",
+                    "external chunker is unavailable",
+                    {"error_type": type(exc).__name__, "message": str(exc)},
+                ) from exc
+            raise ChunkerError(
+                "CHUNKER_INTERNAL_ERROR",
+                "external chunker failed",
+                {"error_type": type(exc).__name__, "message": str(exc)},
+            ) from exc
+        return _validate_runtime_chunks(raw_chunks, text, source_id)
+
+
+def _strategy_params(strategy: str) -> dict[str, Any]:
+    if strategy == "paragraph":
+        return {"use_sv": False, "aggregation_mode": "paragraph"}
+    if strategy == "sentence":
+        return {"use_sv": False, "aggregation_mode": "sentence"}
+    if strategy == "semantic":
+        return {"use_sv": False, "aggregation_mode": "sentence", "chunk_set": DEFAULT_PRESET}
+    raise ChunkerError(
+        "CHUNKER_UNSUPPORTED_STRATEGY",
+        "chunking strategy is not supported by the SVO runtime wrapper",
+        {"strategy": strategy},
+    )
+
+
+def _looks_like_connection_error(exc: Exception) -> bool:
+    name = type(exc).__name__.lower()
+    return "timeout" in name or "connection" in name or "connect" in name
+
+
+def _validate_runtime_chunks(
+    raw_chunks: Any,
+    source_text: str,
+    source_id: str,
+) -> tuple[RuntimeChunk, ...]:
+    if isinstance(raw_chunks, (str, bytes, bytearray)) or not isinstance(raw_chunks, Sequence):
+        raise ChunkerError(
+            "CHUNKER_INVALID_RESPONSE",
+            "external chunker returned a non-list response",
+            {"response_type": type(raw_chunks).__name__},
+        )
+    if not raw_chunks:
+        raise ChunkerError("CHUNKER_EMPTY_RESULT", "external chunker returned no chunks")
+    expected_source = str(UUID(source_id))
+    previous_end = 0
+    result: list[RuntimeChunk] = []
+    for index, raw in enumerate(raw_chunks):
+        if not isinstance(raw, SemanticChunk):
+            raise ChunkerError(
+                "CHUNKER_INVALID_RESPONSE",
+                "external chunker returned a non-SemanticChunk item",
+                {"index": index, "item_type": type(raw).__name__},
+            )
+        try:
+            payload = serialize_semantic_chunk(raw)
+            chunk = deserialize_semantic_chunk(payload)
+        except Exception as exc:
+            raise ChunkerError(
+                "CHUNKER_INVALID_RESPONSE",
+                "external chunker returned an invalid SemanticChunk",
+                {"index": index, "error_type": type(exc).__name__, "message": str(exc)},
+            ) from exc
+        raw_start, raw_end = chunk.start, chunk.end
+        raw_body = str(getattr(chunk, "body", None) or "")
+        body = str(getattr(chunk, "text", None) or raw_body or "")
+        if chunk.source_id != expected_source:
+            raise ChunkerError(
+                "CHUNKER_CONTRACT_ERROR",
+                "external chunker returned a chunk for a different source_id",
+                {"index": index, "expected": expected_source, "actual": chunk.source_id},
+            )
+        if not isinstance(raw_start, int) or not isinstance(raw_end, int):
+            raise ChunkerError(
+                "CHUNKER_CONTRACT_ERROR",
+                "external chunker returned a chunk without integer source range",
+                {"index": index},
+            )
+        if not body:
+            raise ChunkerError(
+                "CHUNKER_CONTRACT_ERROR",
+                "external chunker returned an empty chunk body",
+                {"index": index},
+            )
+        start, end = _resolve_runtime_range(
+            source_text=source_text,
+            previous_end=previous_end,
+            raw_start=raw_start,
+            raw_end=raw_end,
+            raw_body=raw_body,
+            text_body=body,
+        )
+        if start is None or end is None:
+            raise ChunkerError(
+                "CHUNKER_CONTRACT_ERROR",
+                "external chunker returned a chunk that cannot be located in the source text",
+                {
+                    "index": index,
+                    "start": raw_start,
+                    "end": raw_end,
+                    "previous_end": previous_end,
+                    "source_length": len(source_text),
+                },
+            )
+        if start < previous_end:
+            raise ChunkerError(
+                "CHUNKER_CONTRACT_ERROR",
+                "external chunker returned overlapping or unordered ranges",
+                {"index": index, "start": start, "previous_end": previous_end},
+            )
+        if chunk.ordinal is not None and chunk.ordinal != index:
+            raise ChunkerError(
+                "CHUNKER_CONTRACT_ERROR",
+                "external chunker returned non-sequential ordinals",
+                {"index": index, "ordinal": chunk.ordinal},
+            )
+        chunk_uuid = UUID(str(chunk.uuid))
+        if chunk_uuid.version != 4:
+            raise ChunkerError(
+                "CHUNKER_CONTRACT_ERROR",
+                "external chunker returned a non-UUID4 chunk uuid",
+                {"index": index, "uuid": str(chunk.uuid)},
+            )
+        result.append(
+            RuntimeChunk(
+                uuid=chunk_uuid,
+                text=body,
+                start=start,
+                end=end,
+                ordinal=index,
+                metadata=MappingProxyType(payload),
+            )
+        )
+        previous_end = end
+    return tuple(result)
+
+
+def _resolve_runtime_range(
+    *,
+    source_text: str,
+    previous_end: int,
+    raw_start: int,
+    raw_end: int,
+    raw_body: str,
+    text_body: str,
+) -> tuple[int | None, int | None]:
+    if (
+        0 <= raw_start < raw_end <= len(source_text)
+        and raw_start >= previous_end
+        and source_text[raw_start:raw_end] in {raw_body, text_body}
+    ):
+        return raw_start, raw_end
+
+    for candidate in _range_candidates(raw_body, text_body):
+        found = source_text.find(candidate, previous_end)
+        if found >= 0:
+            return found, found + len(candidate)
+
+    stripped = text_body.strip()
+    if stripped:
+        pattern = r"\s+".join(re.escape(part) for part in stripped.split())
+        match = re.search(pattern, source_text[previous_end:])
+        if match:
+            start = previous_end + match.start()
+            return start, previous_end + match.end()
+    return None, None
+
+
+def _range_candidates(raw_body: str, text_body: str) -> tuple[str, ...]:
+    values: list[str] = []
+    for candidate in (raw_body, text_body, raw_body.strip(), text_body.strip()):
+        if candidate and candidate not in values:
+            values.append(candidate)
+    return tuple(values)
 
 
 class SvoChunkingBoundary:
@@ -211,9 +466,12 @@ def _validate_result(
 
 __all__ = (
     "ChunkingDiagnostic",
+    "ChunkerError",
     "DEFAULT_PRESET",
+    "RuntimeChunk",
     "SvoChunkingBoundary",
     "SvoChunkingError",
     "SvoChunkingResult",
+    "SvoRuntimeChunker",
     "chunk_normalized_request",
 )

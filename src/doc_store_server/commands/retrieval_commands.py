@@ -14,6 +14,8 @@ from uuid import UUID
 from mcp_proxy_adapter.commands.base import Command, CommandResult
 from mcp_proxy_adapter.core.errors import ValidationError
 
+from doc_store_server.commands.validation import parse_uuid4
+
 
 class RetrievalBoundary(Protocol):
     """Canonical application retrieval/query boundary used by these commands."""
@@ -40,19 +42,7 @@ class InvalidVersionError(ValueError):
 def _typed_identifier(value: Any, field: str, command_name: str) -> UUID:
     """Parse a UUID4 identifier so the boundary receives a typed value."""
 
-    try:
-        identifier = value if isinstance(value, UUID) else UUID(str(value))
-    except (AttributeError, TypeError, ValueError) as exc:
-        raise ValidationError(
-            f"{command_name}: parameter {field!r} must be a UUID4 identifier",
-            data={"field": field, "value": value},
-        ) from exc
-    if identifier.version != 4:
-        raise ValidationError(
-            f"{command_name}: parameter {field!r} must be a UUID4 identifier",
-            data={"field": field, "value": value},
-        )
-    return identifier
+    return parse_uuid4(value, field, command_name)
 
 
 def _typed_result(value: Any) -> Any:

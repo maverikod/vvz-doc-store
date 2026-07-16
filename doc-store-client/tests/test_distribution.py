@@ -10,12 +10,16 @@ import re
 import subprocess
 import sys
 import tarfile
+import tomllib
 import venv
 import zipfile
 
 
 CLIENT_ROOT = Path(__file__).parents[1]
 SERVER_MODULE = "doc_store_server"
+EXPECTED_VERSION = tomllib.loads((CLIENT_ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
+    "project"
+]["version"]
 
 
 def _run(command: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
@@ -135,7 +139,7 @@ def test_client_distribution_isolated_and_server_free(tmp_path: Path) -> None:
     python = _venv_python(environment)
     _run([str(python), "-m", "pip", "install", str(wheel)], cwd=tmp_path)
 
-    smoke = r"""
+    smoke = f"""
 import importlib
 import importlib.metadata
 import importlib.util
@@ -146,7 +150,7 @@ import sys
 assert not any(os.path.abspath(path) == os.getcwd() for path in sys.path if path)
 package = importlib.import_module("doc_store_client")
 assert package.__version__ == importlib.metadata.version("doc-store-client")
-assert package.__version__ == "0.1.22"
+assert package.__version__ == "{EXPECTED_VERSION}"
 public = getattr(package, "__all__", ())
 assert public
 assert "DocStoreClient" in public
@@ -162,12 +166,12 @@ class FakeAdapter:
 client_type = package.DocStoreClient
 client = client_type(FakeAdapter())
 assert isinstance(client, client_type)
-print(json.dumps({"version": package.__version__, "exports": sorted(public)}))
+print(json.dumps({{"version": package.__version__, "exports": sorted(public)}}))
 """
     result = _run(
         [str(python), "-I", "-c", smoke],
         cwd=tmp_path,
     )
     report = json.loads(result.stdout)
-    assert report["version"] == "0.1.22"
+    assert report["version"] == EXPECTED_VERSION
     assert "DocStoreClient" in report["exports"]

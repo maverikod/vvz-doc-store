@@ -39,6 +39,7 @@ from doc_store_server.commands.retrieval_commands import (
     ParagraphGetByNumberCommand,
     ParagraphGetCommand,
 )
+from doc_store_server.commands.uuid4_command import Uuid4Command
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -108,6 +109,14 @@ def test_manifest_has_exact_command_identity_and_registration_shape() -> None:
             "sync",
             "InfoCommand.metadata",
             "InfoCommand.get_schema",
+        ),
+        (
+            "uuid4",
+            Uuid4Command,
+            "doc_store_server.commands.uuid4_command",
+            "sync",
+            "Uuid4Command.metadata",
+            "Uuid4Command.get_schema",
         ),
         (
             "document_get",

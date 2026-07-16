@@ -9,6 +9,8 @@ from typing import Any, ClassVar, Protocol
 from mcp_proxy_adapter.commands.base import Command, CommandResult
 from mcp_proxy_adapter.core.errors import ValidationError
 
+from doc_store_server.commands.validation import parse_uuid4
+
 
 class CanonicalDocumentService(Protocol):
     """Boundary for the canonical, atomic document deletion operation."""
@@ -47,7 +49,7 @@ class DocumentDeleteCommand(Command):
                 "document_id": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "Canonical document identifier to delete.",
+                    "description": "Canonical document UUID4 identifier to delete.",
                 },
                 "version_token": {
                     "type": "string",
@@ -103,15 +105,10 @@ class DocumentDeleteCommand(Command):
                     "document_id": "00000000-0000-4000-8000-000000000000",
                     "version_token": "document-version-7",
                 },
-                {
-                    "document_id": "doc-123",
-                    "version_token": "etag:4f2c9a",
-                },
             ],
             "error_cases": {
                 "INVALID_PARAMS": (
-                    "Provide non-empty document_id and version_token only; "
-                    "remove unknown fields."
+                    "Provide UUID4 document_id and non-empty version_token only; remove unknown fields."
                 ),
                 "CONFLICT": (
                     "The version token is stale or the canonical service could "
@@ -135,14 +132,20 @@ class DocumentDeleteCommand(Command):
         """Validate required identifiers and reject blank string values."""
 
         validated = super().validate_params(params)
-        for field in ("document_id", "version_token"):
-            value = validated[field]
-            if not isinstance(value, str) or not value.strip():
-                raise ValidationError(
-                    f"{self.name}: parameter {field!r} must be a non-empty string",
-                    data={"field": field},
-                )
-            validated[field] = value.strip()
+        document_id = validated["document_id"]
+        if not isinstance(document_id, str) or not document_id.strip():
+            raise ValidationError(
+                f"{self.name}: parameter 'document_id' must be a non-empty UUID4 string",
+                data={"field": "document_id"},
+            )
+        validated["document_id"] = str(parse_uuid4(document_id, "document_id", self.name))
+        version_token = validated["version_token"]
+        if not isinstance(version_token, str) or not version_token.strip():
+            raise ValidationError(
+                f"{self.name}: parameter 'version_token' must be a non-empty string",
+                data={"field": "version_token"},
+            )
+        validated["version_token"] = version_token.strip()
         return validated
 
     async def execute(
@@ -154,6 +157,18 @@ class DocumentDeleteCommand(Command):
     ) -> CommandResult:
         """Delegate one deletion and project only its stable terminal outcome."""
 
+        try:
+            params = self.validate_params(
+                {"document_id": document_id, "version_token": version_token}
+            )
+        except ValidationError as exc:
+            return self._failure(
+                str(document_id),
+                "INVALID_PARAMS",
+                str(exc),
+            )
+        document_id = params["document_id"]
+        version_token = params["version_token"]
         service = self._resolve_service(context)
         if service is None:
             return self._failure(

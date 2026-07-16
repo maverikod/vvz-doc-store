@@ -153,6 +153,32 @@ def test_missing_lifecycle_boundary_is_stable_error(monkeypatch: Any) -> None:
     assert result.to_dict()["error"]["data"]["code"] == "LIFECYCLE_BOUNDARY_UNAVAILABLE"
 
 
+def test_entity_commands_reject_non_v4_uuid_fields_before_boundary_delegation() -> None:
+    boundary = Boundary()
+    v1_uuid = "550e8400-e29b-11d4-a716-446655440001"
+
+    get_result = asyncio.run(
+        EntityGetCommand().execute(
+            entity_type="documents",
+            entity_id=v1_uuid,
+            context={"entity_lifecycle_boundary": boundary},
+        )
+    )
+    create_result = asyncio.run(
+        EntityCreateCommand().execute(
+            entity_type="files",
+            values={"id": v1_uuid, "path": "/tmp/doc.txt", "name": "doc.txt", "body_sha256": "0" * 64},
+            context={"entity_lifecycle_boundary": boundary},
+        )
+    )
+
+    assert get_result.to_dict()["success"] is False
+    assert create_result.to_dict()["success"] is False
+    assert get_result.to_dict()["error"]["data"]["code"] == "INVALID_PARAMS"
+    assert create_result.to_dict()["error"]["data"]["code"] == "INVALID_PARAMS"
+    assert boundary.calls == []
+
+
 def test_document_listing_does_not_require_unit_order_column() -> None:
     assert "order_index" not in ORDER_BY["documents"]
     assert "order_index" in ORDER_BY["paragraphs"]

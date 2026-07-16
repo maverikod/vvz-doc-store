@@ -10,7 +10,9 @@ from svo_client import SvoChunkerClient
 
 from doc_store_server.ingestion.source_normalizer import normalize_source
 from doc_store_server.ingestion.svo_chunking import (
+    ChunkerError,
     DEFAULT_PRESET,
+    SvoRuntimeChunker,
     SvoChunkingError,
     chunk_normalized_request,
 )
@@ -26,11 +28,17 @@ def _request(*, preset: str | None = None):
     return replace(result.request, chunk_preset=preset or "")
 
 
-def _wire_chunk(start: int, end: int, *, ordinal: int = 0) -> dict[str, object]:
+def _wire_chunk(
+    start: int,
+    end: int,
+    *,
+    ordinal: int = 0,
+    source_id: UUID | None = None,
+) -> dict[str, object]:
     return SemanticChunk.from_dict_with_autofill_and_validation(
         {
             "uuid": str(uuid4()),
-            "source_id": str(uuid4()),
+            "source_id": str(source_id or uuid4()),
             "block_id": str(uuid4()),
             "body": SOURCE_TEXT[start:end],
             "text": SOURCE_TEXT[start:end],
@@ -44,9 +52,15 @@ def _wire_chunk(start: int, end: int, *, ordinal: int = 0) -> dict[str, object]:
     ).model_dump(mode="json")
 
 
-def _adapter_chunk(start: int, end: int, *, ordinal: int = 0) -> SemanticChunk:
+def _adapter_chunk(
+    start: int,
+    end: int,
+    *,
+    ordinal: int = 0,
+    source_id: UUID | None = None,
+) -> SemanticChunk:
     return SemanticChunk.from_dict_with_autofill_and_validation(
-        _wire_chunk(start, end, ordinal=ordinal)
+        _wire_chunk(start, end, ordinal=ordinal, source_id=source_id)
     )
 
 
@@ -149,6 +163,18 @@ class _PublicClientWithResult(SvoChunkerClient):
         return self.result
 
 
+class _RuntimeClient:
+    def __init__(self, result: object | Exception) -> None:
+        self.result = result
+        self.calls: list[tuple[str, dict[str, object]]] = []
+
+    async def chunk(self, text: str, **kwargs: object) -> object:
+        self.calls.append((text, dict(kwargs)))
+        if isinstance(self.result, Exception):
+            raise self.result
+        return self.result
+
+
 @pytest.mark.parametrize(
     "result",
     [
@@ -199,3 +225,92 @@ def test_no_local_splitter_or_downstream_enrichment_embedding_persistence_or_pub
         name not in {"split", "window", "threshold", "embed", "save", "publish"}
         for name, _ in transport.calls
     )
+
+
+@pytest.mark.parametrize(
+    ("strategy", "expected"),
+    [
+        ("paragraph", {"use_sv": False, "aggregation_mode": "paragraph"}),
+        ("sentence", {"use_sv": False, "aggregation_mode": "sentence"}),
+        ("semantic", {"use_sv": False, "aggregation_mode": "sentence", "chunk_set": DEFAULT_PRESET}),
+    ],
+)
+def test_runtime_chunker_passes_whole_text_and_strategy_params_to_svo(
+    strategy: str,
+    expected: dict[str, object],
+) -> None:
+    client = _RuntimeClient([_adapter_chunk(0, 5, source_id=DOCUMENT_ID)])
+    chunker = SvoRuntimeChunker(client)  # type: ignore[arg-type]
+
+    chunks = _run(chunker.chunk(text=SOURCE_TEXT, strategy=strategy, source_id=str(DOCUMENT_ID)))
+
+    assert chunks[0].text == SOURCE_TEXT[0:5]
+    assert client.calls[0][0] == SOURCE_TEXT
+    params = client.calls[0][1]
+    assert params["source_id"] == str(DOCUMENT_ID)
+    assert params["chunk_only"] is True
+    assert params["chunk_type"] == "DocBlock"
+    for key, value in expected.items():
+        assert params[key] == value
+
+
+def test_runtime_chunker_recovers_absolute_ranges_from_svo_chunk_bodies() -> None:
+    source = "alpha paragraph.\n\nbeta paragraph.\n"
+    first = SemanticChunk.from_dict_with_autofill_and_validation(
+        {
+            "uuid": str(uuid4()),
+            "source_id": str(DOCUMENT_ID),
+            "block_id": str(uuid4()),
+            "body": "alpha paragraph.\n\n",
+            "text": "alpha paragraph.",
+            "type": ChunkType.DOC_BLOCK,
+            "block_type": BlockType.PARAGRAPH,
+            "ordinal": 0,
+            "block_index": 0,
+            "start": 0,
+            "end": 17,
+        }
+    )
+    second = SemanticChunk.from_dict_with_autofill_and_validation(
+        {
+            "uuid": str(uuid4()),
+            "source_id": str(DOCUMENT_ID),
+            "block_id": str(uuid4()),
+            "body": "beta paragraph.\n",
+            "text": "beta paragraph.",
+            "type": ChunkType.DOC_BLOCK,
+            "block_type": BlockType.PARAGRAPH,
+            "ordinal": 1,
+            "block_index": 1,
+            "start": 0,
+            "end": 16,
+        }
+    )
+    client = _RuntimeClient([first, second])
+    chunker = SvoRuntimeChunker(client)  # type: ignore[arg-type]
+
+    chunks = _run(chunker.chunk(text=source, strategy="paragraph", source_id=str(DOCUMENT_ID)))
+
+    assert [(chunk.start, chunk.end) for chunk in chunks] == [(0, 18), (18, 34)]
+    assert [chunk.text for chunk in chunks] == ["alpha paragraph.", "beta paragraph."]
+
+
+def test_runtime_chunker_rejects_invalid_source_id_contract() -> None:
+    client = _RuntimeClient([_adapter_chunk(0, 5, source_id=uuid4())])
+    chunker = SvoRuntimeChunker(client)  # type: ignore[arg-type]
+
+    with pytest.raises(ChunkerError) as caught:
+        _run(chunker.chunk(text=SOURCE_TEXT, strategy="paragraph", source_id=str(DOCUMENT_ID)))
+
+    assert caught.value.code == "CHUNKER_CONTRACT_ERROR"
+
+
+def test_runtime_chunker_wraps_connection_failures() -> None:
+    client = _RuntimeClient(TimeoutError("slow chunker"))
+    chunker = SvoRuntimeChunker(client)  # type: ignore[arg-type]
+
+    with pytest.raises(ChunkerError) as caught:
+        _run(chunker.chunk(text=SOURCE_TEXT, strategy="semantic", source_id=str(DOCUMENT_ID)))
+
+    assert caught.value.code == "CHUNKER_UNAVAILABLE"
+    assert caught.value.details["error_type"] == "TimeoutError"

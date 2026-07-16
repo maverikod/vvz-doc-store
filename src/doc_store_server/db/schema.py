@@ -195,6 +195,8 @@ class File(EntityCRUDMixin, Base):
     checksum_algorithm: Mapped[str] = mapped_column(String(32), nullable=False, default="sha256")
     content_sha256: Mapped[str | None] = mapped_column(String(128))
     body_sha256: Mapped[str] = mapped_column(String(128), nullable=False)
+    needs_revectorize: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    needs_rechunk: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -214,6 +216,7 @@ class Document(EntityCRUDMixin, Base):
         UniqueConstraint("source_upload_id", "source_version", name="uq_documents_upload_version"),
         CheckConstraint("source_version > 0", name="documents_source_version_positive"),
         Index("ix_documents_source_hash", "source_hash"),
+        Index("ix_documents_body_sha256", "body_sha256"),
         Index("ix_documents_lifecycle", "processing_status", "deleted_at"),
     )
 
@@ -225,9 +228,13 @@ class Document(EntityCRUDMixin, Base):
     source_path: Mapped[str | None] = mapped_column(String(2048))
     source_name: Mapped[str | None] = mapped_column(String(512))
     source_hash: Mapped[str | None] = mapped_column(String(128))
+    checksum_algorithm: Mapped[str] = mapped_column(String(32), nullable=False, default="sha256")
+    content_sha256: Mapped[str | None] = mapped_column(String(128))
+    body_sha256: Mapped[str | None] = mapped_column(String(128))
     title: Mapped[str] = mapped_column(String(1024), nullable=False)
-    processing_status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    processing_status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft")
     processing_attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    needs_revectorize: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     processing_trace_id: Mapped[UUID | None] = mapped_column(UUID4)
     processing_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     processing_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

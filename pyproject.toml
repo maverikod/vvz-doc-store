@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "doc-store"
-version = "0.1.22"
+version = "0.1.28"
 description = "Documentation storage server."
 requires-python = ">=3.11"
 authors = [{ name = "Vasiliy Zdanovskiy" }]

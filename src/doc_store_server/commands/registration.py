@@ -39,6 +39,7 @@ from doc_store_server.commands.retrieval_commands import (
     ParagraphGetByNumberCommand,
     ParagraphGetCommand,
 )
+from doc_store_server.commands.uuid4_command import Uuid4Command
 
 
 ExecutionMode = Literal["sync", "queue"]
@@ -80,6 +81,14 @@ DOC_STORE_COMMAND_MANIFEST: Final[tuple[CommandManifestEntry, ...]] = (
         "sync",
         "InfoCommand.metadata",
         "InfoCommand.get_schema",
+    ),
+    CommandManifestEntry(
+        "uuid4",
+        Uuid4Command,
+        "doc_store_server.commands.uuid4_command",
+        "sync",
+        "Uuid4Command.metadata",
+        "Uuid4Command.get_schema",
     ),
     CommandManifestEntry(
         "document_get",
@@ -246,6 +255,7 @@ DOC_STORE_COMMAND_MANIFEST: Final[tuple[CommandManifestEntry, ...]] = (
 DOC_STORE_COMMAND_MODULE_MANIFEST: Final[tuple[str, ...]] = (
     "doc_store_server.commands.health_command",
     "doc_store_server.commands.info",
+    "doc_store_server.commands.uuid4_command",
     "doc_store_server.commands.retrieval_commands",
     "doc_store_server.commands.ingestion_commands",
     "doc_store_server.commands.document_export_command",
@@ -305,5 +315,6 @@ __all__ = [
     "ParagraphGetByNumberCommand",
     "ParagraphGetCommand",
     "ProcessingStatusCommand",
+    "Uuid4Command",
     "register_doc_store_commands",
 ]

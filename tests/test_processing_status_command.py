@@ -12,7 +12,7 @@ from mcp_proxy_adapter.core.errors import ValidationError
 
 
 OPERATION_ID = "operation-123"
-DOCUMENT_ID = "document-456"
+DOCUMENT_ID = "550e8400-e29b-41d4-a716-446655440000"
 
 
 class FakeRuntimeStatusBoundary:

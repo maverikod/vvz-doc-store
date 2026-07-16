@@ -6,11 +6,11 @@ import inspect
 import os
 from collections.abc import Awaitable, Mapping
 from typing import Any, ClassVar, Protocol
-from uuid import UUID
 
 from mcp_proxy_adapter.commands.base import Command, CommandResult
 from mcp_proxy_adapter.core.errors import ValidationError
 
+from doc_store_server.commands.validation import parse_uuid4
 from doc_store_server.db.health import database_url_from_config
 from doc_store_server.runtime.document_rebind import (
     DocumentRebindError,
@@ -139,10 +139,7 @@ class DocumentRebindCommand(Command):
         document_id = validated.get("document_id")
         if not isinstance(document_id, str) or not document_id.strip():
             raise ValidationError("document_id must be a non-empty UUID string", {"field": "document_id"})
-        try:
-            validated["document_id"] = str(UUID(document_id))
-        except (AttributeError, ValueError) as exc:
-            raise ValidationError("document_id must be a valid UUID", {"field": "document_id"}) from exc
+        validated["document_id"] = str(parse_uuid4(document_id, "document_id", self.name))
 
         project = validated.get("project")
         if project is not None:
@@ -152,10 +149,7 @@ class DocumentRebindCommand(Command):
             project_id = validated.get("project_id")
             if not isinstance(project_id, str) or not project_id.strip():
                 raise ValidationError("project_id is required when project is supplied", {"field": "project_id"})
-            try:
-                validated["project_id"] = str(UUID(project_id))
-            except (AttributeError, ValueError) as exc:
-                raise ValidationError("project_id must be a valid UUID", {"field": "project_id"}) from exc
+            validated["project_id"] = str(parse_uuid4(project_id, "project_id", self.name))
             project_description = validated.get("project_description")
             if not isinstance(project_description, str) or not project_description.strip():
                 raise ValidationError(

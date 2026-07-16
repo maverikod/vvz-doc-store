@@ -114,3 +114,24 @@ def test_0008_adds_semantic_chunk_dictionaries_and_references() -> None:
     assert "ALTER TABLE semantic_chunks DROP COLUMN chunk_type_id" in downgrade
     assert "DROP TABLE chunk_types" in downgrade
     assert "DROP TABLE categories" in downgrade
+
+
+def test_0011_adds_checksum_lifecycle_flags_and_draft_backfill() -> None:
+    migration = _load("0011_document_file_checksum_lifecycle")
+    sql = _offline_sql(migration, "upgrade")
+
+    assert "ALTER TABLE files ADD COLUMN needs_revectorize" in sql
+    assert "ALTER TABLE files ADD COLUMN needs_rechunk" in sql
+    assert "ALTER TABLE documents ADD COLUMN checksum_algorithm" in sql
+    assert "ALTER TABLE documents ADD COLUMN content_sha256" in sql
+    assert "ALTER TABLE documents ADD COLUMN body_sha256" in sql
+    assert "ALTER TABLE documents ADD COLUMN needs_revectorize" in sql
+    assert "UPDATE documents SET body_sha256 = source_hash" in sql
+    assert "UPDATE documents SET processing_status = 'draft' WHERE processing_status = 'completed'" in sql
+    assert "CREATE INDEX ix_documents_body_sha256" in sql
+    assert "CREATE INDEX ix_files_reprocessing" in sql
+    assert "CREATE INDEX ix_documents_reprocessing" in sql
+
+    downgrade = _offline_sql(migration, "downgrade")
+    assert "ALTER TABLE documents DROP COLUMN needs_revectorize" in downgrade
+    assert "ALTER TABLE files DROP COLUMN needs_rechunk" in downgrade

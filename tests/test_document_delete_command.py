@@ -11,7 +11,7 @@ from mcp_proxy_adapter.core.errors import ValidationError
 from doc_store_server.commands.document_delete_command import DocumentDeleteCommand
 
 
-DOCUMENT_ID = "doc-123"
+DOCUMENT_ID = "550e8400-e29b-41d4-a716-446655440000"
 VERSION_TOKEN = "document-version-7"
 
 
@@ -116,6 +116,8 @@ def test_missing_service_is_a_stable_unavailable_result() -> None:
     [
         {},
         {"document_id": "", "version_token": VERSION_TOKEN},
+        {"document_id": "doc-123", "version_token": VERSION_TOKEN},
+        {"document_id": "550e8400-e29b-11d4-a716-446655440000", "version_token": VERSION_TOKEN},
         {"document_id": DOCUMENT_ID, "version_token": "  "},
         {"document_id": 123, "version_token": VERSION_TOKEN},
         {"document_id": DOCUMENT_ID, "version_token": None},
@@ -129,7 +131,7 @@ def test_invalid_and_unknown_parameters_are_rejected(params: dict[str, Any]) -> 
 
 def test_validation_strips_only_surrounding_whitespace_from_identifiers() -> None:
     assert DocumentDeleteCommand().validate_params(
-        {"document_id": "  doc-123 ", "version_token": " token-7 "}
+        {"document_id": f"  {DOCUMENT_ID} ", "version_token": " token-7 "}
     ) == {"document_id": DOCUMENT_ID, "version_token": "token-7"}
 
 
@@ -161,7 +163,7 @@ def test_schema_and_metadata_are_complete_and_strict() -> None:
             "document_id": {
                 "type": "string",
                 "minLength": 1,
-                "description": "Canonical document identifier to delete.",
+                "description": "Canonical document UUID4 identifier to delete.",
             },
             "version_token": {
                 "type": "string",

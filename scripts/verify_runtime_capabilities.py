@@ -15,6 +15,7 @@ import os
 import tempfile
 import time
 import uuid
+import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
@@ -39,6 +40,13 @@ from mcp_proxy_adapter.client.jsonrpc_client.client import JsonRpcClient
 
 CHUNKING_STRATEGIES = ("paragraph", "sentence", "semantic")
 DEFAULT_SEARCH_VECTOR = [0.75, 0.25]
+
+
+def _stable_uuid4(value: str) -> str:
+    raw = bytearray(hashlib.sha256(value.encode("utf-8")).digest()[:16])
+    raw[6] = (raw[6] & 0x0F) | 0x40
+    raw[8] = (raw[8] & 0x3F) | 0x80
+    return str(uuid.UUID(bytes=bytes(raw)))
 
 
 @dataclass
@@ -370,10 +378,12 @@ async def _verify_strategy(
     _add_check(
         checks,
         f"{strategy}: file upload and document_create",
-        created.document_id == document_id,
+        created.document_id == document_id and created.status in {"completed", "idempotent"},
         created.status,
         {"operation_id": created.operation_id, "source_version_id": created.source_version_id},
     )
+    if created.document_id != document_id or created.status not in {"completed", "idempotent"}:
+        return StrategyRun(strategy=strategy, document_id=document_id, source_version_id=source_version_id, checks=checks)
 
     rebind = await client.rebind_document(
         DocumentRebindRequest(
@@ -692,7 +702,7 @@ async def _run(args: argparse.Namespace) -> int:
     )
     run_id = args.run_id or uuid.uuid4().hex[:12]
     scope = args.scope or f"runtime-verify-{run_id}"
-    project_id = args.project_id or str(uuid.uuid5(uuid.NAMESPACE_URL, f"doc-store-runtime:{args.project}"))
+    project_id = args.project_id or _stable_uuid4(f"doc-store-runtime:{args.project}")
     project_description = args.project_description or f"Runtime verification project {args.project}"
     all_checks: list[Check] = []
 

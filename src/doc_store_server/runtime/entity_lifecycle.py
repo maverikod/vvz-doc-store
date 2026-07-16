@@ -73,8 +73,32 @@ DEFAULT_FIELDS: dict[str, tuple[str, ...]] = {
     "languages": ("id", "descr", "is_deleted", "created_at", "updated_at"),
     "categories": ("id", "descr", "is_deleted", "created_at", "updated_at"),
     "projects": ("id", "owner_id", "name", "description", "is_deleted", "created_at", "updated_at"),
-    "files": ("id", "owner_id", "path", "name", "body_sha256", "content_sha256", "is_deleted", "updated_at", "block_meta"),
-    "documents": ("id", "owner_id", "title", "source_name", "processing_status", "is_deleted", "updated_at", "block_meta"),
+    "files": (
+        "id",
+        "owner_id",
+        "path",
+        "name",
+        "body_sha256",
+        "content_sha256",
+        "needs_rechunk",
+        "needs_revectorize",
+        "is_deleted",
+        "updated_at",
+        "block_meta",
+    ),
+    "documents": (
+        "id",
+        "owner_id",
+        "title",
+        "source_name",
+        "processing_status",
+        "body_sha256",
+        "content_sha256",
+        "needs_revectorize",
+        "is_deleted",
+        "updated_at",
+        "block_meta",
+    ),
     "chapters": ("id", "document_id", "order_index", "heading", "is_deleted", "block_meta"),
     "paragraphs": ("id", "document_id", "chapter_id", "order_index", "text", "is_deleted", "block_meta"),
     "semantic_chunks": ("id", "document_id", "paragraph_id", "chapter_id", "order_index", "text", "is_deleted", "block_meta"),
@@ -526,6 +550,8 @@ def _allowed_fields(table: str) -> set[str]:
         "content_sha256",
         "body_sha256",
         "checksum_algorithm",
+        "needs_rechunk",
+        "needs_revectorize",
         "source_version",
         "source_path",
         "source_name",
@@ -571,6 +597,8 @@ def _writable_fields(table: str) -> set[str]:
             "checksum_algorithm",
             "content_sha256",
             "body_sha256",
+            "needs_rechunk",
+            "needs_revectorize",
             "is_deleted",
             "deleted_at",
             "block_meta",
@@ -583,9 +611,13 @@ def _writable_fields(table: str) -> set[str]:
             "source_path",
             "source_name",
             "source_hash",
+            "checksum_algorithm",
+            "content_sha256",
+            "body_sha256",
             "title",
             "processing_status",
             "processing_attempt",
+            "needs_revectorize",
             "processing_trace_id",
             "processing_started_at",
             "processing_completed_at",
@@ -608,8 +640,6 @@ def _required_create_fields(table: str) -> set[str]:
             "source_upload_id",
             "source_version",
             "title",
-            "processing_status",
-            "processing_attempt",
             "block_meta",
         },
     }[table]
@@ -621,6 +651,20 @@ def _validated_values(table: str, values: Mapping[str, Any], *, require_id: bool
     if unknown:
         raise ValueError(f"unsupported fields for {table}: {', '.join(unknown)}")
     payload = dict(values)
+    if table == "documents":
+        payload.setdefault("processing_status", "draft")
+        payload.setdefault("processing_attempt", 0)
+        payload.setdefault("block_meta", {})
+        payload.setdefault("checksum_algorithm", "sha256")
+        if "body_sha256" not in payload and payload.get("source_hash") is not None:
+            payload["body_sha256"] = payload["source_hash"]
+        if "content_sha256" not in payload and payload.get("source_hash") is not None:
+            payload["content_sha256"] = payload["source_hash"]
+        payload.setdefault("needs_revectorize", False)
+    if table == "files":
+        payload.setdefault("checksum_algorithm", "sha256")
+        payload.setdefault("needs_rechunk", False)
+        payload.setdefault("needs_revectorize", False)
     if require_id:
         missing = sorted(_required_create_fields(table) - set(payload))
         if missing:

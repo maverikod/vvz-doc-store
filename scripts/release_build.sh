@@ -149,6 +149,8 @@ ensure_image_published() {
     build_push_image
 }
 
+sync_client_version
+
 if (( DO_DOCKER )); then
     build_push_image
 elif (( DO_DEB )); then

@@ -49,8 +49,14 @@ def database_metrics(database_url: str | None, *, connect_timeout: int) -> dict[
                     text(
                         "SELECT count(*) FROM documents AS d "
                         "WHERE d.deleted_at IS NULL "
-                        "AND d.processing_status = 'completed' "
-                        "AND d.processing_completed_at >= now() - (:window_minutes * interval '1 minute')"
+                        "AND d.updated_at >= now() - (:window_minutes * interval '1 minute') "
+                        "AND EXISTS ("
+                        "  SELECT 1 FROM semantic_chunks AS sc "
+                        "  JOIN semantic_chunk_embeddings AS sce ON sce.chunk_uuid = sc.id "
+                        "  WHERE sc.document_id = d.id "
+                        "  AND sc.deleted_at IS NULL "
+                        "  AND sce.active IS TRUE"
+                        ")"
                     ),
                     {"window_minutes": window_minutes},
                 ).scalar_one()

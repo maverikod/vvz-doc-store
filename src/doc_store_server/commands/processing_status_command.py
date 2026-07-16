@@ -9,6 +9,8 @@ from typing import Any, ClassVar, Protocol
 from mcp_proxy_adapter.commands.base import Command, CommandResult
 from mcp_proxy_adapter.core.errors import ValidationError
 
+from doc_store_server.commands.validation import parse_uuid4
+
 
 class IngestionRuntimeStatusBoundary(Protocol):
     """The existing ingestion-owned status lookup consumed by this command."""
@@ -38,6 +40,7 @@ class ProcessingStatusCommand(Command):
     status_vocabulary: ClassVar[tuple[str, ...]] = (
         "pending",
         "running",
+        "draft",
         "completed",
         "failed",
         "cancelled",
@@ -114,11 +117,15 @@ class ProcessingStatusCommand(Command):
         validated = super().validate_params(params)
         for field in ("operation_id", "document_id"):
             value = validated.get(field)
-            if value is not None and not value.strip():
+            if value is not None and (not isinstance(value, str) or not value.strip()):
                 raise ValidationError(
                     f"processing_status: parameter {field!r} must not be empty",
                     data={"field": field},
                 )
+        if validated.get("document_id") is not None:
+            validated["document_id"] = str(
+                parse_uuid4(validated["document_id"], "document_id", self.name)
+            )
         return validated
 
     async def execute(
@@ -130,6 +137,20 @@ class ProcessingStatusCommand(Command):
     ) -> CommandResult:
         """Look up and normalize one status snapshot through ingestion."""
 
+        try:
+            params = self.validate_params(
+                {"operation_id": operation_id, **({"document_id": document_id} if document_id is not None else {})}
+            )
+        except ValidationError as exc:
+            return self._failure(
+                operation_id,
+                "INVALID_PARAMS",
+                str(exc),
+                document_id=document_id,
+                error_type=type(exc).__name__,
+            )
+        operation_id = params["operation_id"]
+        document_id = params.get("document_id")
         boundary = self._resolve_boundary(context)
         if boundary is None:
             return self._failure(

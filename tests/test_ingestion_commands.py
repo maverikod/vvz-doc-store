@@ -130,6 +130,25 @@ def test_command_returns_structured_validation_errors_without_delegating(
 
 
 @pytest.mark.parametrize("command_class", COMMANDS)
+def test_command_rejects_non_v4_document_uuid_without_delegating(command_class: type[Any]) -> None:
+    boundary = RecordingBoundary()
+    result = asyncio.run(
+        command_class().execute(
+            context={"ingestion_boundary": boundary},
+            document_id="550e8400-e29b-11d4-a716-446655440000",
+            source_version_id=SOURCE_VERSION_ID,
+            **INGESTION_PARAMS[command_class],
+            raw_text="text",
+        )
+    )
+
+    assert isinstance(result, ErrorResult)
+    assert result.code == -32602
+    assert result.details["field"] == "document_id"
+    assert boundary.calls == []
+
+
+@pytest.mark.parametrize("command_class", COMMANDS)
 def test_command_falls_back_to_installed_runtime_boundary(
     command_class: type[Any],
     monkeypatch: pytest.MonkeyPatch,

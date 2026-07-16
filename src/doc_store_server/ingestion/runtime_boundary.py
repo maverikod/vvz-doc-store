@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import os
@@ -16,6 +17,11 @@ from uuid import UUID, uuid4
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
 
+from doc_store_server.ingestion.svo_chunking import (
+    ChunkerError,
+    RuntimeChunk,
+    SvoRuntimeChunker,
+)
 from doc_store_server.ingestion.source_normalizer import normalize_source
 from doc_store_server.query.runtime_boundary import (
     RUNTIME_EMBEDDING_DIMENSION,
@@ -37,6 +43,28 @@ CHUNKING_STRATEGIES = frozenset({"paragraph", "sentence", "semantic"})
 _INSTALLED_STATUS: InMemoryRuntimeStatus | None = None
 _INSTALLED_BOUNDARY: RuntimeIngestionBoundary | None = None
 _INSTALLED_BOUNDARY_URL: str | None = None
+_INSTALLED_CHUNKER: SvoRuntimeChunker | None = None
+_INSTALLED_CHUNKER_KEY: tuple[tuple[str, Any], ...] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _PersistencePlan:
+    document_id: UUID
+    source_version_id: str
+    normalized_source_version_id: str
+    operation_id: str
+    command: str
+    text_value: str
+    filename: str | None
+    content_sha256: str
+    chunking_strategy: str
+    source_version: int
+    title: str
+    source_name: str | None
+    length: int
+    body_sha256: str
+    file_id: UUID
+    doc_meta: Mapping[str, Any]
 
 
 @dataclass(slots=True)
@@ -122,7 +150,7 @@ class InMemoryRuntimeStatus:
             }.items()
             if value is not None
         }
-        status = str(row.get("processing_status") or "completed")
+        status = str(row.get("processing_status") or "draft")
         source_version = row.get("source_version")
         persisted_document_id = str(row["document_id"])
         version_reference: dict[str, Any] = {
@@ -159,12 +187,18 @@ class InMemoryRuntimeStatus:
 class RuntimeIngestionBoundary:
     """Normalize one source and persist a minimal semantic chunk hierarchy."""
 
-    def __init__(self, database_url: str | None, status: InMemoryRuntimeStatus) -> None:
+    def __init__(
+        self,
+        database_url: str | None,
+        status: InMemoryRuntimeStatus,
+        chunker: SvoRuntimeChunker | None = None,
+    ) -> None:
         self._database_url = database_url
         self._status = status
+        self._chunker = chunker
         self._status.configure_database(database_url)
 
-    def __call__(
+    async def __call__(
         self,
         *,
         document_id: str,
@@ -187,7 +221,7 @@ class RuntimeIngestionBoundary:
             },
         )
         if command == "document_chunk":
-            return self._rechunk_existing(
+            return await self._rechunk_existing(
                 document_id=document_id,
                 source_version_id=source_version_id,
                 operation_id=operation_id,
@@ -247,8 +281,7 @@ class RuntimeIngestionBoundary:
             },
         )
         try:
-            references = self._persist(
-                document_uuid=request.document_id,
+            references = await self._persist_source(
                 requested_document_id=UUID(document_id),
                 source_version_id=source_version_id,
                 normalized_source_version_id=request.source_version_id,
@@ -258,6 +291,17 @@ class RuntimeIngestionBoundary:
                 filename=request.source_metadata.filename,
                 content_sha256=request.source_metadata.content_sha256,
                 chunking_strategy=resolved_strategy,
+            )
+        except ChunkerError as exc:
+            return self._record_failed(
+                operation_id,
+                document_id,
+                started,
+                {
+                    "code": exc.code,
+                    "message": str(exc),
+                    "context": exc.details,
+                },
             )
         except (SQLAlchemyError, OSError, ValueError) as exc:
             return self._record_failed(
@@ -286,10 +330,9 @@ class RuntimeIngestionBoundary:
         self._status.record(operation_id, snapshot)
         return {"status": status, **references}
 
-    def _persist(
+    async def _persist_source(
         self,
         *,
-        document_uuid: UUID,
         requested_document_id: UUID,
         source_version_id: str,
         normalized_source_version_id: str,
@@ -300,7 +343,41 @@ class RuntimeIngestionBoundary:
         content_sha256: str,
         chunking_strategy: str,
     ) -> dict[str, Any]:
-        del document_uuid
+        prepared = await asyncio.to_thread(
+            self._prepare_persistence,
+            requested_document_id=requested_document_id,
+            source_version_id=source_version_id,
+            normalized_source_version_id=normalized_source_version_id,
+            operation_id=operation_id,
+            command=command,
+            text_value=text_value,
+            filename=filename,
+            content_sha256=content_sha256,
+            chunking_strategy=chunking_strategy,
+        )
+        if isinstance(prepared, Mapping):
+            return dict(prepared)
+        chunker = self._chunker or installed_svo_runtime_chunker()
+        chunks = await chunker.chunk(
+            text=prepared.text_value,
+            strategy=prepared.chunking_strategy,
+            source_id=str(prepared.document_id),
+        )
+        return await asyncio.to_thread(self._persist_prepared_chunks, prepared, chunks)
+
+    def _prepare_persistence(
+        self,
+        *,
+        requested_document_id: UUID,
+        source_version_id: str,
+        normalized_source_version_id: str,
+        operation_id: str,
+        command: str,
+        text_value: str,
+        filename: str | None,
+        content_sha256: str,
+        chunking_strategy: str,
+    ) -> dict[str, Any] | _PersistencePlan:
         document_id = requested_document_id
         source_version = _source_version_number(source_version_id)
         title = _title(filename, text_value)
@@ -308,7 +385,6 @@ class RuntimeIngestionBoundary:
         length = len(text_value)
         body_sha256 = hashlib.sha256(text_value.encode("utf-8")).hexdigest()
         file_id = _stable_uuid4(f"doc-store:file:{document_id}:{body_sha256}:{filename or ''}")
-        chunks = _chunk_units(text_value, chunking_strategy) or [(text_value, 0, length)]
         doc_meta = {
             "file_id": str(file_id),
             "source_version_id": source_version_id,
@@ -327,6 +403,27 @@ class RuntimeIngestionBoundary:
         engine = create_engine(self._database_url, pool_pre_ping=True)
         try:
             with engine.begin() as connection:
+                existing_state = _load_document_file_state(connection, document_id)
+                if (
+                    command != "document_chunk"
+                    and filename is not None
+                    and existing_state is not None
+                    and (
+                        existing_state["file_content_sha256"] == content_sha256
+                        or existing_state["file_body_sha256"] == body_sha256
+                    )
+                    and existing_state["file_needs_rechunk"] is False
+                    and existing_state["file_needs_revectorize"] is False
+                    and existing_state["document_needs_revectorize"] is False
+                ):
+                    return _existing_references(
+                        connection,
+                        document_id=document_id,
+                        source_version_id=source_version_id,
+                        source_version=source_version,
+                        chunking_strategy=chunking_strategy,
+                        idempotent_reason="file_checksum_match",
+                    )
                 existing = connection.execute(
                     text(
                         "SELECT id, block_meta->>'chunking_strategy' AS chunking_strategy FROM documents "
@@ -336,37 +433,88 @@ class RuntimeIngestionBoundary:
                     {"document_id": document_id, "source_version_id": source_version_id},
                 ).mappings().one_or_none()
                 if existing is not None and command != "document_chunk":
-                    chunk_ids = tuple(
-                        str(row)
-                        for row in connection.execute(
-                            text(
-                                "SELECT id FROM semantic_chunks "
-                                "WHERE document_id = :document_id ORDER BY order_index"
-                            ),
-                            {"document_id": document_id},
-                        ).scalars()
-                    )
-                    return {
-                        "idempotent": True,
-                        "document_id": str(document_id),
-                        "source_version_id": source_version_id,
-                        "source_version": source_version,
-                        "chunk_ids": chunk_ids,
-                        "chunking_strategy": existing.get("chunking_strategy") or chunking_strategy,
-                    }
+                    if (
+                        existing_state is not None
+                        and existing_state["file_needs_rechunk"] is False
+                        and existing_state["file_needs_revectorize"] is False
+                        and existing_state["document_needs_revectorize"] is False
+                    ):
+                        return _existing_references(
+                            connection,
+                            document_id=document_id,
+                            source_version_id=source_version_id,
+                            source_version=source_version,
+                            chunking_strategy=existing.get("chunking_strategy") or chunking_strategy,
+                            idempotent_reason="source_version_match",
+                        )
+                    if (
+                        existing_state is not None
+                        and existing_state["file_needs_rechunk"] is False
+                        and (
+                            existing_state["file_needs_revectorize"] is True
+                            or existing_state["document_needs_revectorize"] is True
+                        )
+                    ):
+                        _revectorize_active_chunks(connection, document_id)
+                        _clear_reprocessing_flags(connection, document_id)
+                        return _existing_references(
+                            connection,
+                            document_id=document_id,
+                            source_version_id=source_version_id,
+                            source_version=source_version,
+                            chunking_strategy=existing.get("chunking_strategy") or chunking_strategy,
+                            idempotent=False,
+                            idempotent_reason="revectorized_existing_chunks",
+                        )
 
+            return _PersistencePlan(
+                document_id=document_id,
+                source_version_id=source_version_id,
+                normalized_source_version_id=normalized_source_version_id,
+                operation_id=operation_id,
+                command=command,
+                text_value=text_value,
+                filename=filename,
+                content_sha256=content_sha256,
+                chunking_strategy=chunking_strategy,
+                source_version=source_version,
+                title=title,
+                source_name=source_name,
+                length=length,
+                body_sha256=body_sha256,
+                file_id=file_id,
+                doc_meta=doc_meta,
+            )
+        finally:
+            engine.dispose()
+
+    def _persist_prepared_chunks(
+        self,
+        prepared: _PersistencePlan,
+        chunks: Sequence[RuntimeChunk],
+    ) -> dict[str, Any]:
+        if not chunks:
+            raise ValueError("chunker returned no chunks")
+        document_id = prepared.document_id
+        engine = create_engine(self._database_url, pool_pre_ping=True)
+        try:
+            with engine.begin() as connection:
+                _mark_existing_hierarchy_deleted(connection, document_id)
                 connection.execute(
-                    text("DELETE FROM chapters WHERE document_id = :document_id"),
+                    text(
+                        "UPDATE files SET is_deleted = TRUE, deleted_at = now(), updated_at = now() "
+                        "WHERE owner_id = :document_id OR id = (SELECT owner_id FROM documents WHERE id = :document_id)"
+                    ),
                     {"document_id": document_id},
                 )
                 connection.execute(
                     text(
                         "INSERT INTO files "
                         "(id, owner_id, path, name, media_type, byte_length, char_count, "
-                        "checksum_algorithm, content_sha256, body_sha256, is_deleted, "
-                        "deleted_at, block_meta) "
+                        "checksum_algorithm, content_sha256, body_sha256, needs_revectorize, "
+                        "needs_rechunk, is_deleted, deleted_at, block_meta) "
                         "VALUES (:id, NULL, :path, :name, 'text/plain', NULL, :char_count, "
-                        "'sha256', :content_sha256, :body_sha256, FALSE, NULL, "
+                        "'sha256', :content_sha256, :body_sha256, FALSE, FALSE, FALSE, NULL, "
                         "CAST(:block_meta AS jsonb)) "
                         "ON CONFLICT (id) DO UPDATE SET "
                         "path = EXCLUDED.path, "
@@ -375,29 +523,33 @@ class RuntimeIngestionBoundary:
                         "char_count = EXCLUDED.char_count, "
                         "content_sha256 = EXCLUDED.content_sha256, "
                         "body_sha256 = EXCLUDED.body_sha256, "
+                        "needs_revectorize = FALSE, "
+                        "needs_rechunk = FALSE, "
                         "is_deleted = FALSE, "
                         "deleted_at = NULL, "
                         "updated_at = now(), "
                         "block_meta = EXCLUDED.block_meta"
                     ),
                     {
-                        "id": file_id,
-                        "path": filename or source_name or str(file_id),
-                        "name": source_name or filename or str(file_id),
-                        "char_count": length,
-                        "content_sha256": content_sha256,
-                        "body_sha256": body_sha256,
-                        "block_meta": json.dumps(doc_meta),
+                        "id": prepared.file_id,
+                        "path": prepared.filename or prepared.source_name or str(prepared.file_id),
+                        "name": prepared.source_name or prepared.filename or str(prepared.file_id),
+                        "char_count": prepared.length,
+                        "content_sha256": prepared.content_sha256,
+                        "body_sha256": prepared.body_sha256,
+                        "block_meta": json.dumps(dict(prepared.doc_meta)),
                     },
                 )
                 connection.execute(
                     text(
                         "INSERT INTO documents "
                         "(id, owner_id, source_upload_id, source_version, source_path, source_name, source_hash, "
-                        "title, processing_status, processing_attempt, processing_trace_id, "
+                        "checksum_algorithm, content_sha256, body_sha256, title, processing_status, "
+                        "processing_attempt, needs_revectorize, processing_trace_id, "
                         "processing_started_at, processing_completed_at, block_meta) "
                         "VALUES (:id, :owner_id, :source_upload_id, :source_version, :source_path, :source_name, "
-                        ":source_hash, :title, 'completed', 1, :trace_id, now(), now(), "
+                        ":source_hash, 'sha256', :content_sha256, :body_sha256, :title, 'draft', "
+                        "1, FALSE, :trace_id, now(), NULL, "
                         "CAST(:block_meta AS jsonb)) "
                         "ON CONFLICT (id) DO UPDATE SET "
                         "owner_id = EXCLUDED.owner_id, "
@@ -406,9 +558,13 @@ class RuntimeIngestionBoundary:
                         "source_path = EXCLUDED.source_path, "
                         "source_name = EXCLUDED.source_name, "
                         "source_hash = EXCLUDED.source_hash, "
+                        "checksum_algorithm = EXCLUDED.checksum_algorithm, "
+                        "content_sha256 = EXCLUDED.content_sha256, "
+                        "body_sha256 = EXCLUDED.body_sha256, "
                         "title = EXCLUDED.title, "
-                        "processing_status = 'completed', "
+                        "processing_status = 'draft', "
                         "processing_attempt = documents.processing_attempt + 1, "
+                        "needs_revectorize = FALSE, "
                         "processing_trace_id = EXCLUDED.processing_trace_id, "
                         "processing_started_at = EXCLUDED.processing_started_at, "
                         "processing_completed_at = EXCLUDED.processing_completed_at, "
@@ -418,15 +574,17 @@ class RuntimeIngestionBoundary:
                     ),
                     {
                         "id": document_id,
-                        "owner_id": file_id,
+                        "owner_id": prepared.file_id,
                         "source_upload_id": document_id,
-                        "source_version": source_version,
-                        "source_path": filename,
-                        "source_name": source_name,
-                        "source_hash": body_sha256,
-                        "title": title,
-                        "trace_id": UUID(operation_id),
-                        "block_meta": json.dumps(doc_meta),
+                        "source_version": prepared.source_version,
+                        "source_path": prepared.filename,
+                        "source_name": prepared.source_name,
+                        "source_hash": prepared.body_sha256,
+                        "content_sha256": prepared.content_sha256,
+                        "body_sha256": prepared.body_sha256,
+                        "title": prepared.title,
+                        "trace_id": UUID(prepared.operation_id),
+                        "block_meta": json.dumps(dict(prepared.doc_meta)),
                     },
                 )
                 chapter_id = uuid4()
@@ -444,29 +602,39 @@ class RuntimeIngestionBoundary:
                     {
                         "id": chapter_id,
                         "document_id": document_id,
-                        "heading": title,
-                        "source_end": length,
-                        "block_meta": json.dumps(doc_meta),
+                        "heading": prepared.title,
+                        "source_end": prepared.length,
+                        "block_meta": json.dumps(dict(prepared.doc_meta)),
                     },
                 )
-                for order_index, (paragraph_text, source_start, source_end) in enumerate(chunks):
+                for order_index, chunk in enumerate(chunks):
+                    paragraph_text = chunk.text
+                    source_start = chunk.start
+                    source_end = chunk.end
                     paragraph_id = uuid4()
-                    chunk_id = uuid4()
-                    chunk_features = _chunk_features(paragraph_text, source_name=source_name, chunking_strategy=chunking_strategy)
+                    chunk_id = chunk.uuid
+                    chunk_features = _chunk_features(
+                        paragraph_text,
+                        source_name=prepared.source_name,
+                        chunking_strategy=prepared.chunking_strategy,
+                    )
+                    chunk_features.update(_chunk_metadata_features(chunk.metadata))
                     classifier_values = _semantic_classifier_values(chunk_features)
                     dictionary_ids = _semantic_dictionary_ids(connection, classifier_values)
                     paragraph_ids.append(str(paragraph_id))
                     chunk_ids.append(str(chunk_id))
                     paragraph_meta = {
-                        **doc_meta,
+                        **dict(prepared.doc_meta),
                         **_source_properties(paragraph_text),
                         **chunk_features,
                         "paragraph_number": order_index + 1,
+                        "chunker": "svo",
                     }
                     chunk_meta = {
                         **paragraph_meta,
                         "chapter_id": str(chapter_id),
-                        "source_name": source_name,
+                        "source_name": prepared.source_name,
+                        "svo_chunk": dict(chunk.metadata),
                         **classifier_values,
                     }
                     connection.execute(
@@ -570,12 +738,13 @@ class RuntimeIngestionBoundary:
             return {
                 "idempotent": False,
                 "document_id": str(document_id),
-                "source_version_id": source_version_id,
-                "source_version": source_version,
+                "source_version_id": prepared.source_version_id,
+                "source_version": prepared.source_version,
                 "chapter_ids": tuple(chapter_ids),
                 "paragraph_ids": tuple(paragraph_ids),
                 "chunk_ids": tuple(chunk_ids),
-                "chunking_strategy": chunking_strategy,
+                "chunking_strategy": prepared.chunking_strategy,
+                "chunker": "svo",
             }
         finally:
             engine.dispose()
@@ -621,7 +790,7 @@ class RuntimeIngestionBoundary:
             return value
         return None
 
-    def _rechunk_existing(
+    async def _rechunk_existing(
         self,
         *,
         document_id: str,
@@ -654,8 +823,7 @@ class RuntimeIngestionBoundary:
         text_value, stored_source_version_id, filename, content_sha256 = source
         effective_source_version_id = source_version_id if source_version_id != "stored" else stored_source_version_id
         try:
-            references = self._persist(
-                document_uuid=UUID(document_id),
+            references = await self._persist_source(
                 requested_document_id=UUID(document_id),
                 source_version_id=effective_source_version_id,
                 normalized_source_version_id=effective_source_version_id,
@@ -665,6 +833,17 @@ class RuntimeIngestionBoundary:
                 filename=filename,
                 content_sha256=content_sha256,
                 chunking_strategy=resolved_strategy,
+            )
+        except ChunkerError as exc:
+            return self._record_failed(
+                operation_id,
+                document_id,
+                started,
+                {
+                    "code": exc.code,
+                    "message": str(exc),
+                    "context": exc.details,
+                },
             )
         except (SQLAlchemyError, OSError, ValueError) as exc:
             return self._record_failed(
@@ -809,6 +988,157 @@ def _file_log_descriptor(transferred_file: Mapping[str, Any] | None) -> dict[str
     return descriptor
 
 
+def _load_document_file_state(connection: Any, document_id: UUID) -> dict[str, Any] | None:
+    row = connection.execute(
+        text(
+            "SELECT d.needs_revectorize AS document_needs_revectorize, "
+            "d.body_sha256 AS document_body_sha256, "
+            "f.id AS file_id, f.content_sha256 AS file_content_sha256, "
+            "f.body_sha256 AS file_body_sha256, "
+            "f.needs_revectorize AS file_needs_revectorize, "
+            "f.needs_rechunk AS file_needs_rechunk "
+            "FROM documents d "
+            "LEFT JOIN files f ON f.id = d.owner_id "
+            "WHERE d.id = :document_id AND d.deleted_at IS NULL"
+        ),
+        {"document_id": document_id},
+    ).mappings().one_or_none()
+    if row is None:
+        return None
+    return {
+        "document_needs_revectorize": bool(row["document_needs_revectorize"]),
+        "document_body_sha256": row["document_body_sha256"],
+        "file_id": row["file_id"],
+        "file_content_sha256": row["file_content_sha256"],
+        "file_body_sha256": row["file_body_sha256"],
+        "file_needs_revectorize": bool(row["file_needs_revectorize"]),
+        "file_needs_rechunk": bool(row["file_needs_rechunk"]),
+    }
+
+
+def _existing_references(
+    connection: Any,
+    *,
+    document_id: UUID,
+    source_version_id: str,
+    source_version: int,
+    chunking_strategy: str,
+    idempotent: bool = True,
+    idempotent_reason: str,
+) -> dict[str, Any]:
+    chunk_ids = tuple(
+        str(row)
+        for row in connection.execute(
+            text(
+                "SELECT id FROM semantic_chunks "
+                "WHERE document_id = :document_id AND deleted_at IS NULL "
+                "ORDER BY order_index"
+            ),
+            {"document_id": document_id},
+        ).scalars()
+    )
+    return {
+        "idempotent": idempotent,
+        "idempotent_reason": idempotent_reason,
+        "document_id": str(document_id),
+        "source_version_id": source_version_id,
+        "source_version": source_version,
+        "chunk_ids": chunk_ids,
+        "chunking_strategy": chunking_strategy,
+    }
+
+
+def _mark_existing_hierarchy_deleted(connection: Any, document_id: UUID) -> None:
+    chunk_ids = list(
+        connection.execute(
+            text(
+                "SELECT id FROM semantic_chunks "
+                "WHERE document_id = :document_id AND deleted_at IS NULL"
+            ),
+            {"document_id": document_id},
+        ).scalars()
+    )
+    if chunk_ids:
+        connection.execute(
+            text(
+                "UPDATE semantic_chunk_embeddings SET active = FALSE "
+                "WHERE chunk_uuid = ANY(CAST(:chunk_ids AS uuid[]))"
+            ),
+            {"chunk_ids": [str(item) for item in chunk_ids]},
+        )
+    for table in ("semantic_chunks", "paragraphs", "chapters"):
+        connection.execute(
+            text(
+                f"UPDATE {table} SET is_deleted = TRUE, deleted_at = now() "
+                "WHERE document_id = :document_id AND deleted_at IS NULL"
+            ),
+            {"document_id": document_id},
+        )
+    connection.execute(
+        text(
+            "UPDATE chapters SET order_index = order_index + ("
+            "SELECT COALESCE(MAX(order_index), 0) + 1 FROM chapters WHERE document_id = :document_id"
+            ") WHERE document_id = :document_id AND is_deleted IS TRUE"
+        ),
+        {"document_id": document_id},
+    )
+
+
+def _revectorize_active_chunks(connection: Any, document_id: UUID) -> None:
+    rows = connection.execute(
+        text(
+            "SELECT id, text FROM semantic_chunks "
+            "WHERE document_id = :document_id AND deleted_at IS NULL "
+            "ORDER BY order_index"
+        ),
+        {"document_id": document_id},
+    ).mappings().all()
+    chunk_ids = [row["id"] for row in rows]
+    if not chunk_ids:
+        return
+    connection.execute(
+        text(
+            "UPDATE semantic_chunk_embeddings SET active = FALSE "
+            "WHERE chunk_uuid = ANY(CAST(:chunk_ids AS uuid[]))"
+        ),
+        {"chunk_ids": [str(item) for item in chunk_ids]},
+    )
+    for row in rows:
+        connection.execute(
+            text(
+                "INSERT INTO semantic_chunk_embeddings "
+                "(chunk_uuid, vector, model, dimension, provider, model_version, active) "
+                "VALUES (:chunk_uuid, CAST(:vector AS vector), :model, :dimension, :provider, "
+                ":model_version, TRUE)"
+            ),
+            {
+                "chunk_uuid": row["id"],
+                "vector": _vector_literal(runtime_embedding(str(row["text"]))),
+                "model": RUNTIME_EMBEDDING_MODEL,
+                "dimension": RUNTIME_EMBEDDING_DIMENSION,
+                "provider": RUNTIME_EMBEDDING_PROVIDER,
+                "model_version": RUNTIME_EMBEDDING_VERSION,
+            },
+        )
+
+
+def _clear_reprocessing_flags(connection: Any, document_id: UUID) -> None:
+    connection.execute(
+        text(
+            "UPDATE documents SET needs_revectorize = FALSE, updated_at = now() "
+            "WHERE id = :document_id"
+        ),
+        {"document_id": document_id},
+    )
+    connection.execute(
+        text(
+            "UPDATE files SET needs_revectorize = FALSE, needs_rechunk = FALSE, updated_at = now() "
+            "WHERE id = (SELECT owner_id FROM documents WHERE id = :document_id)"
+        ),
+        {"document_id": document_id},
+    )
+
+
 def _source_name(filename: str | None) -> str | None:
     if not filename:
         return None
@@ -823,66 +1153,10 @@ def _title(filename: str | None, text_value: str) -> str:
     return (_source_name(filename) or "Untitled document")[:1024]
 
 
-def _paragraphs(text_value: str) -> list[tuple[str, int, int]]:
-    paragraphs: list[tuple[str, int, int]] = []
-    for match in re.finditer(r"\S[\s\S]*?(?=(?:\r?\n[ \t]*){2,}|\Z)", text_value):
-        raw_paragraph = match.group(0)
-        paragraph = raw_paragraph.strip()
-        if paragraph:
-            source_start = match.start() + len(raw_paragraph) - len(raw_paragraph.lstrip())
-            source_end = match.end() - (len(raw_paragraph) - len(raw_paragraph.rstrip()))
-            paragraphs.append((paragraph, source_start, source_end))
-    return paragraphs
-
-
-def _sentences(text_value: str) -> list[tuple[str, int, int]]:
-    sentences: list[tuple[str, int, int]] = []
-    for match in re.finditer(r"\S[\s\S]*?(?:(?<=[.!?])(?=\s+|$)|\Z)", text_value):
-        raw_sentence = match.group(0)
-        sentence = raw_sentence.strip()
-        if sentence:
-            source_start = match.start() + len(raw_sentence) - len(raw_sentence.lstrip())
-            source_end = match.end() - (len(raw_sentence) - len(raw_sentence.rstrip()))
-            sentences.append((sentence, source_start, source_end))
-    return sentences
-
-
-def _semantic_units(text_value: str) -> list[tuple[str, int, int]]:
-    units = _paragraphs(text_value) or _sentences(text_value)
-    if not units:
-        return []
-    grouped: list[tuple[str, int, int]] = []
-    current_text: list[str] = []
-    current_start: int | None = None
-    current_end = 0
-    for unit_text, source_start, source_end in units:
-        proposed_length = sum(len(item) for item in current_text) + len(unit_text)
-        if current_text and proposed_length > 700:
-            grouped.append(("\n\n".join(current_text), current_start or 0, current_end))
-            current_text = []
-            current_start = None
-        if current_start is None:
-            current_start = source_start
-        current_text.append(unit_text)
-        current_end = source_end
-    if current_text:
-        grouped.append(("\n\n".join(current_text), current_start or 0, current_end))
-    return grouped
-
-
 def _validated_chunking_strategy(value: str) -> str:
     if value not in CHUNKING_STRATEGIES:
         raise ValueError("chunking_strategy must be one of paragraph, sentence, semantic")
     return value
-
-
-def _chunk_units(text_value: str, strategy: str) -> list[tuple[str, int, int]]:
-    strategy = _validated_chunking_strategy(strategy)
-    if strategy == "paragraph":
-        return _paragraphs(text_value)
-    if strategy == "sentence":
-        return _sentences(text_value)
-    return _semantic_units(text_value)
 
 
 def _chunk_features(text_value: str, *, source_name: str | None, chunking_strategy: str) -> dict[str, Any]:
@@ -902,6 +1176,24 @@ def _chunk_features(text_value: str, *, source_name: str | None, chunking_strate
         "tokens": tokens,
         "bm25_tokens": bm25_tokens,
     }
+
+
+def _chunk_metadata_features(metadata: Mapping[str, Any]) -> dict[str, Any]:
+    features: dict[str, Any] = {}
+    for key in ("type", "role", "status", "block_type", "language", "category"):
+        value = metadata.get(key)
+        if value is None:
+            continue
+        if hasattr(value, "value"):
+            value = value.value
+        value_text = str(value).strip()
+        if value_text:
+            features[key] = value_text
+    for key in ("chunking_version", "block_id", "block_index"):
+        value = metadata.get(key)
+        if value is not None:
+            features[key] = str(value)
+    return features
 
 
 def _tokens(text_value: str) -> list[str]:
@@ -1093,6 +1385,105 @@ def runtime_database_url_from_env() -> str | None:
     return str(url) if url else None
 
 
+def installed_svo_runtime_chunker(config: Mapping[str, Any] | None = None) -> SvoRuntimeChunker:
+    """Return a process-local SVO chunker wrapper for installed runtime workers."""
+
+    global _INSTALLED_CHUNKER, _INSTALLED_CHUNKER_KEY
+    options = _svo_options(config)
+    key = tuple(sorted(options.items()))
+    if _INSTALLED_CHUNKER is None or key != _INSTALLED_CHUNKER_KEY:
+        from svo_client import SvoChunkerClient
+
+        client = SvoChunkerClient(
+            protocol=str(options["protocol"]),
+            host=str(options["host"]),
+            port=int(options["port"]),
+            cert=_optional_option(options.get("cert")),
+            key=_optional_option(options.get("key")),
+            ca=_optional_option(options.get("ca")),
+            check_hostname=bool(options["check_hostname"]),
+            timeout=float(options["timeout"]),
+            poll_interval=float(options["poll_interval"]),
+        )
+        chunk_sets = {
+            "paragraph": _optional_option(options.get("paragraph_chunk_set")),
+            "sentence": _optional_option(options.get("sentence_chunk_set")),
+            "semantic": _optional_option(options.get("semantic_chunk_set")),
+        }
+        _INSTALLED_CHUNKER = SvoRuntimeChunker(
+            client,
+            chunk_sets=chunk_sets,
+            language=_optional_option(options.get("language")),
+            project=_optional_option(options.get("project")),
+        )
+        _INSTALLED_CHUNKER_KEY = key
+    return _INSTALLED_CHUNKER
+
+
+def _svo_options(config: Mapping[str, Any] | None) -> dict[str, Any]:
+    section = config.get("svo") if isinstance(config, Mapping) else None
+    if not isinstance(section, Mapping):
+        section = config.get("chunker") if isinstance(config, Mapping) else None
+    if not isinstance(section, Mapping):
+        section = {}
+    ssl = section.get("ssl") if isinstance(section.get("ssl"), Mapping) else {}
+    cert = _config_text(ssl, section, "cert")
+    key = _config_text(ssl, section, "key")
+    ca = _config_text(ssl, section, "ca")
+    return {
+        "protocol": os.getenv("DOC_STORE_SVO_PROTOCOL", str(section.get("protocol", "https"))),
+        "host": os.getenv("DOC_STORE_SVO_HOST", str(section.get("host", "svo-chunker"))),
+        "port": int(os.getenv("DOC_STORE_SVO_PORT", str(section.get("port", 8009)))),
+        "cert": os.getenv("DOC_STORE_SVO_CERT", cert or ""),
+        "key": os.getenv("DOC_STORE_SVO_KEY", key or ""),
+        "ca": os.getenv("DOC_STORE_SVO_CA", ca or ""),
+        "check_hostname": _env_bool_value(
+            os.getenv("DOC_STORE_SVO_CHECK_HOSTNAME"),
+            bool(ssl.get("check_hostname", section.get("check_hostname", False))),
+        ),
+        "timeout": float(os.getenv("DOC_STORE_SVO_TIMEOUT", str(section.get("timeout", 300.0)))),
+        "poll_interval": float(
+            os.getenv("DOC_STORE_SVO_POLL_INTERVAL", str(section.get("poll_interval", 1.0)))
+        ),
+        "language": os.getenv("DOC_STORE_SVO_LANGUAGE", str(section.get("language", ""))),
+        "project": os.getenv("DOC_STORE_SVO_PROJECT", str(section.get("project", ""))),
+        "paragraph_chunk_set": os.getenv(
+            "DOC_STORE_SVO_PARAGRAPH_CHUNK_SET",
+            str(section.get("paragraph_chunk_set", "")),
+        ),
+        "sentence_chunk_set": os.getenv(
+            "DOC_STORE_SVO_SENTENCE_CHUNK_SET",
+            str(section.get("sentence_chunk_set", "")),
+        ),
+        "semantic_chunk_set": os.getenv(
+            "DOC_STORE_SVO_SEMANTIC_CHUNK_SET",
+            str(section.get("semantic_chunk_set", "")),
+        ),
+    }
+
+
+def _config_text(primary: Mapping[str, Any], fallback: Mapping[str, Any], key: str) -> str | None:
+    value = primary.get(key)
+    if value is None:
+        value = fallback.get(key)
+    if value is None:
+        return None
+    return str(value)
+
+
+def _optional_option(value: Any) -> str | None:
+    if value is None:
+        return None
+    text_value = str(value).strip()
+    return text_value or None
+
+
+def _env_bool_value(value: str | None, default: bool) -> bool:
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def installed_runtime_status() -> InMemoryRuntimeStatus:
     """Return the process-local runtime status store."""
 
@@ -1109,7 +1500,11 @@ def installed_ingestion_boundary() -> RuntimeIngestionBoundary:
     url = runtime_database_url_from_env()
     if _INSTALLED_BOUNDARY is None or url != _INSTALLED_BOUNDARY_URL:
         _INSTALLED_BOUNDARY_URL = url
-        _INSTALLED_BOUNDARY = RuntimeIngestionBoundary(url, installed_runtime_status())
+        _INSTALLED_BOUNDARY = RuntimeIngestionBoundary(
+            url,
+            installed_runtime_status(),
+            installed_svo_runtime_chunker(),
+        )
     return _INSTALLED_BOUNDARY
 
 
@@ -1118,5 +1513,6 @@ __all__ = [
     "RuntimeIngestionBoundary",
     "installed_ingestion_boundary",
     "installed_runtime_status",
+    "installed_svo_runtime_chunker",
     "runtime_database_url_from_env",
 ]

@@ -65,6 +65,7 @@ SECTION_NAMES: Final[tuple[str, ...]] = (
     "identity",
     "architecture",
     "integrations",
+    "chunking_runtime",
     "data_model",
     "semantic_chunk_metadata",
     "checksum_lifecycle",
@@ -127,6 +128,15 @@ def build_info_document(registry: CommandHelpRegistry) -> InfoDocument:
             "chunking, EmbeddingClient for embeddings, and chunk-metadata-adapter for "
             "canonical ChunkQuery and SemanticChunk metadata."
         ),
+        "chunking_runtime": (
+            "doc-store does not implement a local text chunker. For paragraph, "
+            "sentence, and semantic chunking strategies, ingestion passes the complete "
+            "normalized text to the SVO runtime wrapper over SvoChunkerClient and "
+            "persists only the returned SemanticChunk ranges and metadata. If the "
+            "external chunker is unavailable, rejects a strategy, or violates the "
+            "SemanticChunk contract, ingestion records a structured CHUNKER_* failure "
+            "instead of falling back to local splitting."
+        ),
         "data_model": (
             "The canonical hierarchy is Document -> Chapter -> Paragraph -> "
             "SemanticChunk. Document versions are immutable once visible, ingestion is "
@@ -151,13 +161,13 @@ def build_info_document(registry: CommandHelpRegistry) -> InfoDocument:
         ),
         "checksum_lifecycle": (
             "Checksum state belongs to files or documents. File checksums are stored "
-            "as checksum_algorithm, content_sha256, and body_sha256 on files; "
-            "document checksum compatibility data is stored in document metadata while "
-            "the checksum-driven lifecycle is completed. A future lifecycle command "
-            "must short-circuit unchanged file checksums, expose document/file "
-            "revectorize flags, expose file rechunk flags, batch-mark stale chunks "
-            "deleted on checksum mismatch, insert the changed content as a new "
-            "file/version, and vectorize the new chunks."
+            "as checksum_algorithm, content_sha256, and body_sha256 on files; documents "
+            "store checksum_algorithm, content_sha256, body_sha256, and source_hash. "
+            "Files expose needs_rechunk and needs_revectorize; documents expose "
+            "needs_revectorize. Ingestion short-circuits unchanged supplied file "
+            "checksums when no reprocessing flags are set, revectorizes active chunks "
+            "when only revectorization is requested, and batch-marks old hierarchy rows "
+            "deleted before writing changed chunks for a new file/version."
         ),
         "query_and_export": (
             "Retrieval uses the canonical relational hierarchy plus pgvector "

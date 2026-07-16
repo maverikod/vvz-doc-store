@@ -8,6 +8,7 @@ from typing import Any, ClassVar, Protocol
 from mcp_proxy_adapter.commands.base import Command, CommandResult
 from mcp_proxy_adapter.commands.result import ErrorResult
 
+from doc_store_server.commands.validation import parse_uuid4
 from doc_store_server.runtime.entity_lifecycle import (
     DeletionSafetyError,
     installed_entity_lifecycle_service,
@@ -43,6 +44,20 @@ ENTITY_TYPES = (
     "semantic_chunks",
 )
 ROOT_CRUD_ENTITY_TYPES = (*DICTIONARY_ENTITY_TYPES, "projects", "files", "documents")
+UUID4_VALUE_FIELDS = frozenset(
+    {
+        "id",
+        "owner_id",
+        "source_upload_id",
+        "processing_trace_id",
+        "chunk_type_id",
+        "role_id",
+        "status_id",
+        "block_type_id",
+        "language_id",
+        "category_id",
+    }
+)
 
 
 class _EntityCommand(Command):
@@ -95,6 +110,14 @@ class _EntityCommand(Command):
     @staticmethod
     def _error(message: str, *, code: str = "INVALID_PARAMS", details: Mapping[str, Any] | None = None) -> ErrorResult:
         return ErrorResult(message, details={"code": code, **dict(details or {})})
+
+
+def _validated_uuid4_values(values: Mapping[str, Any], command_name: str) -> dict[str, Any]:
+    payload = dict(values)
+    for field in UUID4_VALUE_FIELDS & set(payload):
+        if payload[field] is not None:
+            payload[field] = str(parse_uuid4(payload[field], f"values.{field}", command_name))
+    return payload
 
 
 class EntityListCommand(_EntityCommand):
@@ -184,7 +207,12 @@ class EntityCreateCommand(_EntityCommand):
         if boundary is None:
             return self._error("Entity lifecycle boundary is unavailable.", code="LIFECYCLE_BOUNDARY_UNAVAILABLE")
         try:
-            return CommandResult(data=boundary.create_entity(entity_type=entity_type, values=values))
+            return CommandResult(
+                data=boundary.create_entity(
+                    entity_type=entity_type,
+                    values=_validated_uuid4_values(values, self.name),
+                )
+            )
         except Exception as exc:
             return self._error(str(exc))
 
@@ -222,7 +250,14 @@ class EntityUpdateCommand(_EntityCommand):
         if boundary is None:
             return self._error("Entity lifecycle boundary is unavailable.", code="LIFECYCLE_BOUNDARY_UNAVAILABLE")
         try:
-            return CommandResult(data=boundary.update_entity(entity_type=entity_type, entity_id=entity_id, values=values))
+            parsed_entity_id = str(parse_uuid4(entity_id, "entity_id", self.name))
+            return CommandResult(
+                data=boundary.update_entity(
+                    entity_type=entity_type,
+                    entity_id=parsed_entity_id,
+                    values=_validated_uuid4_values(values, self.name),
+                )
+            )
         except LookupError as exc:
             return self._error(str(exc), code="NOT_FOUND")
         except Exception as exc:
@@ -264,7 +299,14 @@ class EntityGetCommand(_EntityCommand):
         if boundary is None:
             return self._error("Entity lifecycle boundary is unavailable.", code="LIFECYCLE_BOUNDARY_UNAVAILABLE")
         try:
-            return CommandResult(data=boundary.get_entity(entity_type=entity_type, entity_id=entity_id, fields=fields, show_deleted=show_deleted))
+            return CommandResult(
+                data=boundary.get_entity(
+                    entity_type=entity_type,
+                    entity_id=str(parse_uuid4(entity_id, "entity_id", self.name)),
+                    fields=fields,
+                    show_deleted=show_deleted,
+                )
+            )
         except LookupError as exc:
             return self._error(str(exc), code="NOT_FOUND")
         except Exception as exc:
@@ -301,7 +343,8 @@ class _EntityIdsCommand(_EntityCommand):
             return self._error("Entity lifecycle boundary is unavailable.", code="LIFECYCLE_BOUNDARY_UNAVAILABLE")
         try:
             method = getattr(boundary, self.action)
-            return CommandResult(data=method(entity_type=entity_type, ids=ids))
+            parsed_ids = [str(parse_uuid4(item, "ids", self.name)) for item in ids]
+            return CommandResult(data=method(entity_type=entity_type, ids=parsed_ids))
         except DeletionSafetyError as exc:
             return self._error(str(exc), code="DELETE_BLOCKED")
         except Exception as exc:
@@ -360,7 +403,12 @@ class EntityReferencesCommand(_EntityCommand):
         if boundary is None:
             return self._error("Entity lifecycle boundary is unavailable.", code="LIFECYCLE_BOUNDARY_UNAVAILABLE")
         try:
-            return CommandResult(data=boundary.references_for(entity_type=entity_type, entity_id=entity_id))
+            return CommandResult(
+                data=boundary.references_for(
+                    entity_type=entity_type,
+                    entity_id=str(parse_uuid4(entity_id, "entity_id", self.name)),
+                )
+            )
         except Exception as exc:
             return self._error(str(exc))
 
