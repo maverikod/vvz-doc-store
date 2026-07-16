@@ -67,7 +67,7 @@ def upgrade() -> None:
             server_default=sa.text("gen_random_uuid()"),
         ),
         sa.Column("chunk_uuid", postgresql.UUID(as_uuid=True), nullable=False),
-        sa.Column("vector", VECTOR(2), nullable=False),
+        sa.Column("vector", VECTOR(384), nullable=False),
         sa.Column("model", sa.String(length=256), nullable=False),
         sa.Column("dimension", sa.Integer(), nullable=False),
         sa.Column("provider", sa.String(length=128), nullable=False),

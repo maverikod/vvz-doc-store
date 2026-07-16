@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 import json
-import os
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from doc_store_server.runtime.previews import chunk_preview
+
 
 DEFAULT_LOG_DIR = "/var/log/doc-store"
-DEFAULT_PREVIEW_CHARS = 240
 
 
 def log_error_event(payload: Mapping[str, Any]) -> None:
@@ -35,24 +35,21 @@ def log_processed_text_event(payload: Mapping[str, Any]) -> None:
 def preview_chars() -> int:
     """Return configured processed-text preview length."""
 
-    raw = os.getenv("DOC_STORE_TEXT_LOG_PREVIEW_CHARS")
-    if raw is None:
-        return DEFAULT_PREVIEW_CHARS
-    try:
-        return max(0, int(raw))
-    except ValueError:
-        return DEFAULT_PREVIEW_CHARS
+    from doc_store_server.runtime.previews import preview_chars as _preview_chars
+
+    return _preview_chars("DOC_STORE_TEXT_LOG_PREVIEW_CHARS")
 
 
 def text_preview(value: str) -> str:
     """Return the first configured characters of text for preview logging."""
 
-    limit = preview_chars()
-    return value[:limit] if limit else ""
+    return chunk_preview(value, limit=preview_chars())
 
 
 def _append(filename: str, payload: Mapping[str, Any]) -> None:
     try:
+        import os
+
         directory = Path(os.getenv("DOC_STORE_EVENT_LOG_DIR", DEFAULT_LOG_DIR))
         directory.mkdir(parents=True, exist_ok=True)
         event = {"timestamp": _now(), **dict(payload)}
@@ -73,4 +70,3 @@ __all__ = [
     "preview_chars",
     "text_preview",
 ]
-

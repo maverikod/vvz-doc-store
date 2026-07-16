@@ -10,7 +10,6 @@ from doc_store_server.ingestion.runtime_boundary import (
     _clear_reprocessing_flags,
     _insert_semantic_chunk_default_metrics,
     _mark_existing_hierarchy_deleted,
-    _revectorize_active_chunks,
 )
 
 
@@ -162,15 +161,12 @@ def test_runtime_checksum_rechunk_marks_existing_chunks_deleted_in_batch() -> No
     assert "UPDATE chapters SET order_index = order_index +" in sql
 
 
-def test_runtime_revectorize_branch_replaces_active_embeddings_and_clears_flags() -> None:
+def test_runtime_clear_reprocessing_flags_belongs_to_vectorizer_completion() -> None:
     connection = _RecordingSqlConnection()
 
-    _revectorize_active_chunks(connection, "550e8400-e29b-41d4-a716-446655440000")  # type: ignore[arg-type]
     _clear_reprocessing_flags(connection, "550e8400-e29b-41d4-a716-446655440000")  # type: ignore[arg-type]
 
     sql = "\n".join(call[0] for call in connection.calls)
-    assert "UPDATE semantic_chunk_embeddings SET active = FALSE" in sql
-    assert "INSERT INTO semantic_chunk_embeddings" in sql
     assert "UPDATE documents SET needs_revectorize = FALSE" in sql
     assert "UPDATE files SET needs_revectorize = FALSE, needs_rechunk = FALSE" in sql
 

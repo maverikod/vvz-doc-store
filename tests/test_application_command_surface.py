@@ -41,6 +41,7 @@ from doc_store_server.commands.retrieval_commands import (
 )
 from doc_store_server.commands.semantic_relations_command import SemanticRelationsCommand
 from doc_store_server.commands.uuid4_command import Uuid4Command
+from doc_store_server.commands.vectorization_command import EmbeddingsRebuildCommand
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -70,6 +71,7 @@ EXPECTED_COMMANDS = {
     "chunk_query_search": (ChunkQuerySearchCommand, "sync"),
     "semantic_relations": (SemanticRelationsCommand, "sync"),
     "corpus_audit": (CorpusAuditCommand, "sync"),
+    "embeddings_rebuild": (EmbeddingsRebuildCommand, "queue"),
 }
 EXPECTED_METADATA = {
     "name",

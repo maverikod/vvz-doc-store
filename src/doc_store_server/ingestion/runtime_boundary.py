@@ -23,13 +23,6 @@ from doc_store_server.ingestion.svo_chunking import (
     SvoRuntimeChunker,
 )
 from doc_store_server.ingestion.source_normalizer import normalize_source
-from doc_store_server.query.runtime_boundary import (
-    RUNTIME_EMBEDDING_DIMENSION,
-    RUNTIME_EMBEDDING_MODEL,
-    RUNTIME_EMBEDDING_PROVIDER,
-    RUNTIME_EMBEDDING_VERSION,
-    runtime_embedding,
-)
 from doc_store_server.runtime.ingestion_logs import (
     log_error_event,
     log_processed_file_event,
@@ -455,8 +448,6 @@ class RuntimeIngestionBoundary:
                             or existing_state["document_needs_revectorize"] is True
                         )
                     ):
-                        _revectorize_active_chunks(connection, document_id)
-                        _clear_reprocessing_flags(connection, document_id)
                         return _existing_references(
                             connection,
                             document_id=document_id,
@@ -464,7 +455,7 @@ class RuntimeIngestionBoundary:
                             source_version=source_version,
                             chunking_strategy=existing.get("chunking_strategy") or chunking_strategy,
                             idempotent=False,
-                            idempotent_reason="revectorized_existing_chunks",
+                            idempotent_reason="revectorization_pending",
                         )
 
             return _PersistencePlan(
@@ -514,7 +505,7 @@ class RuntimeIngestionBoundary:
                         "checksum_algorithm, content_sha256, body_sha256, needs_revectorize, "
                         "needs_rechunk, is_deleted, deleted_at, block_meta) "
                         "VALUES (:id, NULL, :path, :name, 'text/plain', NULL, :char_count, "
-                        "'sha256', :content_sha256, :body_sha256, FALSE, FALSE, FALSE, NULL, "
+                        "'sha256', :content_sha256, :body_sha256, TRUE, FALSE, FALSE, NULL, "
                         "CAST(:block_meta AS jsonb)) "
                         "ON CONFLICT (id) DO UPDATE SET "
                         "path = EXCLUDED.path, "
@@ -523,7 +514,7 @@ class RuntimeIngestionBoundary:
                         "char_count = EXCLUDED.char_count, "
                         "content_sha256 = EXCLUDED.content_sha256, "
                         "body_sha256 = EXCLUDED.body_sha256, "
-                        "needs_revectorize = FALSE, "
+                        "needs_revectorize = TRUE, "
                         "needs_rechunk = FALSE, "
                         "is_deleted = FALSE, "
                         "deleted_at = NULL, "
@@ -549,7 +540,7 @@ class RuntimeIngestionBoundary:
                         "processing_started_at, processing_completed_at, block_meta) "
                         "VALUES (:id, :owner_id, :source_upload_id, :source_version, :source_path, :source_name, "
                         ":source_hash, 'sha256', :content_sha256, :body_sha256, :title, 'draft', "
-                        "1, FALSE, :trace_id, now(), NULL, "
+                        "1, TRUE, :trace_id, now(), NULL, "
                         "CAST(:block_meta AS jsonb)) "
                         "ON CONFLICT (id) DO UPDATE SET "
                         "owner_id = EXCLUDED.owner_id, "
@@ -564,7 +555,7 @@ class RuntimeIngestionBoundary:
                         "title = EXCLUDED.title, "
                         "processing_status = 'draft', "
                         "processing_attempt = documents.processing_attempt + 1, "
-                        "needs_revectorize = FALSE, "
+                        "needs_revectorize = TRUE, "
                         "processing_trace_id = EXCLUDED.processing_trace_id, "
                         "processing_started_at = EXCLUDED.processing_started_at, "
                         "processing_completed_at = EXCLUDED.processing_completed_at, "
@@ -719,22 +710,6 @@ class RuntimeIngestionBoundary:
                             ),
                             {"chunk_uuid": chunk_id, "ordinal": tag_ordinal, "tag_value": tag_value},
                         )
-                    connection.execute(
-                        text(
-                            "INSERT INTO semantic_chunk_embeddings "
-                            "(chunk_uuid, vector, model, dimension, provider, model_version, active) "
-                            "VALUES (:chunk_uuid, CAST(:vector AS vector), :model, :dimension, :provider, "
-                            ":model_version, TRUE)"
-                        ),
-                        {
-                            "chunk_uuid": chunk_id,
-                            "vector": _vector_literal(runtime_embedding(paragraph_text)),
-                            "model": RUNTIME_EMBEDDING_MODEL,
-                            "dimension": RUNTIME_EMBEDDING_DIMENSION,
-                            "provider": RUNTIME_EMBEDDING_PROVIDER,
-                            "model_version": RUNTIME_EMBEDDING_VERSION,
-                        },
-                    )
             return {
                 "idempotent": False,
                 "document_id": str(document_id),
@@ -1082,44 +1057,6 @@ def _mark_existing_hierarchy_deleted(connection: Any, document_id: UUID) -> None
         ),
         {"document_id": document_id},
     )
-
-
-def _revectorize_active_chunks(connection: Any, document_id: UUID) -> None:
-    rows = connection.execute(
-        text(
-            "SELECT id, text FROM semantic_chunks "
-            "WHERE document_id = :document_id AND deleted_at IS NULL "
-            "ORDER BY order_index"
-        ),
-        {"document_id": document_id},
-    ).mappings().all()
-    chunk_ids = [row["id"] for row in rows]
-    if not chunk_ids:
-        return
-    connection.execute(
-        text(
-            "UPDATE semantic_chunk_embeddings SET active = FALSE "
-            "WHERE chunk_uuid = ANY(CAST(:chunk_ids AS uuid[]))"
-        ),
-        {"chunk_ids": [str(item) for item in chunk_ids]},
-    )
-    for row in rows:
-        connection.execute(
-            text(
-                "INSERT INTO semantic_chunk_embeddings "
-                "(chunk_uuid, vector, model, dimension, provider, model_version, active) "
-                "VALUES (:chunk_uuid, CAST(:vector AS vector), :model, :dimension, :provider, "
-                ":model_version, TRUE)"
-            ),
-            {
-                "chunk_uuid": row["id"],
-                "vector": _vector_literal(runtime_embedding(str(row["text"]))),
-                "model": RUNTIME_EMBEDDING_MODEL,
-                "dimension": RUNTIME_EMBEDDING_DIMENSION,
-                "provider": RUNTIME_EMBEDDING_PROVIDER,
-                "model_version": RUNTIME_EMBEDDING_VERSION,
-            },
-        )
 
 
 def _clear_reprocessing_flags(connection: Any, document_id: UUID) -> None:

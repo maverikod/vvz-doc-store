@@ -39,7 +39,6 @@ from mcp_proxy_adapter.client.jsonrpc_client.client import JsonRpcClient
 
 
 CHUNKING_STRATEGIES = ("paragraph", "sentence", "semantic")
-DEFAULT_SEARCH_VECTOR = [0.75, 0.25]
 
 
 def _stable_uuid4(value: str) -> str:
@@ -47,6 +46,38 @@ def _stable_uuid4(value: str) -> str:
     raw[6] = (raw[6] & 0x0F) | 0x40
     raw[8] = (raw[8] & 0x3F) | 0x80
     return str(uuid.UUID(bytes=bytes(raw)))
+
+
+async def _embedding_vector(text_value: str) -> list[float]:
+    from embed_client import EmbeddingClient
+
+    model = os.getenv("DOC_STORE_EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+    dimension = int(os.getenv("DOC_STORE_EMBEDDING_DIMENSION", "384"))
+    client = EmbeddingClient(
+        protocol=os.getenv("DOC_STORE_EMBEDDING_PROTOCOL", "https"),
+        host=os.getenv("DOC_STORE_EMBEDDING_HOST", "192.168.254.26"),
+        port=int(os.getenv("DOC_STORE_EMBEDDING_PORT", "8001")),
+        cert=os.getenv("DOC_STORE_EMBEDDING_CERT") or None,
+        key=os.getenv("DOC_STORE_EMBEDDING_KEY") or None,
+        ca=os.getenv("DOC_STORE_EMBEDDING_CA") or None,
+        check_hostname=os.getenv("DOC_STORE_EMBEDDING_CHECK_HOSTNAME", "").lower()
+        in {"1", "true", "yes", "on"},
+        timeout=float(os.getenv("DOC_STORE_EMBEDDING_TIMEOUT", "300")),
+    )
+    response = await client.embed(
+        [text_value],
+        model=model,
+        dimension=dimension,
+        wait=True,
+        wait_timeout=int(os.getenv("DOC_STORE_EMBEDDING_WAIT_TIMEOUT", "300")),
+    )
+    results = response.get("results")
+    if not isinstance(results, list) or not results:
+        raise RuntimeError("embedding response has no results")
+    vector = results[0].get("embedding") if isinstance(results[0], Mapping) else results[0]
+    if not isinstance(vector, list) or len(vector) != dimension:
+        raise RuntimeError("embedding response vector dimension mismatch")
+    return [float(item) for item in vector]
 
 
 @dataclass
@@ -685,6 +716,22 @@ async def _verify_strategy(
         rebind.updated,
     )
 
+    try:
+        vectorized_result = await client.call(
+            "embeddings_rebuild",
+            {"document_id": document_id, "document_batch_size": 1},
+        )
+        _add_check(
+            checks,
+            f"{strategy}: embeddings_rebuild",
+            isinstance(vectorized_result, Mapping)
+            and vectorized_result.get("status") == "ok"
+            and int(vectorized_result.get("chunk_count") or 0) > 0,
+            json.dumps(vectorized_result, ensure_ascii=False, default=str)[:500],
+        )
+    except Exception as exc:
+        _add_check(checks, f"{strategy}: embeddings_rebuild", False, repr(exc))
+
     vectorized, vector_status = await _wait_vectorized(
         client,
         document_id=document_id,
@@ -743,12 +790,13 @@ async def _verify_strategy(
         _add_check(checks, f"{strategy}: full-text search preview", False, repr(exc))
 
     try:
+        query_vector = await _embedding_vector(marker)
         semantic = await _search(
             client,
             project=project,
             scope=scope,
             strategy=strategy,
-            embedding=list(DEFAULT_SEARCH_VECTOR),
+            embedding=query_vector,
             max_results=5,
         )
         semantic_hits = _result_hits(semantic)
@@ -787,6 +835,18 @@ async def _verify_strategy(
                     "chunking_strategy": strategy,
                 },
             )
+        )
+        revectorized_result = await client.call(
+            "embeddings_rebuild",
+            {"document_id": document_id, "document_batch_size": 1},
+        )
+        _add_check(
+            checks,
+            f"{strategy}: embeddings_rebuild after rechunk",
+            isinstance(revectorized_result, Mapping)
+            and revectorized_result.get("status") == "ok"
+            and int(revectorized_result.get("chunk_count") or 0) > 0,
+            json.dumps(revectorized_result, ensure_ascii=False, default=str)[:500],
         )
         after_rechunk = await _search(client, project=project, scope=scope, strategy=strategy)
         _add_check(
@@ -1008,6 +1068,7 @@ async def _run(args: argparse.Namespace) -> int:
         "chunk_query_search",
         "semantic_relations",
         "corpus_audit",
+        "embeddings_rebuild",
         "info",
         "uuid4",
         "health",
@@ -1026,7 +1087,6 @@ async def _run(args: argparse.Namespace) -> int:
     all_checks.extend(await _verify_metadata_paradigm(client))
     all_checks.extend(await _verify_info_sections(client))
     all_checks.extend(await _verify_corpus_audit(client))
-    all_checks.extend(await _verify_semantic_relations(client))
 
     with tempfile.TemporaryDirectory(prefix="doc-store-runtime-verify-") as temp_root:
         tmpdir = Path(temp_root)
@@ -1046,6 +1106,8 @@ async def _run(args: argparse.Namespace) -> int:
             )
             strategy_runs.append(strategy_run)
             all_checks.extend(strategy_run.checks)
+
+    all_checks.extend(await _verify_semantic_relations(client))
 
     if strategy_runs:
         all_checks.append(

@@ -33,6 +33,7 @@ from doc_store_server.commands.entity_lifecycle_commands import (
     EntityUndeleteCommand,
 )
 from doc_store_server.commands.ingestion_commands import (
+    DocumentChunkCommand,
     DocumentCreateCommand,
     DocumentUpdateCommand,
 )
@@ -43,6 +44,7 @@ from doc_store_server.commands.retrieval_commands import (
     ParagraphGetByNumberCommand,
     ParagraphGetCommand,
 )
+from doc_store_server.commands.vectorization_command import EmbeddingsRebuildCommand
 from doc_store_server.db.health import check_database_health, database_url_from_config
 from doc_store_server.ingestion.runtime_boundary import (
     RuntimeIngestionBoundary,
@@ -54,6 +56,7 @@ from doc_store_server.query.runtime_boundary import installed_search_orchestrato
 from doc_store_server.runtime.document_export import installed_document_export_service
 from doc_store_server.runtime.document_service import installed_document_service
 from doc_store_server.runtime.entity_lifecycle import installed_entity_lifecycle_service
+from doc_store_server.runtime.vectorization import installed_vectorization_service
 
 
 ServerConfig = Mapping[str, Any]
@@ -146,7 +149,7 @@ def create_server_application(config: ServerConfig | None = None) -> Any:
     return create_app(
         title="doc-store",
         description="doc-store adapter server",
-        version="0.1.30",
+        version="0.1.33",
         app_config=dict(config or {}),
     )
 
@@ -165,8 +168,10 @@ def configure_runtime_boundaries(config: ServerConfig) -> None:
     lifecycle = installed_entity_lifecycle_service(config)
     exporter = installed_document_export_service(dict(config))
     document_service = installed_document_service(dict(config))
+    vectorization = installed_vectorization_service(config)
     DocumentCreateCommand.ingestion_boundary = ingestion
     DocumentUpdateCommand.ingestion_boundary = ingestion
+    DocumentChunkCommand.ingestion_boundary = ingestion
     DocumentExportCommand.export_boundary = exporter
     DocumentDeleteCommand.document_service = document_service
     DocumentGetCommand.retrieval_boundary = retrieval
@@ -175,6 +180,7 @@ def configure_runtime_boundaries(config: ServerConfig) -> None:
     ParagraphGetByNumberCommand.retrieval_boundary = retrieval
     ProcessingStatusCommand.runtime_status_boundary = status
     ChunkQuerySearchCommand.search_orchestrator = search
+    EmbeddingsRebuildCommand.vectorization_boundary = vectorization
     for command in (
         EntityCreateCommand,
         EntityListCommand,

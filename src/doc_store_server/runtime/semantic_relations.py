@@ -14,6 +14,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Connection
 
 from doc_store_server.db.health import database_url_from_config
+from doc_store_server.runtime.previews import chunk_preview
 
 
 _IDENTIFIER_RE = re.compile(r"\b(7d-(?P<number>\d+)(?:-[\w.-]+)?)", re.IGNORECASE)
@@ -138,8 +139,10 @@ class SemanticRelationService:
                    (c1.vector <=> c2.vector) AS distance
             FROM candidates AS c1
             JOIN candidates AS c2
-              ON c1.item_id < c2.item_id
+             ON c1.item_id < c2.item_id
+             AND c1.provider = c2.provider
              AND c1.model = c2.model
+             AND c1.model_version = c2.model_version
              AND c1.dimension = c2.dimension
             ORDER BY {"distance ASC" if relation == "similar" else "distance DESC"}
             LIMIT :max_pairs
@@ -407,8 +410,7 @@ def _parse_7d_number(*values: Any) -> int | None:
 
 
 def _preview(value: str, *, limit: int = 220) -> str:
-    collapsed = " ".join(value.split())
-    return collapsed[:limit]
+    return chunk_preview(value, limit=limit)
 
 
 def _int_or_none(value: Any) -> int | None:

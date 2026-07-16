@@ -316,6 +316,11 @@ class DocStoreClient:
     ) -> Any:
         return await self.call("corpus_audit", params, **kwargs)
 
+    async def embeddings_rebuild(
+        self, params: Mapping[str, Any] | None = None, **kwargs: Any
+    ) -> Any:
+        return await self.call("embeddings_rebuild", params, **kwargs)
+
     async def help(
         self,
         cmdname: str | None = None,

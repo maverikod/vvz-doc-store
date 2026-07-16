@@ -220,7 +220,7 @@ class SemanticChunkEmbedding(Base):
     chunk_uuid: Mapped[UUID] = mapped_column(
         UUID4, ForeignKey("semantic_chunks.id", ondelete="CASCADE"), nullable=False
     )
-    vector: Mapped[list[float]] = mapped_column(VECTOR(2), nullable=False)
+    vector: Mapped[list[float]] = mapped_column(VECTOR(384), nullable=False)
     model: Mapped[str] = mapped_column(String(256), nullable=False)
     dimension: Mapped[int] = mapped_column(Integer, nullable=False)
     provider: Mapped[str] = mapped_column(String(128), nullable=False)

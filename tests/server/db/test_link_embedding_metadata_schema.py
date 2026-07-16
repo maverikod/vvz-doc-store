@@ -50,6 +50,10 @@ FORBIDDEN_TABLES = {
 }
 
 
+def _vector_literal(seed: float) -> str:
+    return "[" + ",".join(str(seed + index / 1000) for index in range(384)) + "]"
+
+
 def _load_migration(filename: str, module_name: str) -> ModuleType:
     path = ROOT / "migrations" / "versions" / filename
     spec = importlib.util.spec_from_file_location(module_name, path)
@@ -240,11 +244,11 @@ def test_0001_then_0004_round_trip_constraints_cascades_and_root_preservation(po
             with pytest.raises(SQLAlchemyError), connection.begin_nested():
                 connection.execute(text("INSERT INTO semantic_chunk_links (source_chunk_uuid, relation_type, target_chunk_uuid, ordinal, relation_data) VALUES (:source, 'related', :target, -1, '{}'::jsonb)"), {"source": chunk, "target": target})
             with pytest.raises(SQLAlchemyError), connection.begin_nested():
-                connection.execute(text("INSERT INTO semantic_chunk_embeddings (chunk_uuid, vector, model, dimension, provider, model_version, active) VALUES (:chunk, '[1,2]'::vector, 'm', 0, 'p', '1', true)"), {"chunk": chunk})
-            connection.execute(text("INSERT INTO semantic_chunk_embeddings (chunk_uuid, vector, model, dimension, provider, model_version, active) VALUES (:chunk, '[1,2]'::vector, 'm', 2, 'p', '1', false)"), {"chunk": chunk})
-            connection.execute(text("INSERT INTO semantic_chunk_embeddings (chunk_uuid, vector, model, dimension, provider, model_version, active) VALUES (:chunk, '[4,5]'::vector, 'm', 2, 'p', '2', true)"), {"chunk": chunk})
+                connection.execute(text("INSERT INTO semantic_chunk_embeddings (chunk_uuid, vector, model, dimension, provider, model_version, active) VALUES (:chunk, CAST(:vector AS vector), 'm', 0, 'p', '1', true)"), {"chunk": chunk, "vector": _vector_literal(1.0)})
+            connection.execute(text("INSERT INTO semantic_chunk_embeddings (chunk_uuid, vector, model, dimension, provider, model_version, active) VALUES (:chunk, CAST(:vector AS vector), 'm', 384, 'p', '1', false)"), {"chunk": chunk, "vector": _vector_literal(1.0)})
+            connection.execute(text("INSERT INTO semantic_chunk_embeddings (chunk_uuid, vector, model, dimension, provider, model_version, active) VALUES (:chunk, CAST(:vector AS vector), 'm', 384, 'p', '2', true)"), {"chunk": chunk, "vector": _vector_literal(4.0)})
             with pytest.raises(SQLAlchemyError), connection.begin_nested():
-                connection.execute(text("INSERT INTO semantic_chunk_embeddings (chunk_uuid, vector, model, dimension, provider, model_version, active) VALUES (:chunk, '[7,8]'::vector, 'm', 2, 'q', '3', true)"), {"chunk": chunk})
+                connection.execute(text("INSERT INTO semantic_chunk_embeddings (chunk_uuid, vector, model, dimension, provider, model_version, active) VALUES (:chunk, CAST(:vector AS vector), 'm', 384, 'q', '3', true)"), {"chunk": chunk, "vector": _vector_literal(7.0)})
             assert connection.execute(text("SELECT count(*) FROM semantic_chunk_embeddings WHERE chunk_uuid = :chunk"), {"chunk": chunk}).scalar() == 2
             assert connection.execute(text("SELECT block_meta->'unknown' FROM semantic_chunks WHERE id = :id"), {"id": chunk}).scalar() == {"keep": [1, 2]}
             connection.execute(text("DELETE FROM semantic_chunks WHERE id = :id"), {"id": chunk})

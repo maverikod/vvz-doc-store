@@ -42,6 +42,7 @@ from doc_store_server.commands.retrieval_commands import (
 )
 from doc_store_server.commands.semantic_relations_command import SemanticRelationsCommand
 from doc_store_server.commands.uuid4_command import Uuid4Command
+from doc_store_server.commands.vectorization_command import EmbeddingsRebuildCommand
 
 
 ExecutionMode = Literal["sync", "queue"]
@@ -268,6 +269,14 @@ DOC_STORE_COMMAND_MANIFEST: Final[tuple[CommandManifestEntry, ...]] = (
         "CorpusAuditCommand.metadata",
         "CorpusAuditCommand.get_schema",
     ),
+    CommandManifestEntry(
+        "embeddings_rebuild",
+        EmbeddingsRebuildCommand,
+        "doc_store_server.commands.vectorization_command",
+        "queue",
+        "EmbeddingsRebuildCommand.metadata",
+        "EmbeddingsRebuildCommand.get_schema",
+    ),
 )
 
 DOC_STORE_COMMAND_MODULE_MANIFEST: Final[tuple[str, ...]] = (
@@ -284,9 +293,11 @@ DOC_STORE_COMMAND_MODULE_MANIFEST: Final[tuple[str, ...]] = (
     "doc_store_server.commands.chunk_query_search_command",
     "doc_store_server.commands.semantic_relations_command",
     "doc_store_server.commands.corpus_audit_command",
+    "doc_store_server.commands.vectorization_command",
 )
 DOC_STORE_QUEUED_COMMAND_MODULES: Final[tuple[str, ...]] = (
     "doc_store_server.commands.ingestion_commands",
+    "doc_store_server.commands.vectorization_command",
 )
 
 
@@ -328,6 +339,7 @@ __all__ = [
     "EntityHardDeleteCommand",
     "EntityListCommand",
     "EntityReferencesCommand",
+    "EmbeddingsRebuildCommand",
     "EntitySoftDeleteCommand",
     "EntityUpdateCommand",
     "EntityUndeleteCommand",

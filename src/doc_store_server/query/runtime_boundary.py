@@ -12,18 +12,13 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from doc_store_server.db.health import database_url_from_config
+from doc_store_server.runtime.embedding_config import RuntimeEmbeddingConfig, runtime_embedding_config
 
 from .chunk_payload import CLASSIFIER_JOIN_SQL, CLASSIFIER_SELECT_SQL
 from .compiler import ExecutionMode, ExecutionPlan, compile_query
 from .full_text import FullTextExecutor
 from .semantic import _result_from_row as _semantic_result_from_row
 from .semantic import _statement as _semantic_statement
-
-
-RUNTIME_EMBEDDING_PROVIDER = "doc-store-runtime"
-RUNTIME_EMBEDDING_MODEL = "doc-store-runtime-2d"
-RUNTIME_EMBEDDING_VERSION = "0.1.30"
-RUNTIME_EMBEDDING_DIMENSION = 2
 
 
 _PREDICATE_COLUMNS = {
@@ -54,8 +49,13 @@ _PREDICATE_COLUMNS = {
 class RuntimeSearchBoundary:
     """Compile public ChunkQuery requests and execute them against PostgreSQL."""
 
-    def __init__(self, database_url: str | None) -> None:
+    def __init__(
+        self,
+        database_url: str | None,
+        embedding_config: RuntimeEmbeddingConfig | None = None,
+    ) -> None:
         self._database_url = database_url
+        self._embedding_config = embedding_config or runtime_embedding_config()
 
     async def __call__(self, query: ChunkQuery, **_context: Any) -> Any:
         if not self._database_url:
@@ -82,8 +82,8 @@ class RuntimeSearchBoundary:
         statement, params = _semantic_statement(
             plan,
             vector,
-            model=RUNTIME_EMBEDDING_MODEL,
-            dimension=RUNTIME_EMBEDDING_DIMENSION,
+            model=self._embedding_config.model,
+            dimension=self._embedding_config.dimension,
         )
         params["query_vector"] = _vector_literal(vector)
         result = await session.execute(statement, params)
@@ -114,18 +114,6 @@ class RuntimeSearchBoundary:
         return tuple(_semantic_result_from_row(row, index) for index, row in enumerate(rows, 1))
 
 
-def runtime_embedding(text_value: str) -> tuple[float, float]:
-    """Return a tiny deterministic smoke-test vector for installed runtime checks."""
-
-    lowered = text_value.lower()
-    semantic_terms = ("semantic", "embedding", "embeddings", "vector", "similarity", "hybrid")
-    full_text_terms = ("postgresql", "full text", "ranking", "highlight", "index")
-    semantic_score = 0.1 + sum(1.0 for term in semantic_terms if term in lowered)
-    full_text_score = 0.1 + sum(1.0 for term in full_text_terms if term in lowered)
-    total = semantic_score + full_text_score
-    return (semantic_score / total, full_text_score / total)
-
-
 def installed_search_orchestrator(config: Mapping[str, Any] | None = None) -> RuntimeSearchBoundary | None:
     """Create the installed search boundary from env/config, when possible."""
 
@@ -134,7 +122,7 @@ def installed_search_orchestrator(config: Mapping[str, Any] | None = None) -> Ru
         database_url = os.getenv("DOC_STORE_DATABASE_URL") or os.getenv("DATABASE_URL")
     if not database_url:
         return None
-    return RuntimeSearchBoundary(database_url)
+    return RuntimeSearchBoundary(database_url, runtime_embedding_config(config))
 
 
 def _async_database_url(database_url: str) -> str:
@@ -177,11 +165,6 @@ def _predicate_sql(plan: ExecutionPlan, params: dict[str, Any]) -> list[str]:
 
 
 __all__ = [
-    "RUNTIME_EMBEDDING_DIMENSION",
-    "RUNTIME_EMBEDDING_MODEL",
-    "RUNTIME_EMBEDDING_PROVIDER",
-    "RUNTIME_EMBEDDING_VERSION",
     "RuntimeSearchBoundary",
     "installed_search_orchestrator",
-    "runtime_embedding",
 ]

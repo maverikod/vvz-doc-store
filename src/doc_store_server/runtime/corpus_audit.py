@@ -14,6 +14,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Connection
 
 from doc_store_server.db.health import database_url_from_config
+from doc_store_server.runtime.previews import chunk_preview
 from doc_store_server.runtime.semantic_relations import unit_title_edit_capabilities
 
 
@@ -502,7 +503,7 @@ def _normalize_text(value: str) -> str:
 
 
 def _preview(value: str, *, limit: int = 220) -> str:
-    return " ".join(value.split())[:limit]
+    return chunk_preview(value, limit=limit)
 
 
 def _choice(value: str, allowed: set[str], name: str) -> str:

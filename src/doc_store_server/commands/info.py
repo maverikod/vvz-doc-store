@@ -66,6 +66,7 @@ SECTION_NAMES: Final[tuple[str, ...]] = (
     "architecture",
     "integrations",
     "chunking_runtime",
+    "vectorization_runtime",
     "data_model",
     "semantic_chunk_metadata",
     "checksum_lifecycle",
@@ -138,7 +139,22 @@ def build_info_document(registry: CommandHelpRegistry) -> InfoDocument:
             "persists only the returned SemanticChunk ranges and metadata. If the "
             "external chunker is unavailable, rejects a strategy, or violates the "
             "SemanticChunk contract, ingestion records a structured CHUNKER_* failure "
-            "instead of falling back to local splitting."
+            "instead of falling back to local splitting. Chunking does not call the "
+            "embedding service; it marks the file/document for later vectorization."
+        ),
+        "vectorization_runtime": (
+            "Embeddings are produced only by the external embedding service through "
+            "embed-client. The embeddings_rebuild command is the public vectorizer "
+            "entry point and is queued for large corpora. It reads documents/chunks "
+            "in document batches selected by needs_revectorize flags or explicit "
+            "document_id/all_documents parameters, calls embed-client in text batches, "
+            "writes semantic_chunk_embeddings in database batches, clears processed "
+            "needs_revectorize flags, and never performs chunking. It writes separate "
+            "vectorizer_processed.jsonl and vectorizer_errors.jsonl logs; processed "
+            "chunk events include chunk_id, document_id, and the shared chunk_preview. "
+            "If the embedding service is unavailable, the vectorizer returns "
+            "embedding_unavailable instead of crashing and suppresses repeated "
+            "unavailable log entries until a later successful batch records recovery."
         ),
         "data_model": (
             "The canonical hierarchy is Document -> Chapter -> Paragraph -> "
@@ -168,9 +184,10 @@ def build_info_document(registry: CommandHelpRegistry) -> InfoDocument:
             "store checksum_algorithm, content_sha256, body_sha256, and source_hash. "
             "Files expose needs_rechunk and needs_revectorize; documents expose "
             "needs_revectorize. Ingestion short-circuits unchanged supplied file "
-            "checksums when no reprocessing flags are set, revectorizes active chunks "
-            "when only revectorization is requested, and batch-marks old hierarchy rows "
-            "deleted before writing changed chunks for a new file/version."
+            "checksums when no reprocessing flags are set, leaves revectorization "
+            "work to the separate vectorizer when only revectorization is requested, "
+            "and batch-marks old hierarchy rows deleted before writing changed chunks "
+            "for a new file/version."
         ),
         "query_and_export": (
             "Retrieval uses the canonical relational hierarchy plus pgvector "

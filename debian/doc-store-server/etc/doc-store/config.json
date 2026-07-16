@@ -33,7 +33,7 @@
       "server_id": "doc-store-vvz",
       "server_name": "doc-store",
       "description": "doc-store MCP adapter server",
-      "version": "0.1.30"
+      "version": "0.1.33"
     },
     "instance_uuid": "REPLACE_ON_INSTALL",
     "auto_on_startup": true,
@@ -49,5 +49,19 @@
     "shutdown_timeout": 30,
     "max_concurrent_jobs": 5,
     "completed_job_retention_seconds": 21600
+  },
+  "embedding": {
+    "protocol": "https",
+    "host": "192.168.254.26",
+    "port": 8001,
+    "provider": "embedding-service-vvz",
+    "model": "all-MiniLM-L6-v2",
+    "model_version": "4.0.2",
+    "dimension": 384,
+    "batch_size": 128,
+    "timeout": 300,
+    "wait_timeout": 300,
+    "poll_interval": 1.0,
+    "check_hostname": false
   }
 }
