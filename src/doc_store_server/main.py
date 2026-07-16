@@ -19,13 +19,17 @@ from doc_store_server.commands.registration import (
     register_doc_store_commands as register_doc_store_commands,
 )
 from doc_store_server.commands.chunk_query_search_command import ChunkQuerySearchCommand
+from doc_store_server.commands.document_delete_command import DocumentDeleteCommand
 from doc_store_server.commands.health_command import DocStoreHealthCommand
+from doc_store_server.commands.document_export_command import DocumentExportCommand
 from doc_store_server.commands.entity_lifecycle_commands import (
+    EntityCreateCommand,
     EntityGetCommand,
     EntityHardDeleteCommand,
     EntityListCommand,
     EntityReferencesCommand,
     EntitySoftDeleteCommand,
+    EntityUpdateCommand,
     EntityUndeleteCommand,
 )
 from doc_store_server.commands.ingestion_commands import (
@@ -36,6 +40,7 @@ from doc_store_server.commands.processing_status_command import ProcessingStatus
 from doc_store_server.commands.retrieval_commands import (
     ChapterGetCommand,
     DocumentGetCommand,
+    ParagraphGetByNumberCommand,
     ParagraphGetCommand,
 )
 from doc_store_server.db.health import check_database_health, database_url_from_config
@@ -45,6 +50,8 @@ from doc_store_server.ingestion.runtime_boundary import (
 )
 from doc_store_server.query.retrieval_boundary import installed_retrieval_boundary
 from doc_store_server.query.runtime_boundary import installed_search_orchestrator
+from doc_store_server.runtime.document_export import installed_document_export_service
+from doc_store_server.runtime.document_service import installed_document_service
 from doc_store_server.runtime.entity_lifecycle import installed_entity_lifecycle_service
 
 
@@ -138,7 +145,7 @@ def create_server_application(config: ServerConfig | None = None) -> Any:
     return create_app(
         title="doc-store",
         description="doc-store adapter server",
-        version="0.1.12",
+        version="0.1.22",
         app_config=dict(config or {}),
     )
 
@@ -151,16 +158,23 @@ def configure_runtime_boundaries(config: ServerConfig) -> None:
     search = installed_search_orchestrator(config)
     retrieval = installed_retrieval_boundary(config)
     lifecycle = installed_entity_lifecycle_service(config)
+    exporter = installed_document_export_service(dict(config))
+    document_service = installed_document_service(dict(config))
     DocumentCreateCommand.ingestion_boundary = ingestion
     DocumentUpdateCommand.ingestion_boundary = ingestion
+    DocumentExportCommand.export_boundary = exporter
+    DocumentDeleteCommand.document_service = document_service
     DocumentGetCommand.retrieval_boundary = retrieval
     ChapterGetCommand.retrieval_boundary = retrieval
     ParagraphGetCommand.retrieval_boundary = retrieval
+    ParagraphGetByNumberCommand.retrieval_boundary = retrieval
     ProcessingStatusCommand.runtime_status_boundary = status
     ChunkQuerySearchCommand.search_orchestrator = search
     for command in (
+        EntityCreateCommand,
         EntityListCommand,
         EntityGetCommand,
+        EntityUpdateCommand,
         EntitySoftDeleteCommand,
         EntityUndeleteCommand,
         EntityHardDeleteCommand,

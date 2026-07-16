@@ -14,6 +14,7 @@ from doc_store_server.runtime.document_rebind import DocumentRebindError
 
 
 DOCUMENT_ID = "550e8400-e29b-41d4-a716-446655440000"
+PROJECT_ID = "7254b86c-7456-47b3-8b7d-1590eef0f4a5"
 
 
 class RecordingRebindBoundary:
@@ -41,6 +42,8 @@ def test_document_rebind_delegates_project_and_properties() -> None:
             context={"document_rebind_boundary": boundary},
             document_id=DOCUMENT_ID,
             project=" doc-store ",
+            project_id=PROJECT_ID,
+            project_description="runtime docs",
             document_properties={"owner": "docs"},
             chunk_properties={"scope": "runtime"},
         )
@@ -52,6 +55,8 @@ def test_document_rebind_delegates_project_and_properties() -> None:
         {
             "document_id": DOCUMENT_ID,
             "project": "doc-store",
+            "project_id": PROJECT_ID,
+            "project_description": "runtime docs",
             "document_properties": {"owner": "docs"},
             "chunk_properties": {"scope": "runtime"},
         }
@@ -63,10 +68,19 @@ def test_document_rebind_delegates_project_and_properties() -> None:
     [
         {},
         {"document_id": "not-a-uuid", "project": "doc-store"},
+        {"document_id": DOCUMENT_ID, "project": "doc-store"},
+        {"document_id": DOCUMENT_ID, "project": "doc-store", "project_id": PROJECT_ID},
+        {"document_id": DOCUMENT_ID, "project_id": PROJECT_ID},
         {"document_id": DOCUMENT_ID},
         {"document_id": DOCUMENT_ID, "project": " "},
         {"document_id": DOCUMENT_ID, "chunk_properties": "not-an-object"},
-        {"document_id": DOCUMENT_ID, "project": "doc-store", "unexpected": True},
+        {
+            "document_id": DOCUMENT_ID,
+            "project": "doc-store",
+            "project_id": PROJECT_ID,
+            "project_description": "runtime docs",
+            "unexpected": True,
+        },
     ],
 )
 def test_document_rebind_rejects_invalid_params(params: dict[str, Any]) -> None:
@@ -88,6 +102,8 @@ def test_document_rebind_maps_runtime_errors_to_structured_failure() -> None:
             context={"document_rebind_boundary": boundary},
             document_id=DOCUMENT_ID,
             project="doc-store",
+            project_id=PROJECT_ID,
+            project_description="runtime docs",
         )
     )
 
@@ -106,6 +122,8 @@ def test_document_rebind_schema_and_metadata_are_complete() -> None:
     assert set(schema["properties"]) == {
         "document_id",
         "project",
+        "project_id",
+        "project_description",
         "document_properties",
         "chunk_properties",
     }

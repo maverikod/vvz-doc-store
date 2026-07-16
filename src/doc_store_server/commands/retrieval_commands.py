@@ -27,6 +27,11 @@ class RetrievalBoundary(Protocol):
     async def get_paragraph(self, paragraph_id: UUID, source_version: int | None = None) -> Any:
         """Return one paragraph result."""
 
+    async def get_paragraph_by_number(
+        self, document_id: UUID, paragraph_number: int, source_version: int | None = None
+    ) -> Any:
+        """Return one paragraph result by document and 1-based paragraph number."""
+
 
 class InvalidVersionError(ValueError):
     """Raised by the retrieval boundary when a requested version is invalid."""
@@ -271,10 +276,112 @@ class ParagraphGetCommand(_RetrievalCommand):
         return await super().execute(**kwargs)
 
 
+class ParagraphGetByNumberCommand(_RetrievalCommand):
+    name = "paragraph_get_by_number"
+    identifier_field = "document_id"
+    entity_name = "paragraph"
+    boundary_method = "get_paragraph_by_number"
+    descr = "Retrieve paragraph text by document UUID and 1-based paragraph number."
+    detailed_description = (
+        "Validates a document UUID, 1-based paragraph_number and optional positive "
+        "source version, then resolves the paragraph by canonical source order."
+    )
+    schema_properties = {
+        "document_id": {"type": "string", "description": "Document UUID4 identifier."},
+        "paragraph_number": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "1-based paragraph number in canonical document source order.",
+        },
+        "source_version": {"type": "integer", "description": "Optional positive document source version."},
+    }
+    required_fields = ("document_id", "paragraph_number")
+    parameter_docs = {
+        "document_id": {"type": "string", "description": "Document UUID4 identifier.", "required": True},
+        "paragraph_number": {
+            "type": "integer",
+            "description": "1-based paragraph number in canonical document source order.",
+            "required": True,
+        },
+        "source_version": DocumentGetCommand.parameter_docs["source_version"],
+    }
+    return_contract = {
+        "description": "Stable paragraph lookup envelope.",
+        "data": {
+            "document_id": "Document UUID.",
+            "paragraph_number": "1-based paragraph number.",
+            "text": "Paragraph text.",
+            "value": "Full paragraph data.",
+        },
+    }
+    usage_examples = [
+        {
+            "document_id": "550e8400-e29b-41d4-a716-446655440000",
+            "paragraph_number": 2,
+        }
+    ]
+    best_practices = [
+        "Use paragraph_number as a 1-based human-facing index in document source order.",
+        "Use paragraph_get when you already have the paragraph UUID.",
+    ]
+
+    def validate_params(self, params: dict[str, Any]) -> dict[str, Any]:
+        validated = super().validate_params(params)
+        paragraph_number = validated.get("paragraph_number")
+        if (
+            isinstance(paragraph_number, bool)
+            or not isinstance(paragraph_number, int)
+            or paragraph_number < 1
+        ):
+            raise ValidationError(
+                f"{self.name}: paragraph_number must be a positive integer",
+                data={"field": "paragraph_number", "value": paragraph_number},
+            )
+        return validated
+
+    async def execute(self, **kwargs: Any) -> CommandResult:
+        context = kwargs.pop("context", {})
+        boundary = context.get("retrieval_boundary") if isinstance(context, Mapping) else None
+        if boundary is None:
+            boundary = self.retrieval_boundary
+        if boundary is None or not hasattr(boundary, self.boundary_method):
+            return CommandResult(success=False, error="INTERNAL_ERROR: retrieval boundary unavailable")
+
+        document_id = kwargs["document_id"]
+        paragraph_number = kwargs["paragraph_number"]
+        source_version = kwargs.get("source_version")
+        try:
+            result = boundary.get_paragraph_by_number(document_id, paragraph_number, source_version)
+            if inspect.isawaitable(result):
+                result = await result
+        except InvalidVersionError as exc:
+            return CommandResult(success=False, error=f"INVALID_VERSION: {exc}")
+        except LookupError as exc:
+            return CommandResult(success=False, error=f"NOT_FOUND: {exc}")
+        except Exception as exc:
+            return CommandResult(success=False, error=f"INTERNAL_ERROR: {exc}")
+
+        value = _typed_result(result)
+        text_value = value.get("text") if isinstance(value, Mapping) else None
+        return CommandResult(
+            success=True,
+            data={
+                "entity": self.entity_name,
+                "identifier": str(value.get("id")) if isinstance(value, Mapping) and value.get("id") else None,
+                "document_id": str(document_id),
+                "paragraph_number": paragraph_number,
+                "source_version": source_version,
+                "text": text_value,
+                "value": value,
+            },
+        )
+
+
 __all__ = [
     "ChapterGetCommand",
     "DocumentGetCommand",
     "InvalidVersionError",
+    "ParagraphGetByNumberCommand",
     "ParagraphGetCommand",
     "RetrievalBoundary",
 ]

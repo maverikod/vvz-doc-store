@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
+import json
 import os
 from typing import Any, Iterator
 from uuid import UUID
@@ -16,8 +17,22 @@ from doc_store_server.db.health import database_url_from_config
 
 
 ENTITY_TABLES: dict[str, str] = {
+    "block_type": "block_types",
+    "block_types": "block_types",
+    "category": "categories",
+    "categories": "categories",
+    "chunk_role": "chunk_roles",
+    "chunk_roles": "chunk_roles",
+    "chunk_status": "chunk_statuses",
+    "chunk_statuses": "chunk_statuses",
+    "chunk_type": "chunk_types",
+    "chunk_types": "chunk_types",
     "document": "documents",
     "documents": "documents",
+    "file": "files",
+    "files": "files",
+    "language": "languages",
+    "languages": "languages",
     "chapter": "chapters",
     "chapters": "chapters",
     "paragraph": "paragraphs",
@@ -30,8 +45,36 @@ ENTITY_TABLES: dict[str, str] = {
     "projects": "projects",
 }
 
+DICTIONARY_TABLES = frozenset(
+    {
+        "chunk_types",
+        "chunk_roles",
+        "chunk_statuses",
+        "block_types",
+        "languages",
+        "categories",
+    }
+)
+
+DICTIONARY_REFERENCE_COLUMNS: dict[str, str] = {
+    "chunk_types": "chunk_type_id",
+    "chunk_roles": "role_id",
+    "chunk_statuses": "status_id",
+    "block_types": "block_type_id",
+    "languages": "language_id",
+    "categories": "category_id",
+}
+
 DEFAULT_FIELDS: dict[str, tuple[str, ...]] = {
-    "documents": ("id", "title", "source_name", "processing_status", "is_deleted", "updated_at", "block_meta"),
+    "chunk_types": ("id", "descr", "is_deleted", "created_at", "updated_at"),
+    "chunk_roles": ("id", "descr", "is_deleted", "created_at", "updated_at"),
+    "chunk_statuses": ("id", "descr", "is_deleted", "created_at", "updated_at"),
+    "block_types": ("id", "descr", "is_deleted", "created_at", "updated_at"),
+    "languages": ("id", "descr", "is_deleted", "created_at", "updated_at"),
+    "categories": ("id", "descr", "is_deleted", "created_at", "updated_at"),
+    "projects": ("id", "owner_id", "name", "description", "is_deleted", "created_at", "updated_at"),
+    "files": ("id", "owner_id", "path", "name", "body_sha256", "content_sha256", "is_deleted", "updated_at", "block_meta"),
+    "documents": ("id", "owner_id", "title", "source_name", "processing_status", "is_deleted", "updated_at", "block_meta"),
     "chapters": ("id", "document_id", "order_index", "heading", "is_deleted", "block_meta"),
     "paragraphs": ("id", "document_id", "chapter_id", "order_index", "text", "is_deleted", "block_meta"),
     "semantic_chunks": ("id", "document_id", "paragraph_id", "chapter_id", "order_index", "text", "is_deleted", "block_meta"),
@@ -40,6 +83,14 @@ DEFAULT_FIELDS: dict[str, tuple[str, ...]] = {
 LIST_TABLES = frozenset(DEFAULT_FIELDS)
 
 ORDER_BY: dict[str, str] = {
+    "chunk_types": "descr ASC, id ASC",
+    "chunk_roles": "descr ASC, id ASC",
+    "chunk_statuses": "descr ASC, id ASC",
+    "block_types": "descr ASC, id ASC",
+    "languages": "descr ASC, id ASC",
+    "categories": "descr ASC, id ASC",
+    "projects": "name ASC, id ASC",
+    "files": "updated_at DESC NULLS LAST, id ASC",
     "documents": "updated_at DESC NULLS LAST, id ASC",
     "chapters": "order_index ASC NULLS LAST, id ASC",
     "paragraphs": "order_index ASC NULLS LAST, id ASC",
@@ -77,8 +128,6 @@ class EntityLifecycleService:
         show_deleted: bool = False,
     ) -> dict[str, Any]:
         table = _entity_table(entity_type)
-        if table == "projects":
-            return self._list_projects(limit=limit, offset=offset, show_deleted=show_deleted)
         if table not in LIST_TABLES:
             raise ValueError(f"unsupported list entity_type: {entity_type}")
         selected = _validated_fields(table, fields)
@@ -113,8 +162,6 @@ class EntityLifecycleService:
         show_deleted: bool = False,
     ) -> dict[str, Any]:
         table = _entity_table(entity_type)
-        if table == "projects":
-            raise LookupError(entity_id)
         selected = _validated_fields(table, fields)
         where = ["id = CAST(:entity_id AS uuid)"]
         if not show_deleted:
@@ -127,6 +174,54 @@ class EntityLifecycleService:
         if row is None:
             raise LookupError(entity_id)
         return {"entity_type": table, "id": entity_id, "value": _json_row(row)}
+
+    def create_entity(self, *, entity_type: str, values: Mapping[str, Any]) -> dict[str, Any]:
+        table = _entity_table(entity_type)
+        if table not in _crud_tables():
+            raise ValueError(f"create is unsupported for {table}")
+        payload = _validated_values(table, values, require_id=True)
+        with self._transaction() as connection:
+            _validate_owner(connection, payload.get("owner_id"))
+            columns = tuple(payload)
+            value_exprs = tuple(_insert_value_expr(column) for column in columns)
+            row = connection.execute(
+                text(
+                    f"INSERT INTO {table} ({', '.join(columns)}) "
+                    f"VALUES ({', '.join(value_exprs)}) "
+                    f"RETURNING {', '.join(DEFAULT_FIELDS[table])}"
+                ),
+                payload,
+            ).mappings().one()
+        return {"entity_type": table, "outcome": "created", "value": _json_row(row)}
+
+    def update_entity(
+        self,
+        *,
+        entity_type: str,
+        entity_id: str,
+        values: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        table = _entity_table(entity_type)
+        if table not in _crud_tables():
+            raise ValueError(f"update is unsupported for {table}")
+        payload = _validated_values(table, values, require_id=False)
+        if not payload:
+            raise ValueError("update values must not be empty")
+        entity_uuid = UUID(entity_id)
+        with self._transaction() as connection:
+            _validate_owner(connection, payload.get("owner_id"))
+            assignments = ", ".join(_assignment_expr(column) for column in payload)
+            row = connection.execute(
+                text(
+                    f"UPDATE {table} SET {assignments}, updated_at = now() "
+                    "WHERE id = :entity_id "
+                    f"RETURNING {', '.join(DEFAULT_FIELDS[table])}"
+                ),
+                {**payload, "entity_id": entity_uuid},
+            ).mappings().one_or_none()
+        if row is None:
+            raise LookupError(entity_id)
+        return {"entity_type": table, "outcome": "updated", "value": _json_row(row)}
 
     def soft_delete(self, *, entity_type: str, ids: Sequence[str]) -> dict[str, Any]:
         return self._mark_deleted(entity_type=entity_type, ids=ids, deleted=True)
@@ -167,7 +262,23 @@ class EntityLifecycleService:
 
         result: list[dict[str, Any]] = []
         refs_by_table = _group_refs(refs)
+        for project_id in refs_by_table.get("projects", ()):
+            result.extend(_external_owner_rows(connection, project_id, refs))
+            project = connection.execute(
+                text("SELECT name FROM projects WHERE id = :project_id"),
+                {"project_id": project_id},
+            ).mappings().one_or_none()
+            if project is not None:
+                result.extend(
+                    _external_project_rows(
+                        connection,
+                        project_id,
+                        str(project["name"]),
+                        refs,
+                    )
+                )
         for document_id in refs_by_table.get("documents", ()):
+            result.extend(_external_owner_rows(connection, document_id, refs))
             result.extend(
                 _external_fk_rows(
                     connection,
@@ -179,6 +290,8 @@ class EntityLifecycleService:
             )
             result.extend(_external_fk_rows(connection, "paragraphs", "document_id", document_id, refs))
             result.extend(_external_fk_rows(connection, "semantic_chunks", "document_id", document_id, refs))
+        for file_id in refs_by_table.get("files", ()):
+            result.extend(_external_owner_rows(connection, file_id, refs))
         for chapter_id in refs_by_table.get("chapters", ()):
             result.extend(_external_fk_rows(connection, "paragraphs", "chapter_id", chapter_id, refs))
             result.extend(_external_fk_rows(connection, "semantic_chunks", "chapter_id", chapter_id, refs))
@@ -205,6 +318,18 @@ class EntityLifecycleService:
                             "to_id": str(chunk_id),
                         }
                     )
+        for table, column in DICTIONARY_REFERENCE_COLUMNS.items():
+            for dictionary_id in refs_by_table.get(table, ()):
+                result.extend(
+                    _external_fk_rows(
+                        connection,
+                        "semantic_chunks",
+                        column,
+                        dictionary_id,
+                        refs,
+                        to_table=table,
+                    )
+                )
         return result
 
     def _mark_deleted(self, *, entity_type: str, ids: Sequence[str], deleted: bool) -> dict[str, Any]:
@@ -223,7 +348,13 @@ class EntityLifecycleService:
         while changed:
             changed = False
             grouped = _group_refs(refs)
+            for project_id in tuple(grouped.get("projects", ())):
+                changed |= _add_owner_children(connection, refs, project_id)
+                changed |= self._add_project_documents(connection, refs, project_id)
+            for file_id in tuple(grouped.get("files", ())):
+                changed |= _add_owner_children(connection, refs, file_id)
             for document_id in tuple(grouped.get("documents", ())):
+                changed |= _add_owner_children(connection, refs, document_id)
                 changed |= _add_children(connection, refs, "chapters", "document_id", document_id)
                 changed |= _add_children(connection, refs, "paragraphs", "document_id", document_id)
                 changed |= _add_children(connection, refs, "semantic_chunks", "document_id", document_id)
@@ -240,40 +371,40 @@ class EntityLifecycleService:
         with self._connect() as connection:
             rows = connection.execute(
                 text(
-                    "SELECT id FROM documents "
-                    "WHERE block_meta ->> 'project' = ANY(CAST(:projects AS text[]))"
+                    "SELECT id FROM projects "
+                    "WHERE id = ANY(CAST(:project_ids AS uuid[]))"
                 ),
-                {"projects": [str(item) for item in ids]},
+                {"project_ids": [str(UUID(item)) for item in ids]},
             ).scalars().all()
-        return [EntityRef("documents", row) for row in rows]
+        return [EntityRef("projects", row) for row in rows]
 
-    def _list_projects(self, *, limit: int, offset: int, show_deleted: bool) -> dict[str, Any]:
-        where = ["block_meta ? 'project'"]
-        if not show_deleted:
-            where.append("is_deleted IS FALSE")
-        sql = (
-            "SELECT block_meta ->> 'project' AS project, count(*)::int AS document_count "
-            f"FROM documents WHERE {' AND '.join(where)} "
-            "GROUP BY block_meta ->> 'project' ORDER BY project ASC LIMIT :limit OFFSET :offset"
-        )
-        count_sql = (
-            "SELECT count(*) FROM ("
-            "SELECT block_meta ->> 'project' AS project FROM documents "
-            f"WHERE {' AND '.join(where)} GROUP BY block_meta ->> 'project'"
-            ") AS projects"
-        )
-        params = {"limit": _limit(limit), "offset": _offset(offset)}
-        with self._connect() as connection:
-            rows = connection.execute(text(sql), params).mappings().all()
-            total = int(connection.execute(text(count_sql), params).scalar_one())
-        return {
-            "entity_type": "projects",
-            "items": [_json_row(row) for row in rows],
-            "limit": params["limit"],
-            "offset": params["offset"],
-            "total": total,
-            "show_deleted": show_deleted,
-        }
+    def _add_project_documents(
+        self,
+        connection: Connection,
+        refs: set[tuple[str, UUID]],
+        project_id: UUID,
+    ) -> bool:
+        row = connection.execute(
+            text("SELECT name FROM projects WHERE id = :project_id"),
+            {"project_id": project_id},
+        ).mappings().one_or_none()
+        if row is None:
+            return False
+        rows = connection.execute(
+            text(
+                "SELECT id FROM documents "
+                "WHERE block_meta ->> 'project_id' = :project_id "
+                "OR block_meta ->> 'project' = :project_name"
+            ),
+            {"project_id": str(project_id), "project_name": str(row["name"])},
+        ).scalars().all()
+        changed = False
+        for document_id in rows:
+            key = ("documents", document_id)
+            if key not in refs:
+                refs.add(key)
+                changed = True
+        return changed
 
     def _set_deleted(
         self,
@@ -309,7 +440,20 @@ class EntityLifecycleService:
             ).rowcount
             if link_count:
                 deleted["semantic_chunk_links"] = int(link_count)
-        for table in ("semantic_chunks", "paragraphs", "chapters", "documents"):
+        for table in (
+            "semantic_chunks",
+            "paragraphs",
+            "chapters",
+            "documents",
+            "files",
+            "projects",
+            "categories",
+            "languages",
+            "block_types",
+            "chunk_statuses",
+            "chunk_roles",
+            "chunk_types",
+        ):
             ids = grouped.get(table)
             if not ids:
                 continue
@@ -375,6 +519,13 @@ def _allowed_fields(table: str) -> set[str]:
         "created_at",
         "updated_at",
         "deleted_at",
+        "owner_id",
+        "path",
+        "media_type",
+        "byte_length",
+        "content_sha256",
+        "body_sha256",
+        "checksum_algorithm",
         "source_version",
         "source_path",
         "source_name",
@@ -388,7 +539,127 @@ def _allowed_fields(table: str) -> set[str]:
         "source_start",
         "source_end",
         "level",
+        "name",
+        "description",
+        "descr",
+        "chunk_type_id",
+        "role_id",
+        "status_id",
+        "block_type_id",
+        "language_id",
+        "category_id",
     }
+
+
+def _crud_tables() -> set[str]:
+    return {"projects", "files", "documents"} | set(DICTIONARY_TABLES)
+
+
+def _writable_fields(table: str) -> set[str]:
+    if table in DICTIONARY_TABLES:
+        return {"id", "descr", "is_deleted", "deleted_at"}
+    fields: dict[str, set[str]] = {
+        "projects": {"id", "owner_id", "name", "description", "is_deleted", "deleted_at"},
+        "files": {
+            "id",
+            "owner_id",
+            "path",
+            "name",
+            "media_type",
+            "byte_length",
+            "char_count",
+            "checksum_algorithm",
+            "content_sha256",
+            "body_sha256",
+            "is_deleted",
+            "deleted_at",
+            "block_meta",
+        },
+        "documents": {
+            "id",
+            "owner_id",
+            "source_upload_id",
+            "source_version",
+            "source_path",
+            "source_name",
+            "source_hash",
+            "title",
+            "processing_status",
+            "processing_attempt",
+            "processing_trace_id",
+            "processing_started_at",
+            "processing_completed_at",
+            "is_deleted",
+            "deleted_at",
+            "block_meta",
+        },
+    }
+    return fields[table]
+
+
+def _required_create_fields(table: str) -> set[str]:
+    if table in DICTIONARY_TABLES:
+        return {"id", "descr"}
+    return {
+        "projects": {"id", "name", "description"},
+        "files": {"id", "path", "name", "body_sha256"},
+        "documents": {
+            "id",
+            "source_upload_id",
+            "source_version",
+            "title",
+            "processing_status",
+            "processing_attempt",
+            "block_meta",
+        },
+    }[table]
+
+
+def _validated_values(table: str, values: Mapping[str, Any], *, require_id: bool) -> dict[str, Any]:
+    allowed = _writable_fields(table)
+    unknown = sorted(set(values) - allowed)
+    if unknown:
+        raise ValueError(f"unsupported fields for {table}: {', '.join(unknown)}")
+    payload = dict(values)
+    if require_id:
+        missing = sorted(_required_create_fields(table) - set(payload))
+        if missing:
+            raise ValueError(f"missing required fields for {table}: {', '.join(missing)}")
+    for key in (
+        "id",
+        "owner_id",
+        "source_upload_id",
+        "processing_trace_id",
+        "chunk_type_id",
+        "role_id",
+        "status_id",
+        "block_type_id",
+        "language_id",
+        "category_id",
+    ):
+        if key in payload and payload[key] is not None:
+            payload[key] = UUID(str(payload[key]))
+    if "descr" in payload and len(str(payload["descr"])) > 100:
+        raise ValueError("descr must be at most 100 characters")
+    if table == "files" and payload.get("checksum_algorithm") not in {None, "sha256"}:
+        raise ValueError("files.checksum_algorithm must be sha256")
+    if "block_meta" in payload and not isinstance(payload["block_meta"], Mapping):
+        raise ValueError("block_meta must be an object")
+    if "block_meta" in payload:
+        payload["block_meta"] = json.dumps(payload["block_meta"], ensure_ascii=False)
+    return payload
+
+
+def _insert_value_expr(column: str) -> str:
+    if column == "block_meta":
+        return "CAST(:block_meta AS jsonb)"
+    return f":{column}"
+
+
+def _assignment_expr(column: str) -> str:
+    if column == "block_meta":
+        return "block_meta = CAST(:block_meta AS jsonb)"
+    return f"{column} = :{column}"
 
 
 def _filters_sql(table: str, filters: Mapping[str, Any]) -> tuple[list[str], dict[str, Any]]:
@@ -455,26 +726,113 @@ def _add_children(
     return changed
 
 
+def _add_owner_children(
+    connection: Connection,
+    refs: set[tuple[str, UUID]],
+    owner_id: UUID,
+) -> bool:
+    changed = False
+    for table in ("projects", "documents", "files"):
+        rows = connection.execute(
+            text(f"SELECT id FROM {table} WHERE owner_id = :owner_id"),
+            {"owner_id": owner_id},
+        ).scalars().all()
+        for row in rows:
+            key = (table, row)
+            if key not in refs:
+                refs.add(key)
+                changed = True
+    return changed
+
+
+def _validate_owner(connection: Connection, owner_id: Any) -> None:
+    if owner_id is None:
+        return
+    row = connection.execute(
+        text("SELECT 1 FROM entity_uuid_registry WHERE entity_id = :owner_id"),
+        {"owner_id": owner_id},
+    ).scalar_one_or_none()
+    if row is None:
+        raise ValueError(f"owner_id does not reference a registered entity: {owner_id}")
+
+
 def _external_fk_rows(
     connection: Connection,
     table: str,
     column: str,
     target_id: UUID,
     deleting: set[tuple[str, UUID]],
+    *,
+    to_table: str | None = None,
 ) -> list[dict[str, Any]]:
     rows = connection.execute(
         text(f"SELECT id FROM {table} WHERE {column} = :target_id"),
         {"target_id": target_id},
     ).scalars().all()
-    return [
-        {
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        if (table, row) in deleting:
+            continue
+        item = {
             "from_table": table,
             "from_id": str(row),
             "from_column": column,
             "to_id": str(target_id),
         }
+        if to_table is not None:
+            item["to_table"] = to_table
+        result.append(item)
+    return result
+
+
+def _external_owner_rows(
+    connection: Connection,
+    target_id: UUID,
+    deleting: set[tuple[str, UUID]],
+) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for table in ("projects", "documents", "files"):
+        rows = connection.execute(
+            text(f"SELECT id FROM {table} WHERE owner_id = :target_id"),
+            {"target_id": target_id},
+        ).scalars().all()
+        for row in rows:
+            if (table, row) not in deleting:
+                result.append(
+                    {
+                        "from_table": table,
+                        "from_id": str(row),
+                        "from_column": "owner_id",
+                        "to_id": str(target_id),
+                    }
+                )
+    return result
+
+
+def _external_project_rows(
+    connection: Connection,
+    project_id: UUID,
+    project_name: str,
+    deleting: set[tuple[str, UUID]],
+) -> list[dict[str, Any]]:
+    rows = connection.execute(
+        text(
+            "SELECT id FROM documents "
+            "WHERE block_meta ->> 'project_id' = :project_id "
+            "OR block_meta ->> 'project' = :project_name"
+        ),
+        {"project_id": str(project_id), "project_name": project_name},
+    ).scalars().all()
+    return [
+        {
+            "from_table": "documents",
+            "from_id": str(row),
+            "from_column": "block_meta.project_id",
+            "to_table": "projects",
+            "to_id": str(project_id),
+        }
         for row in rows
-        if (table, row) not in deleting
+        if ("documents", row) not in deleting
     ]
 
 

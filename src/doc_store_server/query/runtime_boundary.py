@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from doc_store_server.db.health import database_url_from_config
 
+from .chunk_payload import CLASSIFIER_JOIN_SQL, CLASSIFIER_SELECT_SQL
 from .compiler import ExecutionMode, ExecutionPlan, compile_query
 from .full_text import FullTextExecutor
 from .semantic import _result_from_row as _semantic_result_from_row
@@ -21,7 +22,7 @@ from .semantic import _statement as _semantic_statement
 
 RUNTIME_EMBEDDING_PROVIDER = "doc-store-runtime"
 RUNTIME_EMBEDDING_MODEL = "doc-store-runtime-2d"
-RUNTIME_EMBEDDING_VERSION = "0.1.12"
+RUNTIME_EMBEDDING_VERSION = "0.1.22"
 RUNTIME_EMBEDDING_DIMENSION = 2
 
 
@@ -99,9 +100,11 @@ class RuntimeSearchBoundary:
             SELECT sc.id, sc.document_id, sc.paragraph_id, sc.chapter_id,
                    sc.order_index, sc.text, sc.source_start, sc.source_end,
                    sc.char_count, sc.chunk_type, sc.block_meta,
+                   {CLASSIFIER_SELECT_SQL},
                    1.0 AS semantic_score
             FROM semantic_chunks AS sc
             JOIN documents AS d ON d.id = sc.document_id
+            {CLASSIFIER_JOIN_SQL}
             WHERE {' AND '.join(where)}
             ORDER BY d.created_at ASC, sc.order_index ASC, sc.id ASC
             {"LIMIT :limit" if plan.limit is not None else ""}

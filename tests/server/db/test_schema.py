@@ -86,7 +86,18 @@ def test_root_entities_have_uuid_primary_keys_and_owned_foreign_keys() -> None:
             ("document_id", "documents", "id"),
             ("chapter_id", "chapters", "id"),
             ("paragraph_id", "paragraphs", "id"),
+            ("chunk_type_id", "chunk_types", "id"),
+            ("role_id", "chunk_roles", "id"),
+            ("status_id", "chunk_statuses", "id"),
+            ("block_type_id", "block_types", "id"),
+            ("language_id", "languages", "id"),
+            ("category_id", "categories", "id"),
         },
+    }
+    owned_foreign_keys = {
+        ("document_id", "documents", "id"),
+        ("chapter_id", "chapters", "id"),
+        ("paragraph_id", "paragraphs", "id"),
     }
     for table_name in ROOT_TABLES:
         table = metadata.tables[table_name]
@@ -98,7 +109,18 @@ def test_root_entities_have_uuid_primary_keys_and_owned_foreign_keys() -> None:
             for foreign_key in constraint.elements
         }
         assert actual == expected_foreign_keys[table_name]
-        assert all(foreign_key.ondelete == "CASCADE" for foreign_key in table.foreign_keys)
+        assert all(
+            foreign_key.ondelete == "CASCADE"
+            for foreign_key in table.foreign_keys
+            if (foreign_key.parent.name, foreign_key.column.table.name, foreign_key.column.name)
+            in owned_foreign_keys
+        )
+        assert all(
+            foreign_key.ondelete is None
+            for foreign_key in table.foreign_keys
+            if (foreign_key.parent.name, foreign_key.column.table.name, foreign_key.column.name)
+            not in owned_foreign_keys
+        )
 
 
 def test_ordering_ranges_traceability_and_soft_delete_contract() -> None:

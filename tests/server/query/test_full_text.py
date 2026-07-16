@@ -64,8 +64,20 @@ def _row(
             "summary": "a short summary",
             "title": "a title",
             "source": "fixture",
+            "type": "DocBlock",
+            "role": "system",
+            "status": "indexed",
+            "block_type": "paragraph",
+            "language": "UNKNOWN",
+            "category": "uncategorized",
         },
         "chunk_type": "DocBlock",
+        "chunk_type_descr": "DocBlock",
+        "role_descr": "system",
+        "status_descr": "indexed",
+        "block_type_descr": "paragraph",
+        "language_descr": "UNKNOWN",
+        "category_descr": "uncategorized",
         "relevance": relevance,
         "matched_fields": matched_fields or ["body", "text", "summary", "title"],
         "highlights": highlights or {"body": ["body <b>needle</b> text"]},
@@ -139,6 +151,12 @@ def test_full_text_maps_rows_through_adapter_result_and_preserves_metadata() -> 
     assert str(result.chunk.uuid) == row["id"]
     assert result.chunk.body == row["text"]
     assert result.chunk.block_meta == row["block_meta"]
+    assert result.chunk.type.value == "DocBlock"
+    assert result.chunk.role.value == "system"
+    assert result.chunk.status.value == "indexed"
+    assert result.chunk.block_type.value == "paragraph"
+    assert result.chunk.language.value == "UNKNOWN"
+    assert result.chunk.category == "uncategorized"
     assert result.bm25_score == 1.0
     assert result.rank == 1
     assert result.matched_fields == ["title", "summary"]

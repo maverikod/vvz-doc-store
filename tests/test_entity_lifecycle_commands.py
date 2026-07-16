@@ -6,11 +6,13 @@ import asyncio
 from typing import Any
 
 from doc_store_server.commands.entity_lifecycle_commands import (
+    EntityCreateCommand,
     EntityGetCommand,
     EntityHardDeleteCommand,
     EntityListCommand,
     EntityReferencesCommand,
     EntitySoftDeleteCommand,
+    EntityUpdateCommand,
     EntityUndeleteCommand,
 )
 from doc_store_server.runtime.entity_lifecycle import DeletionSafetyError, ORDER_BY
@@ -23,6 +25,14 @@ class Boundary:
     def list_entities(self, **kwargs: Any) -> dict[str, Any]:
         self.calls.append(("list", kwargs))
         return {"entity_type": kwargs["entity_type"], "items": [], "limit": kwargs["limit"], "offset": kwargs["offset"], "total": 0, "show_deleted": kwargs["show_deleted"]}
+
+    def create_entity(self, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(("create", kwargs))
+        return {"entity_type": kwargs["entity_type"], "outcome": "created", "value": dict(kwargs["values"])}
+
+    def update_entity(self, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(("update", kwargs))
+        return {"entity_type": kwargs["entity_type"], "outcome": "updated", "value": dict(kwargs["values"])}
 
     def get_entity(self, **kwargs: Any) -> dict[str, Any]:
         self.calls.append(("get", kwargs))
@@ -77,6 +87,29 @@ def test_list_get_and_references_delegate_to_lifecycle_boundary() -> None:
     assert [name for name, _ in boundary.calls] == ["list", "get", "references"]
 
 
+def test_dictionary_create_and_update_use_generic_entity_boundary() -> None:
+    boundary = Boundary()
+    create_result = asyncio.run(
+        EntityCreateCommand().execute(
+            entity_type="categories",
+            values={"id": "550e8400-e29b-41d4-a716-446655440001", "descr": "theory"},
+            context={"entity_lifecycle_boundary": boundary},
+        )
+    )
+    update_result = asyncio.run(
+        EntityUpdateCommand().execute(
+            entity_type="categories",
+            entity_id="550e8400-e29b-41d4-a716-446655440001",
+            values={"descr": "theory-updated"},
+            context={"entity_lifecycle_boundary": boundary},
+        )
+    )
+
+    assert create_result.success is True
+    assert update_result.success is True
+    assert [name for name, _ in boundary.calls] == ["create", "update"]
+
+
 def test_batch_soft_undelete_and_hard_delete_delegate_to_lifecycle_boundary() -> None:
     boundary = Boundary()
     params = {
@@ -124,3 +157,8 @@ def test_document_listing_does_not_require_unit_order_column() -> None:
     assert "order_index" not in ORDER_BY["documents"]
     assert "order_index" in ORDER_BY["paragraphs"]
     assert "order_index" in ORDER_BY["semantic_chunks"]
+
+
+def test_dictionary_ordering_is_generic_descr_order() -> None:
+    assert ORDER_BY["categories"] == "descr ASC, id ASC"
+    assert ORDER_BY["languages"] == "descr ASC, id ASC"

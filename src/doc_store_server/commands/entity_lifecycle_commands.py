@@ -10,12 +10,13 @@ from mcp_proxy_adapter.commands.result import ErrorResult
 
 from doc_store_server.runtime.entity_lifecycle import (
     DeletionSafetyError,
-    EntityLifecycleService,
     installed_entity_lifecycle_service,
 )
 
 
 class EntityLifecycleBoundary(Protocol):
+    def create_entity(self, **kwargs: Any) -> Mapping[str, Any]: ...
+    def update_entity(self, **kwargs: Any) -> Mapping[str, Any]: ...
     def list_entities(self, **kwargs: Any) -> Mapping[str, Any]: ...
     def get_entity(self, **kwargs: Any) -> Mapping[str, Any]: ...
     def soft_delete(self, **kwargs: Any) -> Mapping[str, Any]: ...
@@ -24,7 +25,24 @@ class EntityLifecycleBoundary(Protocol):
     def references_for(self, **kwargs: Any) -> Mapping[str, Any]: ...
 
 
-ENTITY_TYPES = ("documents", "chapters", "paragraphs", "semantic_chunks", "projects")
+DICTIONARY_ENTITY_TYPES = (
+    "chunk_types",
+    "chunk_roles",
+    "chunk_statuses",
+    "block_types",
+    "languages",
+    "categories",
+)
+ENTITY_TYPES = (
+    *DICTIONARY_ENTITY_TYPES,
+    "projects",
+    "files",
+    "documents",
+    "chapters",
+    "paragraphs",
+    "semantic_chunks",
+)
+ROOT_CRUD_ENTITY_TYPES = (*DICTIONARY_ENTITY_TYPES, "projects", "files", "documents")
 
 
 class _EntityCommand(Command):
@@ -132,6 +150,85 @@ class EntityListCommand(_EntityCommand):
             return self._error(str(exc))
 
 
+class EntityCreateCommand(_EntityCommand):
+    name = "entity_create"
+    descr = "Create one root addressable entity or dictionary row."
+    _description = descr
+
+    @classmethod
+    def get_schema(cls) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "entity_type": {"type": "string", "enum": list(ROOT_CRUD_ENTITY_TYPES), "description": "Root entity or dictionary table/scope."},
+                "values": {"type": "object", "description": "Entity fields to insert."},
+            },
+            "required": ["entity_type", "values"],
+            "additionalProperties": False,
+        }
+
+    @classmethod
+    def usage_examples(cls) -> list[dict[str, Any]]:
+        return [
+            {"entity_type": "categories", "values": {"id": "550e8400-e29b-41d4-a716-446655440000", "descr": "theory"}},
+            {"entity_type": "files", "values": {"id": "550e8400-e29b-41d4-a716-446655440000", "path": "exports/doc.txt", "name": "doc.txt", "body_sha256": "0" * 64}},
+        ]
+
+    async def execute(
+        self,
+        entity_type: str,
+        values: Mapping[str, Any],
+        context: Mapping[str, Any] | None = None,
+    ) -> CommandResult:
+        boundary = self._boundary(context)
+        if boundary is None:
+            return self._error("Entity lifecycle boundary is unavailable.", code="LIFECYCLE_BOUNDARY_UNAVAILABLE")
+        try:
+            return CommandResult(data=boundary.create_entity(entity_type=entity_type, values=values))
+        except Exception as exc:
+            return self._error(str(exc))
+
+
+class EntityUpdateCommand(_EntityCommand):
+    name = "entity_update"
+    descr = "Update one root addressable entity or dictionary row."
+    _description = descr
+
+    @classmethod
+    def get_schema(cls) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "entity_type": {"type": "string", "enum": list(ROOT_CRUD_ENTITY_TYPES), "description": "Root entity or dictionary table/scope."},
+                "entity_id": {"type": "string", "description": "UUID4 entity identifier."},
+                "values": {"type": "object", "description": "Entity fields to update, including owner_id."},
+            },
+            "required": ["entity_type", "entity_id", "values"],
+            "additionalProperties": False,
+        }
+
+    @classmethod
+    def usage_examples(cls) -> list[dict[str, Any]]:
+        return [{"entity_type": "files", "entity_id": "550e8400-e29b-41d4-a716-446655440000", "values": {"owner_id": "550e8400-e29b-41d4-a716-446655440001"}}]
+
+    async def execute(
+        self,
+        entity_type: str,
+        entity_id: str,
+        values: Mapping[str, Any],
+        context: Mapping[str, Any] | None = None,
+    ) -> CommandResult:
+        boundary = self._boundary(context)
+        if boundary is None:
+            return self._error("Entity lifecycle boundary is unavailable.", code="LIFECYCLE_BOUNDARY_UNAVAILABLE")
+        try:
+            return CommandResult(data=boundary.update_entity(entity_type=entity_type, entity_id=entity_id, values=values))
+        except LookupError as exc:
+            return self._error(str(exc), code="NOT_FOUND")
+        except Exception as exc:
+            return self._error(str(exc))
+
+
 class EntityGetCommand(_EntityCommand):
     name = "entity_get"
     descr = "Get one addressable entity by UUID."
@@ -183,7 +280,7 @@ class _EntityIdsCommand(_EntityCommand):
             "type": "object",
             "properties": {
                 "entity_type": {"type": "string", "enum": list(ENTITY_TYPES), "description": "Entity table/scope."},
-                "ids": {"type": "array", "items": {"type": "string"}, "description": "UUID4 ids or project names for entity_type=projects."},
+                "ids": {"type": "array", "items": {"type": "string"}, "description": "UUID4 entity identifiers."},
             },
             "required": ["entity_type", "ids"],
             "additionalProperties": False,
@@ -243,7 +340,7 @@ class EntityReferencesCommand(_EntityCommand):
             "type": "object",
             "properties": {
                 "entity_type": {"type": "string", "enum": list(ENTITY_TYPES), "description": "Entity table/scope."},
-                "entity_id": {"type": "string", "description": "UUID4 entity identifier or project name."},
+                "entity_id": {"type": "string", "description": "UUID4 entity identifier."},
             },
             "required": ["entity_type", "entity_id"],
             "additionalProperties": False,
@@ -269,11 +366,13 @@ class EntityReferencesCommand(_EntityCommand):
 
 
 __all__ = [
+    "EntityCreateCommand",
     "EntityGetCommand",
     "EntityHardDeleteCommand",
     "EntityLifecycleBoundary",
     "EntityListCommand",
     "EntityReferencesCommand",
     "EntitySoftDeleteCommand",
+    "EntityUpdateCommand",
     "EntityUndeleteCommand",
 ]

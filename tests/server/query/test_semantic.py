@@ -63,7 +63,17 @@ def _response(*, vector: list[float] | None = None, **overrides: Any) -> dict[st
 
 
 def _row(chunk_id: str, *, score: float = 0.8, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
-    block_meta = {"project": "doc-store", "source": "fixture", "tags": ["semantic"]}
+    block_meta = {
+        "project": "doc-store",
+        "source": "fixture",
+        "tags": ["semantic"],
+        "type": "DocBlock",
+        "role": "system",
+        "status": "indexed",
+        "block_type": "paragraph",
+        "language": "UNKNOWN",
+        "category": "uncategorized",
+    }
     block_meta.update(metadata or {})
     return {
         "id": chunk_id,
@@ -75,6 +85,12 @@ def _row(chunk_id: str, *, score: float = 0.8, metadata: dict[str, Any] | None =
         "source_end": 20,
         "block_meta": block_meta,
         "chunk_type": "DocBlock",
+        "chunk_type_descr": "DocBlock",
+        "role_descr": "system",
+        "status_descr": "indexed",
+        "block_type_descr": "paragraph",
+        "language_descr": "UNKNOWN",
+        "category_descr": "uncategorized",
         "semantic_score": score,
     }
 
@@ -161,6 +177,12 @@ def test_results_use_adapter_types_and_canonical_semantic_metadata() -> None:
     assert type(result.chunk) is SemanticChunk
     assert result.chunk_id == row["id"]
     assert result.chunk.block_meta == row["block_meta"]
+    assert result.chunk.type.value == "DocBlock"
+    assert result.chunk.role.value == "system"
+    assert result.chunk.status.value == "indexed"
+    assert result.chunk.block_type.value == "paragraph"
+    assert result.chunk.language.value == "UNKNOWN"
+    assert result.chunk.category == "uncategorized"
     assert result.semantic_score == 1.0
     assert result.rank == 1
     assert result.search_metadata == {"semantic_score": 1.0}

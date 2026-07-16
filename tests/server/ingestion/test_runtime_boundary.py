@@ -5,7 +5,9 @@ import json
 from doc_store_server.ingestion.runtime_boundary import (
     InMemoryRuntimeStatus,
     RuntimeIngestionBoundary,
+    _chunk_features,
     _chunk_units,
+    _insert_semantic_chunk_default_metrics,
     _paragraphs,
 )
 
@@ -30,6 +32,37 @@ def test_runtime_boundary_reports_database_unconfigured_without_crashing() -> No
     assert snapshot["failure"]["code"] == "DATABASE_NOT_CONFIGURED"
     assert status.snapshot()["state"] == "idle"
     assert status.snapshot()["last_activity"]["status"] == "failed"
+
+
+def test_runtime_status_uses_persisted_fallback_when_process_snapshot_is_missing(
+    monkeypatch,
+) -> None:
+    status = InMemoryRuntimeStatus()
+
+    def fake_lookup(
+        self: InMemoryRuntimeStatus, operation_id: str, document_id: str | None
+    ) -> dict[str, object]:
+        assert operation_id == "550e8400-e29b-41d4-a716-446655440001"
+        assert document_id == "550e8400-e29b-41d4-a716-446655440000"
+        return {
+            "status": "completed",
+            "progress": 100,
+            "document_id": document_id,
+            "document_reference": {"id": document_id, "source_version": 7},
+            "version_reference": {"document_id": document_id, "source_version": 7},
+            "failure": None,
+        }
+
+    monkeypatch.setattr(InMemoryRuntimeStatus, "_lookup_persisted_status", fake_lookup)
+
+    snapshot = status.get_status(
+        "550e8400-e29b-41d4-a716-446655440001",
+        "550e8400-e29b-41d4-a716-446655440000",
+    )
+
+    assert snapshot["status"] == "completed"
+    assert snapshot["progress"] == 100
+    assert snapshot["failure"] is None
 
 
 def test_runtime_paragraph_split_preserves_blank_line_order() -> None:
@@ -75,6 +108,43 @@ def test_runtime_chunk_units_support_document_strategies() -> None:
     assert [unit[0] for unit in semantic_units] == [
         "First sentence. Second sentence!\n\nThird paragraph keeps semantic context."
     ]
+
+
+def test_runtime_chunk_features_use_per_classifier_default_category_when_missing() -> None:
+    plain = _chunk_features(
+        "Plain paragraph without explicit classifier properties.",
+        source_name="plain.txt",
+        chunking_strategy="paragraph",
+    )
+    heading = _chunk_features("# Heading", source_name="heading.md", chunking_strategy="paragraph")
+
+    assert plain["category"] == "uncategorized"
+    assert "category:uncategorized" in plain["tags"]
+    assert heading["category"] == "heading"
+
+
+def test_runtime_default_metrics_preserve_quality_for_later_worker() -> None:
+    class RecordingConnection:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, object]]] = []
+
+        def execute(self, statement: object, params: dict[str, object]) -> None:
+            self.calls.append((str(statement), params))
+
+    connection = RecordingConnection()
+    chunk_id = "550e8400-e29b-41d4-a716-446655440003"
+
+    _insert_semantic_chunk_default_metrics(connection, chunk_id)  # type: ignore[arg-type]
+
+    metrics_sql, metrics_params = connection.calls[0]
+    feedback_sql, feedback_params = connection.calls[1]
+    assert "INSERT INTO semantic_chunk_metrics" in metrics_sql
+    assert "quality_score, coverage, cohesion, boundary_prev" in metrics_sql
+    assert "NULL, NULL, NULL, NULL, NULL, 0, FALSE, FALSE, FALSE" in metrics_sql
+    assert metrics_params == {"chunk_uuid": chunk_id}
+    assert "INSERT INTO semantic_chunk_feedback" in feedback_sql
+    assert "VALUES (:chunk_uuid, 0, 0, 0)" in feedback_sql
+    assert feedback_params == {"chunk_uuid": chunk_id}
 
 
 def test_runtime_boundary_writes_separated_error_and_text_logs(tmp_path, monkeypatch) -> None:

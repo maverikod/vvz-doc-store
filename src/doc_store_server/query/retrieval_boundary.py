@@ -79,7 +79,42 @@ class RuntimeRetrievalBoundary:
         )
         return _json_row(row)
 
-    def _one(self, sql: str, identifier: UUID, source_version: int | None) -> Mapping[str, Any]:
+    async def get_paragraph_by_number(
+        self,
+        document_id: UUID,
+        paragraph_number: int,
+        source_version: int | None = None,
+    ) -> dict[str, Any]:
+        row = self._one(
+            """
+            SELECT p.id::text, p.document_id::text, p.chapter_id::text, d.source_version,
+                   (p.order_index + 1) AS paragraph_number, p.order_index, p.text,
+                   p.language, p.source_start, p.source_end, p.quality_score,
+                   p.search_weight, p.block_meta,
+                   (SELECT array_agg(sc.id::text ORDER BY sc.order_index)
+                    FROM semantic_chunks AS sc
+                    WHERE sc.paragraph_id = p.id AND sc.deleted_at IS NULL) AS chunk_ids
+            FROM paragraphs AS p
+            JOIN documents AS d ON d.id = p.document_id
+            WHERE d.id = :identifier
+              AND p.order_index = :paragraph_index
+              AND p.deleted_at IS NULL
+              AND d.deleted_at IS NULL
+            """,
+            document_id,
+            source_version,
+            extra_params={"paragraph_index": paragraph_number - 1},
+        )
+        return _json_row(row)
+
+    def _one(
+        self,
+        sql: str,
+        identifier: UUID,
+        source_version: int | None,
+        *,
+        extra_params: Mapping[str, Any] | None = None,
+    ) -> Mapping[str, Any]:
         if not self._database_url:
             raise RuntimeError("database URL is not configured")
         engine = create_engine(self._database_url, pool_pre_ping=True)
@@ -94,7 +129,11 @@ class RuntimeRetrievalBoundary:
                             else ""
                         )
                     ),
-                    {"identifier": identifier, "source_version": source_version},
+                    {
+                        "identifier": identifier,
+                        "source_version": source_version,
+                        **dict(extra_params or {}),
+                    },
                 ).mappings().one_or_none()
         finally:
             engine.dispose()

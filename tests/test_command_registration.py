@@ -14,16 +14,20 @@ import pytest
 from doc_store_server.commands import registration
 from doc_store_server.commands.chunk_query_search_command import ChunkQuerySearchCommand
 from doc_store_server.commands.document_delete_command import DocumentDeleteCommand
+from doc_store_server.commands.document_export_command import DocumentExportCommand
 from doc_store_server.commands.document_rebind_command import DocumentRebindCommand
 from doc_store_server.commands.entity_lifecycle_commands import (
+    EntityCreateCommand,
     EntityGetCommand,
     EntityHardDeleteCommand,
     EntityListCommand,
     EntityReferencesCommand,
     EntitySoftDeleteCommand,
+    EntityUpdateCommand,
     EntityUndeleteCommand,
 )
 from doc_store_server.commands.health_command import DocStoreHealthCommand
+from doc_store_server.commands.info import InfoCommand
 from doc_store_server.commands.ingestion_commands import (
     DocumentChunkCommand,
     DocumentCreateCommand,
@@ -32,6 +36,7 @@ from doc_store_server.commands.ingestion_commands import (
 from doc_store_server.commands.retrieval_commands import (
     ChapterGetCommand,
     DocumentGetCommand,
+    ParagraphGetByNumberCommand,
     ParagraphGetCommand,
 )
 
@@ -97,6 +102,14 @@ def test_manifest_has_exact_command_identity_and_registration_shape() -> None:
             "DocStoreHealthCommand.get_schema",
         ),
         (
+            "info",
+            InfoCommand,
+            "doc_store_server.commands.info",
+            "sync",
+            "InfoCommand.metadata",
+            "InfoCommand.get_schema",
+        ),
+        (
             "document_get",
             DocumentGetCommand,
             "doc_store_server.commands.retrieval_commands",
@@ -119,6 +132,14 @@ def test_manifest_has_exact_command_identity_and_registration_shape() -> None:
             "sync",
             "ParagraphGetCommand.metadata",
             "ParagraphGetCommand.get_schema",
+        ),
+        (
+            "paragraph_get_by_number",
+            ParagraphGetByNumberCommand,
+            "doc_store_server.commands.retrieval_commands",
+            "sync",
+            "ParagraphGetByNumberCommand.metadata",
+            "ParagraphGetByNumberCommand.get_schema",
         ),
         (
             "document_create",
@@ -145,6 +166,14 @@ def test_manifest_has_exact_command_identity_and_registration_shape() -> None:
             "DocumentChunkCommand.get_schema",
         ),
         (
+            "document_export",
+            DocumentExportCommand,
+            "doc_store_server.commands.document_export_command",
+            "sync",
+            "DocumentExportCommand.metadata",
+            "DocumentExportCommand.get_schema",
+        ),
+        (
             "document_rebind",
             DocumentRebindCommand,
             "doc_store_server.commands.document_rebind_command",
@@ -169,6 +198,14 @@ def test_manifest_has_exact_command_identity_and_registration_shape() -> None:
             "DocumentDeleteCommand.get_schema",
         ),
         (
+            "entity_create",
+            EntityCreateCommand,
+            "doc_store_server.commands.entity_lifecycle_commands",
+            "sync",
+            "EntityCreateCommand.metadata",
+            "EntityCreateCommand.get_schema",
+        ),
+        (
             "entity_list",
             EntityListCommand,
             "doc_store_server.commands.entity_lifecycle_commands",
@@ -183,6 +220,14 @@ def test_manifest_has_exact_command_identity_and_registration_shape() -> None:
             "sync",
             "EntityGetCommand.metadata",
             "EntityGetCommand.get_schema",
+        ),
+        (
+            "entity_update",
+            EntityUpdateCommand,
+            "doc_store_server.commands.entity_lifecycle_commands",
+            "sync",
+            "EntityUpdateCommand.metadata",
+            "EntityUpdateCommand.get_schema",
         ),
         (
             "entity_soft_delete",

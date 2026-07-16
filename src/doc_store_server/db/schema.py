@@ -21,7 +21,7 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR, UUID as PGUUID
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.orm import DeclarativeBase, Mapped, declared_attr, mapped_column, relationship
 
 
 metadata = MetaData(
@@ -75,6 +75,67 @@ class EntityCRUDMixin:
         raise NotImplementedError
 
 
+class DictionaryCRUDMixin(EntityCRUDMixin):
+    """Shared CRUD/lifecycle shape for small UUID-backed dictionaries."""
+
+    __abstract__ = True
+
+    @declared_attr
+    def __table_args__(cls) -> tuple[Any, ...]:
+        table = cls.__tablename__
+        return (
+            UniqueConstraint("descr", name=f"uq_{table}_descr"),
+            Index(f"ix_{table}_lifecycle", "is_deleted", "deleted_at"),
+        )
+
+    id: Mapped[UUID] = mapped_column(UUID4, primary_key=True, default=uuid4)
+    descr: Mapped[str] = mapped_column(String(100), nullable=False)
+    is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ChunkTypeDictionary(DictionaryCRUDMixin, Base):
+    """Dictionary of adapter SemanticChunk.type values."""
+
+    __tablename__ = "chunk_types"
+
+
+class ChunkRoleDictionary(DictionaryCRUDMixin, Base):
+    """Dictionary of adapter SemanticChunk.role values."""
+
+    __tablename__ = "chunk_roles"
+
+
+class ChunkStatusDictionary(DictionaryCRUDMixin, Base):
+    """Dictionary of adapter SemanticChunk.status values."""
+
+    __tablename__ = "chunk_statuses"
+
+
+class BlockTypeDictionary(DictionaryCRUDMixin, Base):
+    """Dictionary of adapter SemanticChunk.block_type values."""
+
+    __tablename__ = "block_types"
+
+
+class LanguageDictionary(DictionaryCRUDMixin, Base):
+    """Dictionary of adapter SemanticChunk.language values."""
+
+    __tablename__ = "languages"
+
+
+class CategoryDictionary(DictionaryCRUDMixin, Base):
+    """Dictionary of SemanticChunk category classifier values."""
+
+    __tablename__ = "categories"
+
+
 class EntityUuidRegistry(Base):
     """Global UUID registry for addressable entity rows."""
 
@@ -91,6 +152,60 @@ class EntityUuidRegistry(Base):
     )
 
 
+class Project(EntityCRUDMixin, Base):
+    """A first-class project grouping documents under one UUID identity."""
+
+    __tablename__ = "projects"
+    __table_args__ = (
+        UniqueConstraint("name", name="uq_projects_name"),
+        Index("ix_projects_lifecycle", "is_deleted", "deleted_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(UUID4, primary_key=True, default=uuid4)
+    owner_id: Mapped[UUID | None] = mapped_column(UUID4)
+    name: Mapped[str] = mapped_column(String(512), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class File(EntityCRUDMixin, Base):
+    """A physical text file that may own, or be owned by, documents."""
+
+    __tablename__ = "files"
+    __table_args__ = (
+        Index("ix_files_owner_id", "owner_id"),
+        Index("ix_files_body_sha256", "body_sha256"),
+        Index("ix_files_lifecycle", "is_deleted", "deleted_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(UUID4, primary_key=True, default=uuid4)
+    owner_id: Mapped[UUID | None] = mapped_column(UUID4)
+    path: Mapped[str] = mapped_column(String(2048), nullable=False)
+    name: Mapped[str] = mapped_column(String(512), nullable=False)
+    media_type: Mapped[str | None] = mapped_column(String(255))
+    byte_length: Mapped[int | None] = mapped_column(BigInteger)
+    char_count: Mapped[int | None] = mapped_column(BigInteger)
+    checksum_algorithm: Mapped[str] = mapped_column(String(32), nullable=False, default="sha256")
+    content_sha256: Mapped[str | None] = mapped_column(String(128))
+    body_sha256: Mapped[str] = mapped_column(String(128), nullable=False)
+    is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    block_meta: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+
+
 class Document(EntityCRUDMixin, Base):
     """A versioned source document and its ordered structural children."""
 
@@ -104,6 +219,7 @@ class Document(EntityCRUDMixin, Base):
 
     id: Mapped[UUID] = mapped_column(UUID4, primary_key=True, default=uuid4)
     is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    owner_id: Mapped[UUID | None] = mapped_column(UUID4)
     source_upload_id: Mapped[UUID] = mapped_column(UUID4, nullable=False)
     source_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     source_path: Mapped[str | None] = mapped_column(String(2048))
@@ -246,6 +362,12 @@ class SemanticChunk(EntityCRUDMixin, Base):
     source_end: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     char_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     chunk_type: Mapped[str | None] = mapped_column(String(64))
+    chunk_type_id: Mapped[UUID | None] = mapped_column(UUID4, ForeignKey("chunk_types.id"))
+    role_id: Mapped[UUID | None] = mapped_column(UUID4, ForeignKey("chunk_roles.id"))
+    status_id: Mapped[UUID | None] = mapped_column(UUID4, ForeignKey("chunk_statuses.id"))
+    block_type_id: Mapped[UUID | None] = mapped_column(UUID4, ForeignKey("block_types.id"))
+    language_id: Mapped[UUID | None] = mapped_column(UUID4, ForeignKey("languages.id"))
+    category_id: Mapped[UUID | None] = mapped_column(UUID4, ForeignKey("categories.id"))
     score: Mapped[float | None]
     search_weight: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     search_vector: Mapped[Any | None] = mapped_column(TSVECTOR)
@@ -257,13 +379,160 @@ class SemanticChunk(EntityCRUDMixin, Base):
     chapter: Mapped[Chapter] = relationship(back_populates="semantic_chunks")
 
 
+class SemanticChunkTypeAssignment(Base):
+    """Chunk-owned normalized assignment for the adapter SemanticChunk.type value."""
+
+    __tablename__ = "semantic_chunk_type_assignments"
+    __table_args__ = (Index("ix_semantic_chunk_type_assignments_chunk_type_id", "chunk_type_id"),)
+
+    chunk_uuid: Mapped[UUID] = mapped_column(
+        UUID4, ForeignKey("semantic_chunks.id", name="fk_scta_chunk", ondelete="CASCADE"), primary_key=True
+    )
+    chunk_type_id: Mapped[UUID] = mapped_column(UUID4, ForeignKey("chunk_types.id", name="fk_scta_type"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    chunk: Mapped[SemanticChunk] = relationship()
+    chunk_type: Mapped[ChunkTypeDictionary] = relationship()
+
+
+class SemanticChunkRoleAssignment(Base):
+    """Chunk-owned normalized assignment for the adapter SemanticChunk.role value."""
+
+    __tablename__ = "semantic_chunk_role_assignments"
+    __table_args__ = (Index("ix_semantic_chunk_role_assignments_role_id", "role_id"),)
+
+    chunk_uuid: Mapped[UUID] = mapped_column(
+        UUID4, ForeignKey("semantic_chunks.id", name="fk_scra_chunk", ondelete="CASCADE"), primary_key=True
+    )
+    role_id: Mapped[UUID] = mapped_column(UUID4, ForeignKey("chunk_roles.id", name="fk_scra_role"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    chunk: Mapped[SemanticChunk] = relationship()
+    role: Mapped[ChunkRoleDictionary] = relationship()
+
+
+class SemanticChunkStatusAssignment(Base):
+    """Chunk-owned normalized assignment for the adapter SemanticChunk.status value."""
+
+    __tablename__ = "semantic_chunk_status_assignments"
+    __table_args__ = (Index("ix_semantic_chunk_status_assignments_status_id", "status_id"),)
+
+    chunk_uuid: Mapped[UUID] = mapped_column(
+        UUID4, ForeignKey("semantic_chunks.id", name="fk_scsa_chunk", ondelete="CASCADE"), primary_key=True
+    )
+    status_id: Mapped[UUID] = mapped_column(UUID4, ForeignKey("chunk_statuses.id", name="fk_scsa_status"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    chunk: Mapped[SemanticChunk] = relationship()
+    status: Mapped[ChunkStatusDictionary] = relationship()
+
+
+class SemanticChunkBlockTypeAssignment(Base):
+    """Chunk-owned normalized assignment for the adapter SemanticChunk.block_type value."""
+
+    __tablename__ = "semantic_chunk_block_type_assignments"
+    __table_args__ = (Index("ix_semantic_chunk_block_type_assignments_block_type_id", "block_type_id"),)
+
+    chunk_uuid: Mapped[UUID] = mapped_column(
+        UUID4, ForeignKey("semantic_chunks.id", name="fk_scbta_chunk", ondelete="CASCADE"), primary_key=True
+    )
+    block_type_id: Mapped[UUID] = mapped_column(
+        UUID4, ForeignKey("block_types.id", name="fk_scbta_block_type"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    chunk: Mapped[SemanticChunk] = relationship()
+    block_type: Mapped[BlockTypeDictionary] = relationship()
+
+
+class SemanticChunkLanguageAssignment(Base):
+    """Chunk-owned normalized assignment for the adapter SemanticChunk.language value."""
+
+    __tablename__ = "semantic_chunk_language_assignments"
+    __table_args__ = (Index("ix_semantic_chunk_language_assignments_language_id", "language_id"),)
+
+    chunk_uuid: Mapped[UUID] = mapped_column(
+        UUID4, ForeignKey("semantic_chunks.id", name="fk_scla_chunk", ondelete="CASCADE"), primary_key=True
+    )
+    language_id: Mapped[UUID] = mapped_column(
+        UUID4, ForeignKey("languages.id", name="fk_scla_language"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    chunk: Mapped[SemanticChunk] = relationship()
+    language: Mapped[LanguageDictionary] = relationship()
+
+
+class SemanticChunkCategoryAssignment(Base):
+    """Chunk-owned normalized assignment for the SemanticChunk.category value."""
+
+    __tablename__ = "semantic_chunk_category_assignments"
+    __table_args__ = (Index("ix_semantic_chunk_category_assignments_category_id", "category_id"),)
+
+    chunk_uuid: Mapped[UUID] = mapped_column(
+        UUID4, ForeignKey("semantic_chunks.id", name="fk_scca_chunk", ondelete="CASCADE"), primary_key=True
+    )
+    category_id: Mapped[UUID] = mapped_column(
+        UUID4, ForeignKey("categories.id", name="fk_scca_category"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    chunk: Mapped[SemanticChunk] = relationship()
+    category: Mapped[CategoryDictionary] = relationship()
+
+
 __all__ = (
     "Base",
+    "BlockTypeDictionary",
+    "CategoryDictionary",
     "Chapter",
+    "ChunkRoleDictionary",
+    "ChunkStatusDictionary",
+    "ChunkTypeDictionary",
     "Document",
+    "DictionaryCRUDMixin",
     "EntityCRUDMixin",
     "EntityUuidRegistry",
+    "File",
+    "LanguageDictionary",
     "Paragraph",
+    "Project",
     "SemanticChunk",
+    "SemanticChunkBlockTypeAssignment",
+    "SemanticChunkCategoryAssignment",
+    "SemanticChunkLanguageAssignment",
+    "SemanticChunkRoleAssignment",
+    "SemanticChunkStatusAssignment",
+    "SemanticChunkTypeAssignment",
     "metadata",
 )

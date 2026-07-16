@@ -152,6 +152,8 @@ DocumentChunkResult = DocumentWriteResult
 class DocumentRebindRequest(PublicModel):
     document_id: str
     project: str | None = None
+    project_id: str | None = None
+    project_description: str | None = None
     document_properties: Mapping[str, Any] | None = None
     chunk_properties: Mapping[str, Any] | None = None
 
@@ -160,6 +162,13 @@ class DocumentRebindRequest(PublicModel):
             raise ValueError("document_id must be non-empty")
         if self.project is not None and not self.project.strip():
             raise ValueError("project must be non-empty when supplied")
+        if self.project is not None:
+            if self.project_id is None or not self.project_id.strip():
+                raise ValueError("project_id is required when project is supplied")
+            if self.project_description is None or not self.project_description.strip():
+                raise ValueError("project_description is required when project is supplied")
+        elif self.project_id is not None or self.project_description is not None:
+            raise ValueError("project_id and project_description require project")
         if not any(
             value is not None
             for value in (self.project, self.document_properties, self.chunk_properties)
@@ -172,6 +181,8 @@ class DocumentRebindResult(PublicModel):
     outcome: str
     document_id: str
     project: str | None = None
+    project_id: str | None = None
+    project_description: str | None = None
     document_properties: Mapping[str, Any] | None = None
     chunk_properties: Mapping[str, Any] | None = None
     updated: Mapping[str, Any] | None = None
@@ -365,6 +376,19 @@ class ParagraphGetRequest(RetrievalRequest):
 
 
 @dataclass(frozen=True, kw_only=True)
+class ParagraphGetByNumberRequest(RetrievalRequest):
+    document_id: str
+    paragraph_number: int
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if not self.document_id.strip():
+            raise ValueError("document_id must be non-empty")
+        if isinstance(self.paragraph_number, bool) or self.paragraph_number < 1:
+            raise ValueError("paragraph_number must be a positive integer")
+
+
+@dataclass(frozen=True, kw_only=True)
 class RetrievalResult(PublicModel):
     entity: str
     identifier: str
@@ -375,6 +399,17 @@ class RetrievalResult(PublicModel):
 DocumentGetResult = RetrievalResult
 ChapterGetResult = RetrievalResult
 ParagraphGetResult = RetrievalResult
+
+
+@dataclass(frozen=True, kw_only=True)
+class ParagraphGetByNumberResult(PublicModel):
+    entity: str
+    document_id: str
+    paragraph_number: int
+    identifier: str | None = None
+    source_version: int | None = None
+    text: str | None = None
+    value: Any = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -460,7 +495,8 @@ __all__ = [
     "DocumentRebindRequest", "DocumentRebindResult", "DocumentUpdateRequest", "DocumentUpdateResult",
     "DocumentWriteRequest", "DocumentWriteResult", "EntityGetRequest", "EntityGetResult",
     "EntityIdsRequest", "EntityLifecycleResult", "EntityListRequest", "EntityListResult",
-    "EntityReferencesRequest", "EntityReferencesResult", "OperationState", "ParagraphGetRequest",
+    "EntityReferencesRequest", "EntityReferencesResult", "OperationState",
+    "ParagraphGetByNumberRequest", "ParagraphGetByNumberResult", "ParagraphGetRequest",
     "ParagraphGetResult", "ProcessingStatusRequest", "ProcessingStatusResult", "RankedSearchHit",
     "RetrievalRequest", "RetrievalResult", "SearchResult", "ServerError",
 ]

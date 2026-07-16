@@ -30,6 +30,8 @@ class DocumentRebindService:
         *,
         document_id: str,
         project: str | None = None,
+        project_id: str | None = None,
+        project_description: str | None = None,
         document_properties: Mapping[str, Any] | None = None,
         chunk_properties: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -43,7 +45,11 @@ class DocumentRebindService:
         shared_updates: dict[str, Any] = {}
         if project is not None:
             document_updates["project"] = project
+            document_updates["project_id"] = project_id
+            document_updates["project_description"] = project_description
             shared_updates["project"] = project
+            shared_updates["project_id"] = project_id
+            shared_updates["project_description"] = project_description
         child_updates = {**shared_updates, **dict(chunk_properties or {})}
 
         engine = create_engine(self.database_url, pool_pre_ping=True)
@@ -61,6 +67,13 @@ class DocumentRebindService:
                         "DOCUMENT_NOT_FOUND",
                         "document was not found",
                         {"document_id": document_id},
+                    )
+                if project is not None:
+                    _upsert_project(
+                        connection,
+                        project_id=project_id,
+                        name=project,
+                        description=project_description,
                     )
 
                 current_document_meta = _meta(document_row["block_meta"])
@@ -92,6 +105,8 @@ class DocumentRebindService:
             "outcome": "rebound",
             "document_id": document_id,
             "project": project,
+            "project_id": project_id,
+            "project_description": project_description,
             "document_properties": document_updates,
             "chunk_properties": child_updates,
             "updated": counts,
@@ -122,6 +137,31 @@ def _merge_child_meta(
             {"id": row["id"], "block_meta": json.dumps(merged)},
         )
     return len(rows)
+
+
+def _upsert_project(
+    connection: Any,
+    *,
+    project_id: str | None,
+    name: str,
+    description: str | None,
+) -> None:
+    if not project_id or not description:
+        raise DocumentRebindError(
+            "PROJECT_ID_DESCRIPTION_REQUIRED",
+            "project_id and project_description are required when project is supplied",
+            {"project": name},
+        )
+    connection.execute(
+        text(
+            "INSERT INTO projects (id, name, description) "
+            "VALUES (CAST(:project_id AS uuid), :name, :description) "
+            "ON CONFLICT (id) DO UPDATE "
+            "SET name = EXCLUDED.name, description = EXCLUDED.description, "
+            "is_deleted = FALSE, deleted_at = NULL, updated_at = now()"
+        ),
+        {"project_id": project_id, "name": name, "description": description},
+    )
 
 
 def _meta(value: Any) -> dict[str, Any]:

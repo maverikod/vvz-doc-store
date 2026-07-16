@@ -12,6 +12,7 @@ from sqlalchemy import text
 
 from chunk_metadata_adapter import SearchResult, SemanticChunk
 
+from .chunk_payload import CLASSIFIER_JOIN_SQL, CLASSIFIER_SELECT_SQL, chunk_payload_from_row
 from .compiler import ExecutionMode, ExecutionPlan
 
 
@@ -126,16 +127,10 @@ def _chunk_from_row(row: Mapping[str, Any]) -> SemanticChunk:
         return supplied
     payload = row.get("chunk_payload")
     if not isinstance(payload, Mapping):
-        block_meta = _row_value(row, "block_meta")
-        if not isinstance(block_meta, Mapping):
-            raise MalformedSemanticRowError("database row block_meta must be a mapping")
-        payload = {
-            "uuid": str(_row_value(row, "id")), "source_id": str(_row_value(row, "document_id")),
-            "block_id": str(_row_value(row, "paragraph_id")), "type": _row_value(row, "chunk_type") or "DocBlock",
-            "body": _row_value(row, "text"), "text": _row_value(row, "text"),
-            "ordinal": _row_value(row, "order_index"), "start": _row_value(row, "source_start"),
-            "end": _row_value(row, "source_end"), "block_meta": dict(block_meta),
-        }
+        try:
+            payload = chunk_payload_from_row(row, _row_value)
+        except TypeError as exc:
+            raise MalformedSemanticRowError(str(exc)) from exc
     try:
         return SemanticChunk.from_dict_with_autofill_and_validation(dict(payload))
     except Exception as exc:
@@ -189,10 +184,12 @@ def _statement(plan: ExecutionPlan, vector: tuple[float, ...], *, model: str, di
         SELECT sc.id, sc.document_id, sc.paragraph_id, sc.chapter_id,
                sc.order_index, sc.text, sc.source_start, sc.source_end,
                sc.char_count, sc.chunk_type, sc.block_meta,
+               {CLASSIFIER_SELECT_SQL},
                (1.0 - (sce.vector <=> CAST(:query_vector AS vector))) AS semantic_score
         FROM semantic_chunks AS sc
         JOIN semantic_chunk_embeddings AS sce ON sce.chunk_uuid = sc.id
         JOIN documents AS d ON d.id = sc.document_id
+        {CLASSIFIER_JOIN_SQL}
         WHERE {' AND '.join(where)}
         ORDER BY {', '.join(_order_sql(plan.order_by))}{limit}{offset}
     """

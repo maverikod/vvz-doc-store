@@ -12,16 +12,20 @@ import pytest
 from doc_store_server.commands import registration
 from doc_store_server.commands.chunk_query_search_command import ChunkQuerySearchCommand
 from doc_store_server.commands.document_delete_command import DocumentDeleteCommand
+from doc_store_server.commands.document_export_command import DocumentExportCommand
 from doc_store_server.commands.document_rebind_command import DocumentRebindCommand
 from doc_store_server.commands.entity_lifecycle_commands import (
+    EntityCreateCommand,
     EntityGetCommand,
     EntityHardDeleteCommand,
     EntityListCommand,
     EntityReferencesCommand,
     EntitySoftDeleteCommand,
+    EntityUpdateCommand,
     EntityUndeleteCommand,
 )
 from doc_store_server.commands.health_command import DocStoreHealthCommand
+from doc_store_server.commands.info import InfoCommand
 from doc_store_server.commands.ingestion_commands import (
     DocumentChunkCommand,
     DocumentCreateCommand,
@@ -31,6 +35,7 @@ from doc_store_server.commands.processing_status_command import ProcessingStatus
 from doc_store_server.commands.retrieval_commands import (
     ChapterGetCommand,
     DocumentGetCommand,
+    ParagraphGetByNumberCommand,
     ParagraphGetCommand,
 )
 
@@ -38,17 +43,22 @@ from doc_store_server.commands.retrieval_commands import (
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_COMMANDS = {
     "health": (DocStoreHealthCommand, "sync"),
+    "info": (InfoCommand, "sync"),
     "document_get": (DocumentGetCommand, "sync"),
     "chapter_get": (ChapterGetCommand, "sync"),
     "paragraph_get": (ParagraphGetCommand, "sync"),
+    "paragraph_get_by_number": (ParagraphGetByNumberCommand, "sync"),
     "document_create": (DocumentCreateCommand, "queue"),
     "document_update": (DocumentUpdateCommand, "queue"),
     "document_chunk": (DocumentChunkCommand, "queue"),
+    "document_export": (DocumentExportCommand, "sync"),
     "document_rebind": (DocumentRebindCommand, "sync"),
     "processing_status": (ProcessingStatusCommand, "sync"),
     "document_delete": (DocumentDeleteCommand, "sync"),
+    "entity_create": (EntityCreateCommand, "sync"),
     "entity_list": (EntityListCommand, "sync"),
     "entity_get": (EntityGetCommand, "sync"),
+    "entity_update": (EntityUpdateCommand, "sync"),
     "entity_soft_delete": (EntitySoftDeleteCommand, "sync"),
     "entity_undelete": (EntityUndeleteCommand, "sync"),
     "entity_hard_delete": (EntityHardDeleteCommand, "sync"),
@@ -207,6 +217,19 @@ class FakeRetrieval:
     async def get_paragraph(self, paragraph_id: Any, source_version: int | None = None) -> Any:
         return {"paragraph_id": str(paragraph_id), "source_version": source_version}
 
+    async def get_paragraph_by_number(
+        self,
+        document_id: Any,
+        paragraph_number: int,
+        source_version: int | None = None,
+    ) -> Any:
+        return {
+            "document_id": str(document_id),
+            "paragraph_number": paragraph_number,
+            "source_version": source_version,
+            "text": "paragraph text",
+        }
+
 
 class FakeStatus:
     def get_status(self, operation_id: str, document_id: str | None = None) -> dict[str, Any]:
@@ -223,7 +246,18 @@ class FakeRebind:
         return {"outcome": "rebound", "document_id": kwargs["document_id"]}
 
 
+class FakeExport:
+    def export_document(self, **kwargs: Any) -> dict[str, Any]:
+        return {"outcome": "exported", "document_id": kwargs["document_id"], "file_id": "550e8400-e29b-41d4-a716-446655440009"}
+
+
 class FakeLifecycle:
+    def create_entity(self, **kwargs: Any) -> dict[str, Any]:
+        return {"entity_type": kwargs["entity_type"], "outcome": "created", "value": kwargs["values"]}
+
+    def update_entity(self, **kwargs: Any) -> dict[str, Any]:
+        return {"entity_type": kwargs["entity_type"], "outcome": "updated", "id": kwargs["entity_id"], "value": kwargs["values"]}
+
     def list_entities(self, **kwargs: Any) -> dict[str, Any]:
         return {"entity_type": kwargs["entity_type"], "items": [], "limit": 50, "offset": 0, "total": 0, "show_deleted": False}
 
@@ -249,14 +283,27 @@ class FakeLifecycle:
         (DocumentGetCommand, {"document_id": "550e8400-e29b-41d4-a716-446655440001"}, {"retrieval_boundary": FakeRetrieval()}),
         (ChapterGetCommand, {"chapter_id": "550e8400-e29b-41d4-a716-446655440003"}, {"retrieval_boundary": FakeRetrieval()}),
         (ParagraphGetCommand, {"paragraph_id": "550e8400-e29b-41d4-a716-446655440004"}, {"retrieval_boundary": FakeRetrieval()}),
+        (ParagraphGetByNumberCommand, {"document_id": "550e8400-e29b-41d4-a716-446655440001", "paragraph_number": 2}, {"retrieval_boundary": FakeRetrieval()}),
         (DocumentCreateCommand, {"document_id": "550e8400-e29b-41d4-a716-446655440001", "source_version_id": "v1", "chunking_strategy": "paragraph", "raw_text": "hello"}, {"ingestion_boundary": lambda **_: {"status": "committed"}}),
         (DocumentUpdateCommand, {"document_id": "550e8400-e29b-41d4-a716-446655440001", "source_version_id": "v2", "raw_text": "hello"}, {"ingestion_boundary": lambda **_: {"status": "committed"}}),
         (DocumentChunkCommand, {"document_id": "550e8400-e29b-41d4-a716-446655440001"}, {"ingestion_boundary": lambda **_: {"status": "committed", "source_version_id": "v2"}}),
-        (DocumentRebindCommand, {"document_id": "550e8400-e29b-41d4-a716-446655440001", "project": "doc-store"}, {"document_rebind_boundary": FakeRebind()}),
+        (DocumentExportCommand, {"document_id": "550e8400-e29b-41d4-a716-446655440001", "path": "/tmp/doc.txt"}, {"document_export_boundary": FakeExport()}),
+        (
+            DocumentRebindCommand,
+            {
+                "document_id": "550e8400-e29b-41d4-a716-446655440001",
+                "project": "doc-store",
+                "project_id": "7254b86c-7456-47b3-8b7d-1590eef0f4a5",
+                "project_description": "runtime docs",
+            },
+            {"document_rebind_boundary": FakeRebind()},
+        ),
         (ProcessingStatusCommand, {"operation_id": "op-1"}, {"runtime_status_boundary": FakeStatus()}),
         (DocumentDeleteCommand, {"document_id": "doc-1", "version_token": "v1"}, {"canonical_document_service": FakeDelete()}),
+        (EntityCreateCommand, {"entity_type": "files", "values": {"id": "550e8400-e29b-41d4-a716-446655440009", "path": "/tmp/doc.txt", "name": "doc.txt", "body_sha256": "0" * 64}}, {"entity_lifecycle_boundary": FakeLifecycle()}),
         (EntityListCommand, {"entity_type": "documents"}, {"entity_lifecycle_boundary": FakeLifecycle()}),
         (EntityGetCommand, {"entity_type": "documents", "entity_id": "550e8400-e29b-41d4-a716-446655440001"}, {"entity_lifecycle_boundary": FakeLifecycle()}),
+        (EntityUpdateCommand, {"entity_type": "files", "entity_id": "550e8400-e29b-41d4-a716-446655440009", "values": {"owner_id": "550e8400-e29b-41d4-a716-446655440001"}}, {"entity_lifecycle_boundary": FakeLifecycle()}),
         (EntitySoftDeleteCommand, {"entity_type": "documents", "ids": ["550e8400-e29b-41d4-a716-446655440001"]}, {"entity_lifecycle_boundary": FakeLifecycle()}),
         (EntityUndeleteCommand, {"entity_type": "documents", "ids": ["550e8400-e29b-41d4-a716-446655440001"]}, {"entity_lifecycle_boundary": FakeLifecycle()}),
         (EntityHardDeleteCommand, {"entity_type": "documents", "ids": ["550e8400-e29b-41d4-a716-446655440001"]}, {"entity_lifecycle_boundary": FakeLifecycle()}),
@@ -303,14 +350,19 @@ def test_runtime_configuration_installs_retrieval_boundary(monkeypatch: pytest.M
     boundary = FakeBoundary()
     monkeypatch.setattr(DocumentCreateCommand, "ingestion_boundary", None)
     monkeypatch.setattr(DocumentUpdateCommand, "ingestion_boundary", None)
+    monkeypatch.setattr(DocumentExportCommand, "export_boundary", None)
+    monkeypatch.setattr(DocumentDeleteCommand, "document_service", None)
     monkeypatch.setattr(DocumentGetCommand, "retrieval_boundary", None)
     monkeypatch.setattr(ChapterGetCommand, "retrieval_boundary", None)
     monkeypatch.setattr(ParagraphGetCommand, "retrieval_boundary", None)
+    monkeypatch.setattr(ParagraphGetByNumberCommand, "retrieval_boundary", None)
     monkeypatch.setattr(ProcessingStatusCommand, "runtime_status_boundary", None)
     monkeypatch.setattr(ChunkQuerySearchCommand, "search_orchestrator", None)
     for command in (
+        EntityCreateCommand,
         EntityListCommand,
         EntityGetCommand,
+        EntityUpdateCommand,
         EntitySoftDeleteCommand,
         EntityUndeleteCommand,
         EntityHardDeleteCommand,
@@ -323,11 +375,18 @@ def test_runtime_configuration_installs_retrieval_boundary(monkeypatch: pytest.M
     monkeypatch.setattr(main, "installed_search_orchestrator", lambda _config: object())
     monkeypatch.setattr(main, "installed_retrieval_boundary", lambda _config: boundary)
     monkeypatch.setattr(main, "installed_entity_lifecycle_service", lambda _config: boundary)
+    monkeypatch.setattr(main, "installed_document_export_service", lambda _config: boundary)
+    monkeypatch.setattr(main, "installed_document_service", lambda _config: boundary)
 
     main.configure_runtime_boundaries({"database": {"url": "postgresql://example/db"}})
 
     assert DocumentGetCommand.retrieval_boundary is boundary
     assert ChapterGetCommand.retrieval_boundary is boundary
     assert ParagraphGetCommand.retrieval_boundary is boundary
+    assert ParagraphGetByNumberCommand.retrieval_boundary is boundary
+    assert DocumentExportCommand.export_boundary is boundary
+    assert DocumentDeleteCommand.document_service is boundary
+    assert EntityCreateCommand.lifecycle_boundary is boundary
     assert EntityListCommand.lifecycle_boundary is boundary
+    assert EntityUpdateCommand.lifecycle_boundary is boundary
     assert EntityHardDeleteCommand.lifecycle_boundary is boundary

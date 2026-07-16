@@ -26,6 +26,8 @@ class DocumentRebindBoundary(Protocol):
         *,
         document_id: str,
         project: str | None = None,
+        project_id: str | None = None,
+        project_description: str | None = None,
         document_properties: Mapping[str, Any] | None = None,
         chunk_properties: Mapping[str, Any] | None = None,
     ) -> Mapping[str, Any] | Awaitable[Mapping[str, Any]]:
@@ -57,6 +59,14 @@ class DocumentRebindCommand(Command):
                 "project": {
                     "type": "string",
                     "description": "Optional project value copied to document and chunk metadata.",
+                },
+                "project_id": {
+                    "type": "string",
+                    "description": "Required project UUID when project is supplied.",
+                },
+                "project_description": {
+                    "type": "string",
+                    "description": "Required project comment/short description when project is supplied.",
                 },
                 "document_properties": {
                     "type": "object",
@@ -92,6 +102,8 @@ class DocumentRebindCommand(Command):
             "parameters": {
                 "document_id": "Required existing document UUID.",
                 "project": "Optional project value applied to document and chunk metadata.",
+                "project_id": "Required UUID4 project identifier when project is supplied.",
+                "project_description": "Required project comment or short description when project is supplied.",
                 "document_properties": "Optional object merged into documents.block_meta.",
                 "chunk_properties": (
                     "Optional object merged into chapters, paragraphs, and "
@@ -105,11 +117,13 @@ class DocumentRebindCommand(Command):
                 {
                     "document_id": "550e8400-e29b-41d4-a716-446655440000",
                     "project": "doc-store",
+                    "project_id": "7254b86c-7456-47b3-8b7d-1590eef0f4a5",
+                    "project_description": "Runtime docs project.",
                     "chunk_properties": {"scope": "runtime", "tags": ["client"]},
                 }
             ],
             "error_cases": {
-                "INVALID_PARAMS": "Malformed document_id, blank project, or non-object metadata.",
+                "INVALID_PARAMS": "Malformed document_id, project_id, blank project/description, or non-object metadata.",
                 "NO_REBIND_FIELDS": "At least one rebind field must be supplied.",
                 "DATABASE_NOT_CONFIGURED": "The installed runtime has no database URL.",
                 "DOCUMENT_NOT_FOUND": "The requested document does not exist.",
@@ -135,6 +149,24 @@ class DocumentRebindCommand(Command):
             if not isinstance(project, str) or not project.strip():
                 raise ValidationError("project must be a non-empty string", {"field": "project"})
             validated["project"] = project.strip()
+            project_id = validated.get("project_id")
+            if not isinstance(project_id, str) or not project_id.strip():
+                raise ValidationError("project_id is required when project is supplied", {"field": "project_id"})
+            try:
+                validated["project_id"] = str(UUID(project_id))
+            except (AttributeError, ValueError) as exc:
+                raise ValidationError("project_id must be a valid UUID", {"field": "project_id"}) from exc
+            project_description = validated.get("project_description")
+            if not isinstance(project_description, str) or not project_description.strip():
+                raise ValidationError(
+                    "project_description is required when project is supplied",
+                    {"field": "project_description"},
+                )
+            validated["project_description"] = project_description.strip()
+        else:
+            for field in ("project_id", "project_description"):
+                if validated.get(field) is not None:
+                    raise ValidationError(f"{field} requires project", {"field": field})
 
         for field in ("document_properties", "chunk_properties"):
             value = validated.get(field)

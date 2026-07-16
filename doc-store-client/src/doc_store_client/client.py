@@ -30,6 +30,8 @@ from .models import (
     EntityListResult,
     EntityReferencesRequest,
     EntityReferencesResult,
+    ParagraphGetByNumberRequest,
+    ParagraphGetByNumberResult,
     ParagraphGetRequest,
     ParagraphGetResult,
     ProcessingStatusRequest,
@@ -53,6 +55,7 @@ DOC_STORE_COMMANDS: tuple[str, ...] = (
     "document_get",
     "chapter_get",
     "paragraph_get",
+    "paragraph_get_by_number",
     "document_create",
     "document_update",
     "document_chunk",
@@ -210,6 +213,11 @@ class DocStoreClient:
         self, params: Mapping[str, Any] | None = None, **kwargs: Any
     ) -> Any:
         return await self.call("paragraph_get", params, **kwargs)
+
+    async def paragraph_get_by_number(
+        self, params: Mapping[str, Any] | None = None, **kwargs: Any
+    ) -> Any:
+        return await self.call("paragraph_get_by_number", params, **kwargs)
 
     async def document_create(
         self, params: Mapping[str, Any] | None = None, **kwargs: Any
@@ -391,6 +399,16 @@ class DocStoreClient:
 
     async def get_paragraph(self, request: ParagraphGetRequest) -> ParagraphGetResult:
         return await self._execute("paragraph_get", request.to_params(), ParagraphGetResult)
+
+    async def get_paragraph_by_number(
+        self,
+        request: ParagraphGetByNumberRequest,
+    ) -> ParagraphGetByNumberResult:
+        return await self._execute(
+            "paragraph_get_by_number",
+            request.to_params(),
+            ParagraphGetByNumberResult,
+        )
 
     async def delete_document(self, request: DocumentDeleteRequest) -> DocumentDeleteResult:
         return await self._execute("document_delete", request.to_params(), DocumentDeleteResult)

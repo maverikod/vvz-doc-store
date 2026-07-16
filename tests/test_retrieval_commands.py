@@ -14,6 +14,7 @@ from doc_store_server.commands.retrieval_commands import (
     ChapterGetCommand,
     DocumentGetCommand,
     InvalidVersionError,
+    ParagraphGetByNumberCommand,
     ParagraphGetCommand,
 )
 from mcp_proxy_adapter.core.errors import ValidationError
@@ -54,6 +55,22 @@ class RecordingRetrievalBoundary:
 
     async def get_paragraph(self, paragraph_id: UUID, source_version: int | None = None) -> Any:
         return await self._get("paragraph", paragraph_id, source_version)
+
+    async def get_paragraph_by_number(
+        self,
+        document_id: UUID,
+        paragraph_number: int,
+        source_version: int | None = None,
+    ) -> Any:
+        self.calls.append(("paragraph_by_number", document_id, source_version))
+        if self.error is not None:
+            raise self.error
+        return {
+            "id": str(IDENTIFIER),
+            "document_id": str(document_id),
+            "paragraph_number": paragraph_number,
+            "text": "second paragraph",
+        }
 
 
 def execute_validated(command_class: type[Any], boundary: RecordingRetrievalBoundary, **params: Any) -> Any:
@@ -188,3 +205,41 @@ def test_each_command_exposes_complete_live_schema_and_metadata(command_class: t
     assert {"NOT_FOUND", "INVALID_VERSION", "INTERNAL_ERROR"} <= metadata["error_cases"].keys()
     assert metadata["usage_examples"]
     assert metadata["best_practices"]
+
+
+def test_paragraph_get_by_number_uses_document_and_one_based_number() -> None:
+    boundary = RecordingRetrievalBoundary()
+
+    result = execute_validated(
+        ParagraphGetByNumberCommand,
+        boundary,
+        document_id=str(IDENTIFIER),
+        paragraph_number=2,
+        source_version=3,
+    )
+
+    assert result.success is True
+    assert boundary.calls == [("paragraph_by_number", IDENTIFIER, 3)]
+    assert result.data["document_id"] == str(IDENTIFIER)
+    assert result.data["paragraph_number"] == 2
+    assert result.data["text"] == "second paragraph"
+    assert result.data["value"]["paragraph_number"] == 2
+
+
+def test_paragraph_get_by_number_rejects_non_positive_number() -> None:
+    command = ParagraphGetByNumberCommand()
+
+    with pytest.raises(ValidationError):
+        command.validate_params({"document_id": str(IDENTIFIER), "paragraph_number": 0})
+    with pytest.raises(ValidationError):
+        command.validate_params({"document_id": str(IDENTIFIER), "paragraph_number": True})
+
+
+def test_paragraph_get_by_number_schema_documents_human_numbering() -> None:
+    schema = ParagraphGetByNumberCommand.get_schema()
+    metadata = ParagraphGetByNumberCommand.metadata()
+
+    assert schema["required"] == ["document_id", "paragraph_number"]
+    assert schema["properties"]["paragraph_number"]["minimum"] == 1
+    assert metadata["name"] == "paragraph_get_by_number"
+    assert "paragraph_number" in metadata["parameters"]

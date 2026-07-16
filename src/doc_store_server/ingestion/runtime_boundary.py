@@ -6,7 +6,7 @@ import hashlib
 import json
 import os
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -46,6 +46,12 @@ class InMemoryRuntimeStatus:
     _items: dict[str, dict[str, Any]] = field(default_factory=dict)
     _current: dict[str, Any] | None = None
     _last: dict[str, Any] | None = None
+    _database_url: str | None = None
+
+    def configure_database(self, database_url: str | None) -> None:
+        """Attach a read-only persisted fallback for queued worker snapshots."""
+
+        self._database_url = database_url
 
     def record(self, operation_id: str, payload: Mapping[str, Any]) -> None:
         value = dict(payload)
@@ -68,7 +74,7 @@ class InMemoryRuntimeStatus:
     def get_status(self, operation_id: str, document_id: str | None = None) -> dict[str, Any]:
         value = dict(self._items.get(operation_id) or {})
         if not value:
-            value = {
+            value = self._lookup_persisted_status(operation_id, document_id) or {
                 "status": "failed",
                 "failure": {
                     "code": "STATUS_NOT_FOUND",
@@ -78,6 +84,66 @@ class InMemoryRuntimeStatus:
         if document_id is not None:
             value["document_id"] = document_id
         return value
+
+    def _lookup_persisted_status(
+        self, operation_id: str, document_id: str | None
+    ) -> dict[str, Any] | None:
+        if not self._database_url:
+            return None
+        try:
+            engine = create_engine(self._database_url)
+            sql = (
+                "SELECT id::text AS document_id, source_version, processing_status, "
+                "block_meta, created_at, updated_at "
+                "FROM documents "
+                "WHERE block_meta->>'operation_id' = :operation_id "
+            )
+            params = {"operation_id": operation_id}
+            if document_id is not None:
+                sql += "AND id::text = :document_id "
+                params["document_id"] = document_id
+            sql += "ORDER BY updated_at DESC NULLS LAST LIMIT 1"
+            with engine.connect() as connection:
+                row = connection.execute(
+                    text(sql),
+                    params,
+                ).mappings().first()
+        except SQLAlchemyError:
+            return None
+        if row is None:
+            return None
+
+        block_meta = row.get("block_meta") if isinstance(row.get("block_meta"), Mapping) else {}
+        timestamps = {
+            key: value.isoformat() if hasattr(value, "isoformat") else value
+            for key, value in {
+                "created_at": row.get("created_at"),
+                "updated_at": row.get("updated_at"),
+            }.items()
+            if value is not None
+        }
+        status = str(row.get("processing_status") or "completed")
+        source_version = row.get("source_version")
+        persisted_document_id = str(row["document_id"])
+        version_reference: dict[str, Any] = {
+            "document_id": persisted_document_id,
+            "source_version": source_version,
+        }
+        source_version_id = block_meta.get("source_version_id")
+        if source_version_id:
+            version_reference["source_version_id"] = source_version_id
+        return {
+            "status": status,
+            "progress": 100 if status == "completed" else None,
+            "timestamps": timestamps,
+            "document_id": persisted_document_id,
+            "document_reference": {
+                "id": persisted_document_id,
+                "source_version": source_version,
+            },
+            "version_reference": version_reference,
+            "failure": None,
+        }
 
     def snapshot(self) -> dict[str, Any]:
         """Return process-local worker activity for health reporting."""
@@ -96,6 +162,7 @@ class RuntimeIngestionBoundary:
     def __init__(self, database_url: str | None, status: InMemoryRuntimeStatus) -> None:
         self._database_url = database_url
         self._status = status
+        self._status.configure_database(database_url)
 
     def __call__(
         self,
@@ -239,13 +306,21 @@ class RuntimeIngestionBoundary:
         title = _title(filename, text_value)
         source_name = _source_name(filename)
         length = len(text_value)
+        body_sha256 = hashlib.sha256(text_value.encode("utf-8")).hexdigest()
+        file_id = _stable_uuid4(f"doc-store:file:{document_id}:{body_sha256}:{filename or ''}")
         chunks = _chunk_units(text_value, chunking_strategy) or [(text_value, 0, length)]
         doc_meta = {
+            "file_id": str(file_id),
             "source_version_id": source_version_id,
             "normalized_source_version_id": normalized_source_version_id,
             "operation_id": operation_id,
             "ingestion_command": command,
             "chunking_strategy": chunking_strategy,
+            "checksum_algorithm": "sha256",
+            "content_sha256": content_sha256,
+            "source_sha256": body_sha256,
+            "file_sha256": body_sha256,
+            "body_sha256": body_sha256,
         }
         inferred = _source_properties(text_value, default_project="doc-store")
         doc_meta.update(inferred)
@@ -286,14 +361,46 @@ class RuntimeIngestionBoundary:
                 )
                 connection.execute(
                     text(
+                        "INSERT INTO files "
+                        "(id, owner_id, path, name, media_type, byte_length, char_count, "
+                        "checksum_algorithm, content_sha256, body_sha256, is_deleted, "
+                        "deleted_at, block_meta) "
+                        "VALUES (:id, NULL, :path, :name, 'text/plain', NULL, :char_count, "
+                        "'sha256', :content_sha256, :body_sha256, FALSE, NULL, "
+                        "CAST(:block_meta AS jsonb)) "
+                        "ON CONFLICT (id) DO UPDATE SET "
+                        "path = EXCLUDED.path, "
+                        "name = EXCLUDED.name, "
+                        "media_type = EXCLUDED.media_type, "
+                        "char_count = EXCLUDED.char_count, "
+                        "content_sha256 = EXCLUDED.content_sha256, "
+                        "body_sha256 = EXCLUDED.body_sha256, "
+                        "is_deleted = FALSE, "
+                        "deleted_at = NULL, "
+                        "updated_at = now(), "
+                        "block_meta = EXCLUDED.block_meta"
+                    ),
+                    {
+                        "id": file_id,
+                        "path": filename or source_name or str(file_id),
+                        "name": source_name or filename or str(file_id),
+                        "char_count": length,
+                        "content_sha256": content_sha256,
+                        "body_sha256": body_sha256,
+                        "block_meta": json.dumps(doc_meta),
+                    },
+                )
+                connection.execute(
+                    text(
                         "INSERT INTO documents "
-                        "(id, source_upload_id, source_version, source_path, source_name, source_hash, "
+                        "(id, owner_id, source_upload_id, source_version, source_path, source_name, source_hash, "
                         "title, processing_status, processing_attempt, processing_trace_id, "
                         "processing_started_at, processing_completed_at, block_meta) "
-                        "VALUES (:id, :source_upload_id, :source_version, :source_path, :source_name, "
+                        "VALUES (:id, :owner_id, :source_upload_id, :source_version, :source_path, :source_name, "
                         ":source_hash, :title, 'completed', 1, :trace_id, now(), now(), "
                         "CAST(:block_meta AS jsonb)) "
                         "ON CONFLICT (id) DO UPDATE SET "
+                        "owner_id = EXCLUDED.owner_id, "
                         "source_upload_id = EXCLUDED.source_upload_id, "
                         "source_version = EXCLUDED.source_version, "
                         "source_path = EXCLUDED.source_path, "
@@ -311,11 +418,12 @@ class RuntimeIngestionBoundary:
                     ),
                     {
                         "id": document_id,
+                        "owner_id": file_id,
                         "source_upload_id": document_id,
                         "source_version": source_version,
                         "source_path": filename,
                         "source_name": source_name,
-                        "source_hash": content_sha256,
+                        "source_hash": body_sha256,
                         "title": title,
                         "trace_id": UUID(operation_id),
                         "block_meta": json.dumps(doc_meta),
@@ -344,18 +452,22 @@ class RuntimeIngestionBoundary:
                 for order_index, (paragraph_text, source_start, source_end) in enumerate(chunks):
                     paragraph_id = uuid4()
                     chunk_id = uuid4()
+                    chunk_features = _chunk_features(paragraph_text, source_name=source_name, chunking_strategy=chunking_strategy)
+                    classifier_values = _semantic_classifier_values(chunk_features)
+                    dictionary_ids = _semantic_dictionary_ids(connection, classifier_values)
                     paragraph_ids.append(str(paragraph_id))
                     chunk_ids.append(str(chunk_id))
                     paragraph_meta = {
                         **doc_meta,
                         **_source_properties(paragraph_text),
+                        **chunk_features,
                         "paragraph_number": order_index + 1,
                     }
                     chunk_meta = {
                         **paragraph_meta,
                         "chapter_id": str(chapter_id),
                         "source_name": source_name,
-                        "type": "DocBlock",
+                        **classifier_values,
                     }
                     connection.execute(
                         text(
@@ -380,11 +492,14 @@ class RuntimeIngestionBoundary:
                         text(
                             "INSERT INTO semantic_chunks "
                             "(id, document_id, paragraph_id, chapter_id, order_index, text, "
-                            "source_start, source_end, char_count, chunk_type, search_weight, "
-                            "block_meta) "
+                            "source_start, source_end, char_count, chunk_type, chunk_type_id, "
+                            "role_id, status_id, block_type_id, language_id, category_id, "
+                            "search_weight, block_meta) "
                             "VALUES (:id, :document_id, :paragraph_id, :chapter_id, "
                             ":order_index, :body, :source_start, :source_end, :char_count, "
-                            "'DocBlock', 1, CAST(:block_meta AS jsonb))"
+                            ":chunk_type, :chunk_type_id, :role_id, :status_id, "
+                            ":block_type_id, :language_id, :category_id, 1, "
+                            "CAST(:block_meta AS jsonb))"
                         ),
                         {
                             "id": chunk_id,
@@ -396,9 +511,46 @@ class RuntimeIngestionBoundary:
                             "source_start": source_start,
                             "source_end": source_end,
                             "char_count": len(paragraph_text),
+                            "chunk_type": classifier_values["type"],
+                            "chunk_type_id": dictionary_ids["chunk_type_id"],
+                            "role_id": dictionary_ids["role_id"],
+                            "status_id": dictionary_ids["status_id"],
+                            "block_type_id": dictionary_ids["block_type_id"],
+                            "language_id": dictionary_ids["language_id"],
+                            "category_id": dictionary_ids["category_id"],
                             "block_meta": json.dumps(chunk_meta),
                         },
                     )
+                    _upsert_semantic_chunk_classifier_assignments(
+                        connection,
+                        chunk_id,
+                        dictionary_ids,
+                    )
+                    _insert_semantic_chunk_default_metrics(connection, chunk_id)
+                    for token_kind in ("tokens", "bm25_tokens"):
+                        for token_ordinal, token_value in enumerate(chunk_features[token_kind]):
+                            connection.execute(
+                                text(
+                                    "INSERT INTO semantic_chunk_tokens "
+                                    "(chunk_uuid, token_kind, ordinal, token_value) "
+                                    "VALUES (:chunk_uuid, :token_kind, :ordinal, :token_value)"
+                                ),
+                                {
+                                    "chunk_uuid": chunk_id,
+                                    "token_kind": token_kind,
+                                    "ordinal": token_ordinal,
+                                    "token_value": token_value,
+                                },
+                            )
+                    for tag_ordinal, tag_value in enumerate(chunk_features["tags"]):
+                        connection.execute(
+                            text(
+                                "INSERT INTO semantic_chunk_tags "
+                                "(chunk_uuid, ordinal, tag_value) "
+                                "VALUES (:chunk_uuid, :ordinal, :tag_value)"
+                            ),
+                            {"chunk_uuid": chunk_id, "ordinal": tag_ordinal, "tag_value": tag_value},
+                        )
                     connection.execute(
                         text(
                             "INSERT INTO semantic_chunk_embeddings "
@@ -733,6 +885,43 @@ def _chunk_units(text_value: str, strategy: str) -> list[tuple[str, int, int]]:
     return _semantic_units(text_value)
 
 
+def _chunk_features(text_value: str, *, source_name: str | None, chunking_strategy: str) -> dict[str, Any]:
+    tokens = _tokens(text_value)
+    bm25_tokens = _bm25_tokens(tokens)
+    tags = sorted(set(_source_properties(text_value).get("tags") or []))
+    if source_name:
+        tags.append(PurePosixPath(source_name).suffix.lower().lstrip(".") or "text")
+    tags.append(f"chunking:{chunking_strategy}")
+    category = _category(text_value, source_name=source_name)
+    tags.append(f"category:{category}")
+    unique_tags = sorted({tag for tag in tags if tag})
+    return {
+        "category": category,
+        "tags": unique_tags,
+        "tags_flat": ", ".join(unique_tags),
+        "tokens": tokens,
+        "bm25_tokens": bm25_tokens,
+    }
+
+
+def _tokens(text_value: str) -> list[str]:
+    return re.findall(r"[\wА-Яа-яЁёІіЇїЄєҐґ]+", text_value.lower())[:256]
+
+
+def _bm25_tokens(tokens: Sequence[str]) -> list[str]:
+    stop = {"и", "в", "во", "на", "с", "со", "к", "ко", "а", "но", "the", "and", "or", "of", "to"}
+    return [token for token in tokens if len(token) > 2 and token not in stop][:256]
+
+
+def _category(text_value: str, *, source_name: str | None) -> str:
+    lowered = f"{source_name or ''}\n{text_value[:500]}".lower()
+    if "%%7d-" in lowered or "теори" in lowered:
+        return "theory"
+    if text_value.lstrip().startswith("#"):
+        return "heading"
+    return "uncategorized"
+
+
 def _source_properties(text_value: str, *, default_project: str | None = None) -> dict[str, Any]:
     lowered = text_value.lower()
     project_match = re.search(r"\bproject\s+([a-z0-9_-]+)\b", lowered)
@@ -742,6 +931,138 @@ def _source_properties(text_value: str, *, default_project: str | None = None) -
     if project is not None:
         result["project"] = project
     return result
+
+
+DICTIONARY_TABLES = {
+    "chunk_types",
+    "chunk_roles",
+    "chunk_statuses",
+    "block_types",
+    "languages",
+    "categories",
+}
+
+SEMANTIC_CLASSIFIER_DEFAULTS = {
+    "type": "DocBlock",
+    "role": "system",
+    "status": "new",
+    "block_type": "paragraph",
+    "language": "UNKNOWN",
+    "category": "uncategorized",
+}
+
+SEMANTIC_CLASSIFIER_DICTIONARIES = {
+    "type": ("chunk_type_id", "chunk_types"),
+    "role": ("role_id", "chunk_roles"),
+    "status": ("status_id", "chunk_statuses"),
+    "block_type": ("block_type_id", "block_types"),
+    "language": ("language_id", "languages"),
+    "category": ("category_id", "categories"),
+}
+
+
+def _semantic_dictionary_defaults(connection: Any) -> dict[str, UUID]:
+    return _semantic_dictionary_ids(connection, SEMANTIC_CLASSIFIER_DEFAULTS)
+
+
+def _semantic_classifier_values(chunk_features: dict[str, Any]) -> dict[str, str]:
+    values = dict(SEMANTIC_CLASSIFIER_DEFAULTS)
+    for classifier_field in SEMANTIC_CLASSIFIER_DEFAULTS:
+        candidate = chunk_features.get(classifier_field)
+        if isinstance(candidate, str) and candidate.strip():
+            values[classifier_field] = candidate.strip()
+    return values
+
+
+def _semantic_dictionary_ids(connection: Any, values: dict[str, str]) -> dict[str, UUID]:
+    return {
+        column: _dictionary_id(connection, table, values.get(field) or SEMANTIC_CLASSIFIER_DEFAULTS[field])
+        for field, (column, table) in SEMANTIC_CLASSIFIER_DICTIONARIES.items()
+    }
+
+
+def _dictionary_id(connection: Any, table: str, descr: str) -> UUID:
+    if table not in DICTIONARY_TABLES:
+        raise ValueError(f"unsupported dictionary table: {table}")
+    if not isinstance(descr, str) or not descr.strip():
+        raise ValueError("dictionary descr must be a non-empty string")
+    value = descr.strip()
+    if len(value) > 100:
+        raise ValueError("dictionary descr must be at most 100 characters")
+    row = connection.execute(
+        text(f"SELECT id FROM {table} WHERE descr = :descr"),
+        {"descr": value},
+    ).scalar_one_or_none()
+    if row is not None:
+        return row
+    return connection.execute(
+        text(
+            f"INSERT INTO {table} (id, descr, is_deleted, deleted_at) "
+            "VALUES (:id, :descr, FALSE, NULL) "
+            "ON CONFLICT (descr) DO UPDATE SET "
+            "is_deleted = FALSE, deleted_at = NULL, updated_at = now() "
+            "RETURNING id"
+        ),
+        {"id": uuid4(), "descr": value},
+    ).scalar_one()
+
+
+SEMANTIC_CHUNK_ASSIGNMENT_TABLES = (
+    ("semantic_chunk_type_assignments", "chunk_type_id"),
+    ("semantic_chunk_role_assignments", "role_id"),
+    ("semantic_chunk_status_assignments", "status_id"),
+    ("semantic_chunk_block_type_assignments", "block_type_id"),
+    ("semantic_chunk_language_assignments", "language_id"),
+    ("semantic_chunk_category_assignments", "category_id"),
+)
+
+
+def _upsert_semantic_chunk_classifier_assignments(
+    connection: Any,
+    chunk_id: UUID,
+    dictionary_ids: dict[str, UUID],
+) -> None:
+    for table, column in SEMANTIC_CHUNK_ASSIGNMENT_TABLES:
+        value = dictionary_ids[column]
+        connection.execute(
+            text(
+                f"INSERT INTO {table} (chunk_uuid, {column}) "
+                f"VALUES (:chunk_uuid, :dictionary_id) "
+                "ON CONFLICT (chunk_uuid) DO UPDATE SET "
+                f"{column} = EXCLUDED.{column}, "
+                "updated_at = now()"
+            ),
+            {"chunk_uuid": chunk_id, "dictionary_id": value},
+        )
+
+
+def _insert_semantic_chunk_default_metrics(connection: Any, chunk_id: UUID) -> None:
+    """Create chunk-owned metrics rows with only semantically safe defaults."""
+
+    connection.execute(
+        text(
+            "INSERT INTO semantic_chunk_metrics "
+            "(chunk_uuid, quality_score, coverage, cohesion, boundary_prev, "
+            "boundary_next, matches, used_in_generation, used_as_input, used_as_context) "
+            "VALUES (:chunk_uuid, NULL, NULL, NULL, NULL, NULL, 0, FALSE, FALSE, FALSE)"
+        ),
+        {"chunk_uuid": chunk_id},
+    )
+    connection.execute(
+        text(
+            "INSERT INTO semantic_chunk_feedback "
+            "(chunk_uuid, accepted, rejected, modifications) "
+            "VALUES (:chunk_uuid, 0, 0, 0)"
+        ),
+        {"chunk_uuid": chunk_id},
+    )
+
+
+def _stable_uuid4(value: str) -> UUID:
+    raw = bytearray(hashlib.sha256(value.encode("utf-8")).digest()[:16])
+    raw[6] = (raw[6] & 0x0F) | 0x40
+    raw[8] = (raw[8] & 0x3F) | 0x80
+    return UUID(bytes=bytes(raw))
 
 
 def _vector_literal(values: tuple[float, ...]) -> str:

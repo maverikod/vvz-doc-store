@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, ClassVar, Final, Literal, Protocol
+from typing import Final, Literal, Protocol
 
 from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.hooks import (
@@ -13,16 +13,20 @@ from mcp_proxy_adapter.commands.hooks import (
 
 from doc_store_server.commands.chunk_query_search_command import ChunkQuerySearchCommand
 from doc_store_server.commands.document_delete_command import DocumentDeleteCommand
+from doc_store_server.commands.document_export_command import DocumentExportCommand
 from doc_store_server.commands.document_rebind_command import DocumentRebindCommand
 from doc_store_server.commands.entity_lifecycle_commands import (
+    EntityCreateCommand,
     EntityGetCommand,
     EntityHardDeleteCommand,
     EntityListCommand,
     EntityReferencesCommand,
     EntitySoftDeleteCommand,
+    EntityUpdateCommand,
     EntityUndeleteCommand,
 )
 from doc_store_server.commands.health_command import DocStoreHealthCommand
+from doc_store_server.commands.info import InfoCommand
 from doc_store_server.commands.ingestion_commands import (
     DocumentChunkCommand,
     DocumentCreateCommand,
@@ -32,6 +36,7 @@ from doc_store_server.commands.processing_status_command import ProcessingStatus
 from doc_store_server.commands.retrieval_commands import (
     ChapterGetCommand,
     DocumentGetCommand,
+    ParagraphGetByNumberCommand,
     ParagraphGetCommand,
 )
 
@@ -59,72 +64,6 @@ class CommandManifestEntry:
     schema_identity: str
 
 
-class _DocStoreCommand(Command):
-    """Metadata-only command contract; behavior is implemented by later AS."""
-
-    version: ClassVar[str] = "0.1.0"
-    descr: ClassVar[str] = ""
-    category: ClassVar[str] = "doc-store"
-    author: ClassVar[str] = "Vasiliy Zdanovskiy"
-    email: ClassVar[str] = "vasilyvz@gmail.com"
-    use_queue: ClassVar[bool] = False
-    detailed_description: ClassVar[str] = (
-        "Public doc-store command contract. Business behavior is implemented "
-        "by later atomic command-handler steps."
-    )
-    schema_properties: ClassVar[dict[str, dict[str, str]]] = {}
-    required_fields: ClassVar[tuple[str, ...]] = ()
-    parameter_docs: ClassVar[dict[str, dict[str, str]]] = {}
-    return_contract: ClassVar[dict[str, str]] = {
-        "description": "Command-specific result contract."
-    }
-    usage_examples: ClassVar[list[dict[str, Any]]] = []
-    best_practices: ClassVar[list[str]] = [
-        "Use the adapter registry and generated help as the command authority."
-    ]
-    stable_errors: ClassVar[dict[str, str]] = {
-        "NOT_IMPLEMENTED": "Command handler behavior is owned by a later atomic step."
-    }
-
-    async def execute(self, **kwargs: Any) -> Any:
-        """Prevent accidental business execution before handler AS implement it."""
-
-        raise NotImplementedError(f"{self.name} handler is not implemented in registration")
-
-    @classmethod
-    def metadata(cls) -> dict[str, Any]:
-        """Return the complete public metadata contract for help generation."""
-
-        return {
-            "name": cls.name,
-            "version": cls.version,
-            "description": cls.descr,
-            "category": cls.category,
-            "author": cls.author,
-            "email": cls.email,
-            "detailed_description": cls.detailed_description,
-            "parameters": cls.parameter_docs,
-            "return_value": cls.return_contract,
-            "usage_examples": cls.usage_examples,
-            "error_cases": cls.stable_errors,
-            "best_practices": cls.best_practices,
-        }
-
-    @classmethod
-    def get_schema(cls) -> dict[str, Any]:
-        """Return the public JSON schema contract for this command."""
-
-        schema: dict[str, Any] = {
-            "type": "object",
-            "properties": dict(cls.schema_properties),
-            "required": list(cls.required_fields),
-            "additionalProperties": False,
-        }
-        if cls.use_queue:
-            schema["x-use-queue"] = True
-        return schema
-
-
 DOC_STORE_COMMAND_MANIFEST: Final[tuple[CommandManifestEntry, ...]] = (
     CommandManifestEntry(
         "health",
@@ -133,6 +72,14 @@ DOC_STORE_COMMAND_MANIFEST: Final[tuple[CommandManifestEntry, ...]] = (
         "sync",
         "DocStoreHealthCommand.metadata",
         "DocStoreHealthCommand.get_schema",
+    ),
+    CommandManifestEntry(
+        "info",
+        InfoCommand,
+        "doc_store_server.commands.info",
+        "sync",
+        "InfoCommand.metadata",
+        "InfoCommand.get_schema",
     ),
     CommandManifestEntry(
         "document_get",
@@ -159,6 +106,14 @@ DOC_STORE_COMMAND_MANIFEST: Final[tuple[CommandManifestEntry, ...]] = (
         "ParagraphGetCommand.get_schema",
     ),
     CommandManifestEntry(
+        "paragraph_get_by_number",
+        ParagraphGetByNumberCommand,
+        "doc_store_server.commands.retrieval_commands",
+        "sync",
+        "ParagraphGetByNumberCommand.metadata",
+        "ParagraphGetByNumberCommand.get_schema",
+    ),
+    CommandManifestEntry(
         "document_create",
         DocumentCreateCommand,
         "doc_store_server.commands.ingestion_commands",
@@ -181,6 +136,14 @@ DOC_STORE_COMMAND_MANIFEST: Final[tuple[CommandManifestEntry, ...]] = (
         "queue",
         "DocumentChunkCommand.metadata",
         "DocumentChunkCommand.get_schema",
+    ),
+    CommandManifestEntry(
+        "document_export",
+        DocumentExportCommand,
+        "doc_store_server.commands.document_export_command",
+        "sync",
+        "DocumentExportCommand.metadata",
+        "DocumentExportCommand.get_schema",
     ),
     CommandManifestEntry(
         "document_rebind",
@@ -207,6 +170,14 @@ DOC_STORE_COMMAND_MANIFEST: Final[tuple[CommandManifestEntry, ...]] = (
         "DocumentDeleteCommand.get_schema",
     ),
     CommandManifestEntry(
+        "entity_create",
+        EntityCreateCommand,
+        "doc_store_server.commands.entity_lifecycle_commands",
+        "sync",
+        "EntityCreateCommand.metadata",
+        "EntityCreateCommand.get_schema",
+    ),
+    CommandManifestEntry(
         "entity_list",
         EntityListCommand,
         "doc_store_server.commands.entity_lifecycle_commands",
@@ -221,6 +192,14 @@ DOC_STORE_COMMAND_MANIFEST: Final[tuple[CommandManifestEntry, ...]] = (
         "sync",
         "EntityGetCommand.metadata",
         "EntityGetCommand.get_schema",
+    ),
+    CommandManifestEntry(
+        "entity_update",
+        EntityUpdateCommand,
+        "doc_store_server.commands.entity_lifecycle_commands",
+        "sync",
+        "EntityUpdateCommand.metadata",
+        "EntityUpdateCommand.get_schema",
     ),
     CommandManifestEntry(
         "entity_soft_delete",
@@ -266,8 +245,10 @@ DOC_STORE_COMMAND_MANIFEST: Final[tuple[CommandManifestEntry, ...]] = (
 
 DOC_STORE_COMMAND_MODULE_MANIFEST: Final[tuple[str, ...]] = (
     "doc_store_server.commands.health_command",
+    "doc_store_server.commands.info",
     "doc_store_server.commands.retrieval_commands",
     "doc_store_server.commands.ingestion_commands",
+    "doc_store_server.commands.document_export_command",
     "doc_store_server.commands.document_rebind_command",
     "doc_store_server.commands.processing_status_command",
     "doc_store_server.commands.document_delete_command",
@@ -307,16 +288,21 @@ __all__ = [
     "DocumentChunkCommand",
     "DocumentCreateCommand",
     "DocumentDeleteCommand",
+    "DocumentExportCommand",
     "DocumentGetCommand",
     "DocumentRebindCommand",
     "DocumentUpdateCommand",
+    "EntityCreateCommand",
     "EntityGetCommand",
     "EntityHardDeleteCommand",
     "EntityListCommand",
     "EntityReferencesCommand",
     "EntitySoftDeleteCommand",
+    "EntityUpdateCommand",
     "EntityUndeleteCommand",
+    "InfoCommand",
     "ChapterGetCommand",
+    "ParagraphGetByNumberCommand",
     "ParagraphGetCommand",
     "ProcessingStatusCommand",
     "register_doc_store_commands",

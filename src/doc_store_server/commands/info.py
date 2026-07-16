@@ -8,7 +8,7 @@ from typing import Any, ClassVar, Final, Mapping, Protocol
 
 from mcp_proxy_adapter.commands.base import CommandResult
 
-from doc_store_server.commands.registration import _DocStoreCommand
+from doc_store_server.commands.base import _DocStoreCommand
 
 
 class CommandHelpRegistry(Protocol):
@@ -66,10 +66,14 @@ SECTION_NAMES: Final[tuple[str, ...]] = (
     "architecture",
     "integrations",
     "data_model",
+    "semantic_chunk_metadata",
+    "checksum_lifecycle",
+    "query_and_export",
     "configuration",
     "secrets_tls_mtls",
     "postgresql_pgvector",
     "command_groups",
+    "maintenance",
     "deployment_systemd",
     "environment",
     "upgrades_removal",
@@ -126,7 +130,42 @@ def build_info_document(registry: CommandHelpRegistry) -> InfoDocument:
         "data_model": (
             "The canonical hierarchy is Document -> Chapter -> Paragraph -> "
             "SemanticChunk. Document versions are immutable once visible, ingestion is "
-            "idempotent, and partially built versions must not become queryable."
+            "idempotent, and partially built versions must not become queryable. "
+            "Root tables are documents, chapters, paragraphs, and semantic_chunks. "
+            "Dictionary tables normalize chunk_types, chunk_roles, chunk_statuses, "
+            "block_types, languages, and categories. Chunk-owned child tables store "
+            "classifier assignments, metrics, feedback, tokens, tags, links, and "
+            "embeddings; these rows are subordinate to semantic_chunks and are not "
+            "independent CRUD roots."
+        ),
+        "semantic_chunk_metadata": (
+            "Semantic chunk metadata follows chunk-metadata-adapter. Write-time "
+            "defaults fill identity, hashes, timestamps, enum classifiers, empty "
+            "lists, usage flags, feedback counters, and per-classifier empty values "
+            "such as DocBlock, system, new, paragraph, UNKNOWN, and uncategorized. "
+            "Quality evaluation fields quality_score, coverage, cohesion, "
+            "boundary_prev, and boundary_next remain unknown until an evaluator "
+            "worker classifies and scores the chunk. The ingestion path writes "
+            "tokens and bm25_tokens from text analysis and stores category tags in "
+            "semantic_chunk_tags."
+        ),
+        "checksum_lifecycle": (
+            "Checksum state belongs to files or documents. File checksums are stored "
+            "as checksum_algorithm, content_sha256, and body_sha256 on files; "
+            "document checksum compatibility data is stored in document metadata while "
+            "the checksum-driven lifecycle is completed. A future lifecycle command "
+            "must short-circuit unchanged file checksums, expose document/file "
+            "revectorize flags, expose file rechunk flags, batch-mark stale chunks "
+            "deleted on checksum mismatch, insert the changed content as a new "
+            "file/version, and vectorize the new chunks."
+        ),
+        "query_and_export": (
+            "Retrieval uses the canonical relational hierarchy plus pgvector "
+            "embeddings and full-text search vectors. Query payloads reconstruct "
+            "semantic chunk classifier descriptions from dictionary assignment rows "
+            "and export must perform the reverse mapping: database identifiers are "
+            "projected back to adapter-visible enum/category/language values without "
+            "duplicating canonical child-table data."
         ),
         "configuration": (
             "Keep application configuration transport-neutral and pass adapter "
@@ -151,6 +190,14 @@ def build_info_document(registry: CommandHelpRegistry) -> InfoDocument:
             "entries, including schemas and metadata, are projected below from the "
             "registry at execution time: "
             f"{command_names}"
+        ),
+        "maintenance": (
+            "Routine maintenance starts with health, info, processing_status, command "
+            "help, database health, migration state, queue/worker status, and service "
+            "logs. Before rebuilding or deploying, bump the package and image version, "
+            "build the package, install it into the deployed environment, run database "
+            "migrations if the schema changed, restart the service, and verify live "
+            "health and command availability through the adapter/proxy surface."
         ),
         "deployment_systemd": (
             "Run the adapter-owned server entrypoint with the installed package "

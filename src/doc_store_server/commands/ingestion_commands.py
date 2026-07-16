@@ -8,6 +8,7 @@ storage, or any downstream processing stage.
 from __future__ import annotations
 
 import inspect
+import os
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, ClassVar
 from uuid import UUID, NAMESPACE_URL, uuid5
@@ -26,6 +27,13 @@ _CHUNKING_STRATEGIES = frozenset({"paragraph", "sentence", "semantic"})
 _KNOWN_FIELDS = frozenset(
     {"document_id", "source_version_id", "raw_text", "transferred_file", "chunking_strategy"}
 )
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _operation_id(document_id: str, source_version_id: str) -> str:
@@ -129,7 +137,7 @@ class _IngestionCommand(Command):
     category: ClassVar[str] = "doc-store.ingestion"
     author: ClassVar[str] = "Vasiliy Zdanovskiy"
     email: ClassVar[str] = "vasilyvz@gmail.com"
-    use_queue: ClassVar[bool] = True
+    use_queue: ClassVar[bool] = _env_bool("DOC_STORE_INGESTION_USE_QUEUE", True)
     result_class: ClassVar[type[SuccessResult]] = SuccessResult
     _description: ClassVar[str]
     chunking_strategy_required: ClassVar[bool] = False
@@ -162,7 +170,7 @@ class _IngestionCommand(Command):
             "required": required,
             "additionalProperties": False,
             "x-oneOf": ["raw_text", "transferred_file"],
-            "x-use-queue": True,
+            "x-use-queue": cls.use_queue,
         }
 
     @classmethod

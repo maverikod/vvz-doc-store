@@ -114,8 +114,11 @@ build_publish_client() {
         export TWINE_USERNAME="__token__"
         export TWINE_PASSWORD="$PYPI_API_TOKEN"
     fi
-    [[ -n "${TWINE_USERNAME:-}" && -n "${TWINE_PASSWORD:-}" ]] \
-        || error "PyPI credentials are required: set PYPI_API_TOKEN or TWINE_USERNAME/TWINE_PASSWORD"
+    if [[ -z "${TWINE_USERNAME:-}" || -z "${TWINE_PASSWORD:-}" ]]; then
+        [[ -f "${HOME}/.pypirc" || -f ".pypirc" ]] \
+            || error "PyPI credentials are required: set PYPI_API_TOKEN or TWINE_USERNAME/TWINE_PASSWORD, or provide ~/.pypirc"
+        info "Using PyPI credentials from .pypirc"
+    fi
     info "Publishing doc-store-client ${VERSION} to PyPI"
     python3 -m twine upload "dist/client/doc_store_client-${VERSION}"*
 }

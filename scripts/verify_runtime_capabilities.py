@@ -12,7 +12,6 @@ import argparse
 import asyncio
 import json
 import os
-import sys
 import tempfile
 import time
 import uuid
@@ -32,6 +31,7 @@ from doc_store_client import (
     EntityIdsRequest,
     EntityListRequest,
     EntityReferencesRequest,
+    ParagraphGetByNumberRequest,
     SearchResult,
 )
 from mcp_proxy_adapter.client.jsonrpc_client.client import JsonRpcClient
@@ -344,6 +344,8 @@ async def _verify_strategy(
     tmpdir: Path,
     strategy: str,
     project: str,
+    project_id: str,
+    project_description: str,
     scope: str,
     run_id: str,
     vectorization_timeout: float,
@@ -377,6 +379,8 @@ async def _verify_strategy(
         DocumentRebindRequest(
             document_id=document_id,
             project=project,
+            project_id=project_id,
+            project_description=project_description,
             document_properties={"runtime_verify_run": run_id, "chunking_strategy": strategy},
             chunk_properties={
                 "runtime_verify_scope": scope,
@@ -486,6 +490,8 @@ async def _verify_strategy(
             DocumentRebindRequest(
                 document_id=document_id,
                 project=project,
+                project_id=project_id,
+                project_description=project_description,
                 document_properties={"runtime_verify_run": run_id, "chunking_strategy": strategy},
                 chunk_properties={
                     "runtime_verify_scope": scope,
@@ -530,6 +536,32 @@ async def _verify_retrieval_boundary(
         name="document_get retrieval boundary",
         status="pass",
         detail=str(result),
+    )
+
+
+async def _verify_paragraph_by_number(
+    client: DocStoreClient,
+    *,
+    document_id: str,
+) -> Check:
+    try:
+        result = await client.get_paragraph_by_number(
+            ParagraphGetByNumberRequest(document_id=document_id, paragraph_number=2)
+        )
+    except Exception as exc:
+        return Check(
+            name="paragraph_get_by_number",
+            status="fail",
+            detail=repr(exc),
+        )
+    text = result.text
+    if text is None and isinstance(result.value, Mapping):
+        text = result.value.get("text")
+    return Check(
+        name="paragraph_get_by_number",
+        status="pass" if result.paragraph_number == 2 and bool(text) else "fail",
+        detail=str(text)[:160],
+        data={"document_id": result.document_id, "paragraph_number": result.paragraph_number},
     )
 
 
@@ -605,7 +637,12 @@ async def _verify_lifecycle(
 
     try:
         projects = await client.list_entities(EntityListRequest(entity_type="projects", limit=20))
-        _add_check(checks, "entity_list projects", any(item.get("project") == project for item in projects.items), f"{projects.total} total")
+        _add_check(
+            checks,
+            "entity_list projects",
+            any((item.get("project") or item.get("name")) == project for item in projects.items),
+            f"{projects.total} total",
+        )
     except Exception as exc:
         _add_check(checks, "entity_list projects", False, repr(exc))
     return checks
@@ -655,6 +692,8 @@ async def _run(args: argparse.Namespace) -> int:
     )
     run_id = args.run_id or uuid.uuid4().hex[:12]
     scope = args.scope or f"runtime-verify-{run_id}"
+    project_id = args.project_id or str(uuid.uuid5(uuid.NAMESPACE_URL, f"doc-store-runtime:{args.project}"))
+    project_description = args.project_description or f"Runtime verification project {args.project}"
     all_checks: list[Check] = []
 
     health = await client.health()
@@ -671,6 +710,7 @@ async def _run(args: argparse.Namespace) -> int:
         "document_create",
         "document_chunk",
         "document_rebind",
+        "paragraph_get_by_number",
         "entity_list",
         "entity_get",
         "entity_soft_delete",
@@ -700,6 +740,8 @@ async def _run(args: argparse.Namespace) -> int:
                 tmpdir=tmpdir,
                 strategy=strategy,
                 project=args.project,
+                project_id=project_id,
+                project_description=project_description,
                 scope=scope,
                 run_id=run_id,
                 vectorization_timeout=args.vectorization_timeout,
@@ -714,6 +756,12 @@ async def _run(args: argparse.Namespace) -> int:
                 client,
                 document_id=strategy_runs[0].document_id,
                 strict=args.strict,
+            )
+        )
+        all_checks.append(
+            await _verify_paragraph_by_number(
+                client,
+                document_id=strategy_runs[0].document_id,
             )
         )
         all_checks.extend(
@@ -782,6 +830,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--vectorization-timeout", type=float, default=120.0)
     parser.add_argument("--use-websocket-session", action="store_true")
     parser.add_argument("--project", default=os.getenv("DOC_STORE_VERIFY_PROJECT", "doc-store-runtime"))
+    parser.add_argument("--project-id", default=os.getenv("DOC_STORE_VERIFY_PROJECT_ID"))
+    parser.add_argument("--project-description", default=os.getenv("DOC_STORE_VERIFY_PROJECT_DESCRIPTION"))
     parser.add_argument("--scope", default=os.getenv("DOC_STORE_VERIFY_SCOPE"))
     parser.add_argument("--run-id", default=os.getenv("DOC_STORE_VERIFY_RUN_ID"))
     parser.add_argument("--strict", action="store_true", help="Treat known retrieval warnings as failures.")
