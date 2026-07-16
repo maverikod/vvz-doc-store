@@ -10,6 +10,7 @@ from doc_store_server.commands.entity_lifecycle_commands import (
     EntityGetCommand,
     EntityHardDeleteCommand,
     EntityListCommand,
+    EntityOwnerTreeCommand,
     EntityRebindOwnerCommand,
     EntityReferencesCommand,
     EntitySoftDeleteCommand,
@@ -65,6 +66,17 @@ class Boundary:
         self.calls.append(("references", kwargs))
         return {"entity_type": kwargs["entity_type"], "id": kwargs["entity_id"], "references": []}
 
+    def owner_tree(self, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(("owner_tree", kwargs))
+        return {
+            "entity_type": kwargs.get("entity_type") or "documents",
+            "id": kwargs["entity_id"],
+            "max_depth": kwargs["max_depth"],
+            "max_children_per_node": kwargs["max_children_per_node"],
+            "include_deleted": kwargs["include_deleted"],
+            "tree": {"id": kwargs["entity_id"], "preview": "doc", "children": []},
+        }
+
 
 def test_list_get_and_references_delegate_to_lifecycle_boundary() -> None:
     boundary = Boundary()
@@ -96,6 +108,35 @@ def test_list_get_and_references_delegate_to_lifecycle_boundary() -> None:
     assert get_result.success is True
     assert refs_result.success is True
     assert [name for name, _ in boundary.calls] == ["list", "get", "references"]
+
+
+def test_owner_tree_delegates_uuid4_checked_request() -> None:
+    boundary = Boundary()
+    result = asyncio.run(
+        EntityOwnerTreeCommand().execute(
+            entity_id="550e8400-e29b-41d4-a716-446655440001",
+            entity_type="documents",
+            max_depth=3,
+            max_children_per_node=25,
+            include_deleted=True,
+            context={"entity_lifecycle_boundary": boundary},
+        )
+    )
+
+    assert result.success is True
+    assert boundary.calls == [
+        (
+            "owner_tree",
+            {
+                "entity_id": "550e8400-e29b-41d4-a716-446655440001",
+                "entity_type": "documents",
+                "max_depth": 3,
+                "max_children_per_node": 25,
+                "include_deleted": True,
+            },
+        )
+    ]
+    assert result.data["tree"]["preview"] == "doc"
 
 
 def test_dictionary_create_and_update_use_generic_entity_boundary() -> None:
@@ -229,13 +270,21 @@ def test_entity_commands_reject_non_v4_uuid_fields_before_boundary_delegation() 
             context={"entity_lifecycle_boundary": boundary},
         )
     )
+    owner_tree_result = asyncio.run(
+        EntityOwnerTreeCommand().execute(
+            entity_id=v1_uuid,
+            context={"entity_lifecycle_boundary": boundary},
+        )
+    )
 
     assert get_result.to_dict()["success"] is False
     assert create_result.to_dict()["success"] is False
     assert rebind_result.to_dict()["success"] is False
+    assert owner_tree_result.to_dict()["success"] is False
     assert get_result.to_dict()["error"]["data"]["code"] == "INVALID_PARAMS"
     assert create_result.to_dict()["error"]["data"]["code"] == "INVALID_PARAMS"
     assert rebind_result.to_dict()["error"]["data"]["code"] == "INVALID_PARAMS"
+    assert owner_tree_result.to_dict()["error"]["data"]["code"] == "INVALID_PARAMS"
     assert boundary.calls == []
 
 

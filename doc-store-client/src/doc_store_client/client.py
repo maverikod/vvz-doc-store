@@ -28,6 +28,8 @@ from .models import (
     EntityLifecycleResult,
     EntityListRequest,
     EntityListResult,
+    EntityOwnerTreeRequest,
+    EntityOwnerTreeResult,
     EntityReferencesRequest,
     EntityReferencesResult,
     ParagraphGetByNumberRequest,
@@ -38,6 +40,8 @@ from .models import (
     ProcessingStatusResult,
     SearchResult,
     ServerError,
+    SemanticChunkMetadataUpdateRequest,
+    SemanticChunkMetadataUpdateResult,
 )
 
 DOC_STORE_COMMANDS: tuple[str, ...] = (
@@ -71,12 +75,14 @@ DOC_STORE_COMMANDS: tuple[str, ...] = (
     "entity_get",
     "entity_update",
     "entity_rebind_owner",
+    "entity_owner_tree",
     "entity_soft_delete",
     "entity_undelete",
     "entity_hard_delete",
     "entity_references",
     "chunk_query_search",
     "semantic_relations",
+    "semantic_chunk_metadata_update",
     "corpus_audit",
     "embeddings_rebuild",
     "help",
@@ -288,6 +294,11 @@ class DocStoreClient:
     ) -> Any:
         return await self.call("entity_rebind_owner", params, **kwargs)
 
+    async def entity_owner_tree(
+        self, params: Mapping[str, Any] | None = None, **kwargs: Any
+    ) -> Any:
+        return await self.call("entity_owner_tree", params, **kwargs)
+
     async def entity_soft_delete(
         self, params: Mapping[str, Any] | None = None, **kwargs: Any
     ) -> Any:
@@ -317,6 +328,11 @@ class DocStoreClient:
         self, params: Mapping[str, Any] | None = None, **kwargs: Any
     ) -> Any:
         return await self.call("semantic_relations", params, **kwargs)
+
+    async def semantic_chunk_metadata_update(
+        self, params: Mapping[str, Any] | None = None, **kwargs: Any
+    ) -> Any:
+        return await self.call("semantic_chunk_metadata_update", params, **kwargs)
 
     async def corpus_audit(
         self, params: Mapping[str, Any] | None = None, **kwargs: Any
@@ -480,6 +496,19 @@ class DocStoreClient:
 
     async def get_entity_references(self, request: EntityReferencesRequest) -> EntityReferencesResult:
         return await self._execute("entity_references", request.to_params(), EntityReferencesResult)
+
+    async def get_entity_owner_tree(self, request: EntityOwnerTreeRequest) -> EntityOwnerTreeResult:
+        return await self._execute("entity_owner_tree", request.to_params(), EntityOwnerTreeResult)
+
+    async def update_semantic_chunk_metadata(
+        self,
+        request: SemanticChunkMetadataUpdateRequest,
+    ) -> SemanticChunkMetadataUpdateResult:
+        return await self._execute(
+            "semantic_chunk_metadata_update",
+            request.to_params(),
+            SemanticChunkMetadataUpdateResult,
+        )
 
     async def search(self, query: ChunkQuery) -> SearchResult:
         return await self._execute("chunk_query_search", {"query": _dump_query(query)}, SearchResult)

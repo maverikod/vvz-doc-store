@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from doc_store_server.commands import registration
 from doc_store_server.commands.info import (
     SECTION_NAMES,
     InfoCommand,
@@ -166,6 +167,30 @@ def test_command_reference_preserves_complete_metadata_and_schema_fields(
         assert entry["schema"]["properties"] == metadata["parameters"]
         assert entry["schema"]["required"] == ["value"]
         assert entry["ai_metadata"]["name"] == name
+
+
+def test_info_command_reference_covers_every_manifest_command() -> None:
+    commands = {
+        entry.command_name: _command_entry(entry.command_name)
+        for entry in registration.DOC_STORE_COMMAND_MANIFEST
+    }
+    data = build_info_document(RegistryFixture(commands)).as_data()
+
+    assert set(data["command_reference"]) == {
+        entry.command_name for entry in registration.DOC_STORE_COMMAND_MANIFEST
+    }
+
+
+def test_info_text_documents_bm25_and_owner_tree_commands(registry: RegistryFixture) -> None:
+    serialized = str(build_info_document(registry).as_data())
+
+    assert "bm25_tokens" in serialized
+    assert "semantic_chunk_tokens" in serialized
+    assert "entity_owner_tree" in serialized
+    assert "entity_rebind_owner" in serialized
+    assert "semantic_chunk_metadata_update" in serialized
+    assert "classification.provider" in serialized
+    assert "review_status='machine'" in serialized
 
 
 def test_unknown_section_has_documented_stable_error() -> None:

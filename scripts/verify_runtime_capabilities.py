@@ -31,9 +31,11 @@ from doc_store_client import (
     EntityGetRequest,
     EntityIdsRequest,
     EntityListRequest,
+    EntityOwnerTreeRequest,
     EntityReferencesRequest,
     ParagraphGetByNumberRequest,
     SearchResult,
+    SemanticChunkMetadataUpdateRequest,
 )
 from mcp_proxy_adapter.client.jsonrpc_client.client import JsonRpcClient
 
@@ -417,7 +419,7 @@ async def _verify_metadata_paradigm(client: DocStoreClient) -> list[Check]:
         "best_practices",
     }
     required_schema_keys = {"type", "properties", "required", "additionalProperties"}
-    for command in ("info", "semantic_relations", "corpus_audit"):
+    for command in ("info", "semantic_relations", "semantic_chunk_metadata_update", "corpus_audit"):
         try:
             help_payload = await client.help(cmdname=command)
         except Exception as exc:
@@ -505,6 +507,10 @@ async def _verify_info_sections(client: DocStoreClient) -> list[Check]:
             "exact_duplicates",
             "entity_update",
             "entity_rebind_owner",
+            "entity_owner_tree",
+            "semantic_chunk_metadata_update",
+            "classification",
+            "bm25_tokens",
             "version",
             "maintenance",
         )
@@ -956,6 +962,77 @@ async def _verify_lifecycle(
         _add_check(checks, "entity_references document", False, repr(exc))
 
     try:
+        tree = await client.get_entity_owner_tree(
+            EntityOwnerTreeRequest(entity_id=document_id, entity_type="documents", max_depth=2, max_children_per_node=20)
+        )
+        _add_check(
+            checks,
+            "entity_owner_tree document",
+            tree.id == document_id
+            and tree.tree.get("id") == document_id
+            and isinstance(tree.tree.get("children"), (list, tuple)),
+            json.dumps(tree.tree, ensure_ascii=False, default=str)[:500],
+        )
+    except Exception as exc:
+        _add_check(checks, "entity_owner_tree document", False, repr(exc))
+
+    try:
+        chunks = await client.list_entities(
+            EntityListRequest(
+                entity_type="semantic_chunks",
+                fields=("id", "block_meta"),
+                filters={"document_id": document_id},
+                limit=1,
+            )
+        )
+        chunk_id = str(chunks.items[0]["id"])
+        update_request = SemanticChunkMetadataUpdateRequest(
+            chunk_id=chunk_id,
+            updates={
+                "category": "runtime_verify",
+                "tags": ["runtime-verify", "classification:machine"],
+                "classification": {
+                    "provider": "runtime-pipeline",
+                    "model": "fixture-classifier",
+                    "model_version": "0",
+                    "confidence": 0.9,
+                    "evidence": "runtime verification fixture",
+                    "review_status": "machine",
+                },
+            },
+            dry_run=True,
+        )
+        dry_run = await client.update_semantic_chunk_metadata(update_request)
+        updated = await client.update_semantic_chunk_metadata(
+            SemanticChunkMetadataUpdateRequest(
+                chunk_id=chunk_id,
+                updates=update_request.updates,
+            )
+        )
+        reread = await client.list_entities(
+            EntityListRequest(
+                entity_type="semantic_chunks",
+                fields=("id", "block_meta"),
+                filters={"id": chunk_id},
+                limit=1,
+            )
+        )
+        meta = reread.items[0].get("block_meta") if reread.items else {}
+        _add_check(
+            checks,
+            "semantic_chunk_metadata_update",
+            dry_run.outcome == "dry_run"
+            and updated.updated == 1
+            and isinstance(meta, Mapping)
+            and meta.get("category") == "runtime_verify"
+            and isinstance(meta.get("classification"), Mapping)
+            and meta["classification"].get("model") == "fixture-classifier",
+            json.dumps({"chunk_id": chunk_id, "meta": meta}, ensure_ascii=False, default=str)[:500],
+        )
+    except Exception as exc:
+        _add_check(checks, "semantic_chunk_metadata_update", False, repr(exc))
+
+    try:
         deleted = await client.soft_delete_entities(EntityIdsRequest(entity_type="documents", ids=(document_id,)))
         hidden = await client.list_entities(EntityListRequest(entity_type="documents", filters={"id": document_id}, limit=5))
         shown = await client.list_entities(
@@ -1066,6 +1143,8 @@ async def _run(args: argparse.Namespace) -> int:
         "entity_undelete",
         "entity_hard_delete",
         "entity_references",
+        "entity_owner_tree",
+        "semantic_chunk_metadata_update",
         "chunk_query_search",
         "semantic_relations",
         "corpus_audit",

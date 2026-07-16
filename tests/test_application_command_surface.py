@@ -20,6 +20,7 @@ from doc_store_server.commands.entity_lifecycle_commands import (
     EntityGetCommand,
     EntityHardDeleteCommand,
     EntityListCommand,
+    EntityOwnerTreeCommand,
     EntityRebindOwnerCommand,
     EntityReferencesCommand,
     EntitySoftDeleteCommand,
@@ -41,6 +42,9 @@ from doc_store_server.commands.retrieval_commands import (
     ParagraphGetCommand,
 )
 from doc_store_server.commands.semantic_relations_command import SemanticRelationsCommand
+from doc_store_server.commands.semantic_chunk_metadata_command import (
+    SemanticChunkMetadataUpdateCommand,
+)
 from doc_store_server.commands.uuid4_command import Uuid4Command
 from doc_store_server.commands.vectorization_command import EmbeddingsRebuildCommand
 
@@ -66,12 +70,14 @@ EXPECTED_COMMANDS = {
     "entity_get": (EntityGetCommand, "sync"),
     "entity_update": (EntityUpdateCommand, "sync"),
     "entity_rebind_owner": (EntityRebindOwnerCommand, "sync"),
+    "entity_owner_tree": (EntityOwnerTreeCommand, "sync"),
     "entity_soft_delete": (EntitySoftDeleteCommand, "sync"),
     "entity_undelete": (EntityUndeleteCommand, "sync"),
     "entity_hard_delete": (EntityHardDeleteCommand, "sync"),
     "entity_references": (EntityReferencesCommand, "sync"),
     "chunk_query_search": (ChunkQuerySearchCommand, "sync"),
     "semantic_relations": (SemanticRelationsCommand, "sync"),
+    "semantic_chunk_metadata_update": (SemanticChunkMetadataUpdateCommand, "sync"),
     "corpus_audit": (CorpusAuditCommand, "sync"),
     "embeddings_rebuild": (EmbeddingsRebuildCommand, "queue"),
 }
@@ -286,6 +292,9 @@ class FakeLifecycle:
     def references_for(self, **kwargs: Any) -> dict[str, Any]:
         return {"entity_type": kwargs["entity_type"], "id": kwargs["entity_id"], "references": []}
 
+    def owner_tree(self, **kwargs: Any) -> dict[str, Any]:
+        return {"entity_type": "documents", "id": kwargs["entity_id"], "tree": {"id": kwargs["entity_id"], "preview": "", "children": []}}
+
 
 @pytest.mark.parametrize(
     ("command_class", "params", "context"),
@@ -315,6 +324,7 @@ class FakeLifecycle:
         (EntityListCommand, {"entity_type": "documents"}, {"entity_lifecycle_boundary": FakeLifecycle()}),
         (EntityGetCommand, {"entity_type": "documents", "entity_id": "550e8400-e29b-41d4-a716-446655440001"}, {"entity_lifecycle_boundary": FakeLifecycle()}),
         (EntityUpdateCommand, {"entity_type": "files", "entity_id": "550e8400-e29b-41d4-a716-446655440009", "values": {"owner_id": "550e8400-e29b-41d4-a716-446655440001"}}, {"entity_lifecycle_boundary": FakeLifecycle()}),
+        (EntityOwnerTreeCommand, {"entity_id": "550e8400-e29b-41d4-a716-446655440001"}, {"entity_lifecycle_boundary": FakeLifecycle()}),
         (EntitySoftDeleteCommand, {"entity_type": "documents", "ids": ["550e8400-e29b-41d4-a716-446655440001"]}, {"entity_lifecycle_boundary": FakeLifecycle()}),
         (EntityUndeleteCommand, {"entity_type": "documents", "ids": ["550e8400-e29b-41d4-a716-446655440001"]}, {"entity_lifecycle_boundary": FakeLifecycle()}),
         (EntityHardDeleteCommand, {"entity_type": "documents", "ids": ["550e8400-e29b-41d4-a716-446655440001"]}, {"entity_lifecycle_boundary": FakeLifecycle()}),

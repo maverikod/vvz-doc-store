@@ -29,6 +29,8 @@ from .models import (
     EntityLifecycleResult,
     EntityListRequest,
     EntityListResult,
+    EntityOwnerTreeRequest,
+    EntityOwnerTreeResult,
     EntityReferencesRequest,
     EntityReferencesResult,
     OperationState,
@@ -43,6 +45,8 @@ from .models import (
     RetrievalResult,
     SearchResult,
     ServerError,
+    SemanticChunkMetadataUpdateRequest,
+    SemanticChunkMetadataUpdateResult,
 )
 
 try:
@@ -78,6 +82,8 @@ __all__ = [
     "EntityLifecycleResult",
     "EntityListRequest",
     "EntityListResult",
+    "EntityOwnerTreeRequest",
+    "EntityOwnerTreeResult",
     "EntityReferencesRequest",
     "EntityReferencesResult",
     "OperationState",
@@ -92,4 +98,6 @@ __all__ = [
     "RetrievalResult",
     "SearchResult",
     "ServerError",
+    "SemanticChunkMetadataUpdateRequest",
+    "SemanticChunkMetadataUpdateResult",
 ]

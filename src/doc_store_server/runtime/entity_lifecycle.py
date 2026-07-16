@@ -14,6 +14,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Connection
 
 from doc_store_server.db.health import database_url_from_config
+from doc_store_server.runtime.previews import chunk_preview
 
 
 ENTITY_TABLES: dict[str, str] = {
@@ -120,6 +121,7 @@ DEFAULT_FIELDS: dict[str, tuple[str, ...]] = {
 }
 
 LIST_TABLES = frozenset(DEFAULT_FIELDS)
+OWNER_TREE_TABLE_ORDER = tuple(DEFAULT_FIELDS)
 
 ORDER_BY: dict[str, str] = {
     "chunk_types": "descr ASC, id ASC",
@@ -325,6 +327,46 @@ class EntityLifecycleService:
         with self._connect() as connection:
             references = self.references_to(connection, refs)
         return {"entity_type": table, "id": entity_id, "references": references}
+
+    def owner_tree(
+        self,
+        *,
+        entity_id: str,
+        entity_type: str | None = None,
+        max_depth: int = 5,
+        max_children_per_node: int = 200,
+        include_deleted: bool = False,
+    ) -> dict[str, Any]:
+        if max_depth < 0 or max_depth > 20:
+            raise ValueError("max_depth must be between 0 and 20")
+        if max_children_per_node < 1 or max_children_per_node > 500:
+            raise ValueError("max_children_per_node must be between 1 and 500")
+        parsed_id = UUID(entity_id)
+        expected_table = _entity_table(entity_type) if entity_type else None
+        with self._connect() as connection:
+            table = _registered_table(connection, parsed_id)
+            if table is None:
+                raise LookupError(entity_id)
+            if expected_table is not None and table != expected_table:
+                raise ValueError(f"entity_id belongs to {table}, not {expected_table}")
+            root = _owner_tree_node(
+                connection,
+                table=table,
+                entity_id=parsed_id,
+                depth=0,
+                max_depth=max_depth,
+                max_children_per_node=max_children_per_node,
+                include_deleted=include_deleted,
+                visited=set(),
+            )
+        return {
+            "entity_type": table,
+            "id": str(parsed_id),
+            "max_depth": max_depth,
+            "max_children_per_node": max_children_per_node,
+            "include_deleted": include_deleted,
+            "tree": root,
+        }
 
     def references_to(
         self,
@@ -847,6 +889,127 @@ def _validate_owner(connection: Connection, owner_id: Any) -> None:
     ).scalar_one_or_none()
     if row is None:
         raise ValueError(f"owner_id does not reference a registered entity: {owner_id}")
+
+
+def _registered_table(connection: Connection, entity_id: UUID) -> str | None:
+    table = connection.execute(
+        text("SELECT entity_table FROM entity_uuid_registry WHERE entity_id = :entity_id"),
+        {"entity_id": entity_id},
+    ).scalar_one_or_none()
+    if table is None:
+        return None
+    table_name = str(table)
+    if table_name not in DEFAULT_FIELDS:
+        raise ValueError(f"registered entity table is unsupported: {table_name}")
+    return table_name
+
+
+def _owner_tree_node(
+    connection: Connection,
+    *,
+    table: str,
+    entity_id: UUID,
+    depth: int,
+    max_depth: int,
+    max_children_per_node: int,
+    include_deleted: bool,
+    visited: set[UUID],
+) -> dict[str, Any]:
+    if entity_id in visited:
+        return {
+            "entity_type": table,
+            "id": str(entity_id),
+            "preview": "",
+            "children": [],
+            "cycle": True,
+        }
+    visited.add(entity_id)
+    row = _entity_preview_row(connection, table, entity_id, include_deleted=include_deleted)
+    if row is None:
+        raise LookupError(str(entity_id))
+    node: dict[str, Any] = {
+        "entity_type": table,
+        "id": str(entity_id),
+        "preview": _entity_preview(table, row),
+        "children": [],
+    }
+    if depth >= max_depth:
+        node["truncated"] = True
+        return node
+    children = _owner_children(connection, entity_id, max_children_per_node, include_deleted=include_deleted)
+    node["children"] = [
+        _owner_tree_node(
+            connection,
+            table=child_table,
+            entity_id=child_id,
+            depth=depth + 1,
+            max_depth=max_depth,
+            max_children_per_node=max_children_per_node,
+            include_deleted=include_deleted,
+            visited=set(visited),
+        )
+        for child_table, child_id in children
+    ]
+    if len(children) >= max_children_per_node:
+        node["truncated"] = True
+    return node
+
+
+def _entity_preview_row(
+    connection: Connection,
+    table: str,
+    entity_id: UUID,
+    *,
+    include_deleted: bool,
+) -> Mapping[str, Any] | None:
+    where = ["id = :entity_id"]
+    if not include_deleted:
+        where.append("is_deleted IS FALSE")
+    return connection.execute(
+        text(f"SELECT {', '.join(DEFAULT_FIELDS[table])} FROM {table} WHERE {' AND '.join(where)}"),
+        {"entity_id": entity_id},
+    ).mappings().one_or_none()
+
+
+def _owner_children(
+    connection: Connection,
+    owner_id: UUID,
+    max_children_per_node: int,
+    *,
+    include_deleted: bool,
+) -> list[tuple[str, UUID]]:
+    children: list[tuple[str, UUID]] = []
+    for table in OWNER_TREE_TABLE_ORDER:
+        remaining = max_children_per_node - len(children)
+        if remaining <= 0:
+            break
+        where = ["owner_id = :owner_id"]
+        if not include_deleted:
+            where.append("is_deleted IS FALSE")
+        rows = connection.execute(
+            text(
+                f"SELECT id FROM {table} WHERE {' AND '.join(where)} "
+                f"ORDER BY {ORDER_BY[table]} LIMIT :limit"
+            ),
+            {"owner_id": owner_id, "limit": remaining},
+        ).scalars().all()
+        children.extend((table, row) for row in rows)
+    return children
+
+
+def _entity_preview(table: str, row: Mapping[str, Any]) -> str:
+    candidates = {
+        "projects": (row.get("name"), row.get("description")),
+        "files": (row.get("name"), row.get("path")),
+        "documents": (row.get("title"), row.get("source_name")),
+        "chapters": (row.get("heading"),),
+        "paragraphs": (row.get("text"),),
+        "semantic_chunks": (row.get("text"),),
+    }.get(table, (row.get("descr"),))
+    for value in candidates:
+        if value:
+            return chunk_preview(str(value))
+    return ""
 
 
 def _external_fk_rows(

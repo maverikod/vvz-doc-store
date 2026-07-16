@@ -32,6 +32,8 @@ from doc_store_client.models import (
     EntityLifecycleResult,
     EntityListRequest,
     EntityListResult,
+    EntityOwnerTreeRequest,
+    EntityOwnerTreeResult,
     EntityReferencesRequest,
     EntityReferencesResult,
     ParagraphGetByNumberRequest,
@@ -42,6 +44,8 @@ from doc_store_client.models import (
     ProcessingStatusResult,
     SearchResult,
     ServerError,
+    SemanticChunkMetadataUpdateRequest,
+    SemanticChunkMetadataUpdateResult,
 )
 
 
@@ -280,6 +284,69 @@ def test_document_write_result_preserves_runtime_extra_fields_in_details() -> No
             {"entity_type": "documents", "entity_id": "doc-001"},
             EntityReferencesResult,
             {"entity_type": "documents", "id": "doc-001", "references": []},
+        ),
+        (
+            "get_entity_owner_tree",
+            EntityOwnerTreeRequest(entity_id="doc-001", entity_type="documents", max_depth=2),
+            "entity_owner_tree",
+            {
+                "entity_id": "doc-001",
+                "entity_type": "documents",
+                "max_depth": 2,
+                "max_children_per_node": 200,
+                "include_deleted": False,
+            },
+            EntityOwnerTreeResult,
+            {
+                "entity_type": "documents",
+                "id": "doc-001",
+                "max_depth": 2,
+                "max_children_per_node": 200,
+                "include_deleted": False,
+                "tree": {"id": "doc-001", "preview": "doc", "children": []},
+            },
+        ),
+        (
+            "update_semantic_chunk_metadata",
+            SemanticChunkMetadataUpdateRequest(
+                chunk_id="550e8400-e29b-41d4-a716-446655440000",
+                updates={
+                    "category": "theory",
+                    "tags": ("weak-model", "machine"),
+                    "classification": {
+                        "provider": "local",
+                        "model": "small-open-source-classifier",
+                        "confidence": 0.42,
+                    },
+                },
+                dry_run=True,
+            ),
+            "semantic_chunk_metadata_update",
+            {
+                "chunk_id": "550e8400-e29b-41d4-a716-446655440000",
+                "updates": {
+                    "category": "theory",
+                    "tags": ["weak-model", "machine"],
+                    "classification": {
+                        "provider": "local",
+                        "model": "small-open-source-classifier",
+                        "confidence": 0.42,
+                    },
+                },
+                "limit": 100,
+                "offset": 0,
+                "include_deleted": False,
+                "dry_run": True,
+            },
+            SemanticChunkMetadataUpdateResult,
+            {
+                "outcome": "dry_run",
+                "requested": 1,
+                "matched": 1,
+                "updated": 0,
+                "items": [{"chunk_id": "550e8400-e29b-41d4-a716-446655440000"}],
+                "dry_run": True,
+            },
         ),
         (
             "rebind_document",
@@ -645,6 +712,8 @@ def test_client_facade_has_no_transport_or_server_implementation() -> None:
         "undelete_entities",
         "hard_delete_entities",
         "get_entity_references",
+        "get_entity_owner_tree",
+        "update_semantic_chunk_metadata",
         "search",
     }
     public_facade_methods = typed_facade_methods | set(DOC_STORE_COMMANDS) | {

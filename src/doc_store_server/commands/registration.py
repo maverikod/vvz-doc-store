@@ -21,6 +21,7 @@ from doc_store_server.commands.entity_lifecycle_commands import (
     EntityGetCommand,
     EntityHardDeleteCommand,
     EntityListCommand,
+    EntityOwnerTreeCommand,
     EntityRebindOwnerCommand,
     EntityReferencesCommand,
     EntitySoftDeleteCommand,
@@ -42,6 +43,9 @@ from doc_store_server.commands.retrieval_commands import (
     ParagraphGetCommand,
 )
 from doc_store_server.commands.semantic_relations_command import SemanticRelationsCommand
+from doc_store_server.commands.semantic_chunk_metadata_command import (
+    SemanticChunkMetadataUpdateCommand,
+)
 from doc_store_server.commands.uuid4_command import Uuid4Command
 from doc_store_server.commands.vectorization_command import EmbeddingsRebuildCommand
 
@@ -223,6 +227,14 @@ DOC_STORE_COMMAND_MANIFEST: Final[tuple[CommandManifestEntry, ...]] = (
         "EntityRebindOwnerCommand.get_schema",
     ),
     CommandManifestEntry(
+        "entity_owner_tree",
+        EntityOwnerTreeCommand,
+        "doc_store_server.commands.entity_lifecycle_commands",
+        "sync",
+        "EntityOwnerTreeCommand.metadata",
+        "EntityOwnerTreeCommand.get_schema",
+    ),
+    CommandManifestEntry(
         "entity_soft_delete",
         EntitySoftDeleteCommand,
         "doc_store_server.commands.entity_lifecycle_commands",
@@ -271,6 +283,14 @@ DOC_STORE_COMMAND_MANIFEST: Final[tuple[CommandManifestEntry, ...]] = (
         "SemanticRelationsCommand.get_schema",
     ),
     CommandManifestEntry(
+        "semantic_chunk_metadata_update",
+        SemanticChunkMetadataUpdateCommand,
+        "doc_store_server.commands.semantic_chunk_metadata_command",
+        "sync",
+        "SemanticChunkMetadataUpdateCommand.metadata",
+        "SemanticChunkMetadataUpdateCommand.get_schema",
+    ),
+    CommandManifestEntry(
         "corpus_audit",
         CorpusAuditCommand,
         "doc_store_server.commands.corpus_audit_command",
@@ -301,6 +321,7 @@ DOC_STORE_COMMAND_MODULE_MANIFEST: Final[tuple[str, ...]] = (
     "doc_store_server.commands.entity_lifecycle_commands",
     "doc_store_server.commands.chunk_query_search_command",
     "doc_store_server.commands.semantic_relations_command",
+    "doc_store_server.commands.semantic_chunk_metadata_command",
     "doc_store_server.commands.corpus_audit_command",
     "doc_store_server.commands.vectorization_command",
 )
@@ -347,6 +368,7 @@ __all__ = [
     "EntityGetCommand",
     "EntityHardDeleteCommand",
     "EntityListCommand",
+    "EntityOwnerTreeCommand",
     "EntityRebindOwnerCommand",
     "EntityReferencesCommand",
     "EmbeddingsRebuildCommand",
@@ -358,6 +380,7 @@ __all__ = [
     "ParagraphGetByNumberCommand",
     "ParagraphGetCommand",
     "ProcessingStatusCommand",
+    "SemanticChunkMetadataUpdateCommand",
     "SemanticRelationsCommand",
     "Uuid4Command",
     "register_doc_store_commands",

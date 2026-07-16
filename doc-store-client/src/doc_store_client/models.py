@@ -23,10 +23,18 @@ def _payload(model: Any, *, omit_none: bool = True) -> dict[str, Any]:
         value = getattr(model, model_field.name)
         if omit_none and value is None:
             continue
-        if isinstance(value, tuple):
-            value = list(value)
-        result[model_field.name] = value
+        result[model_field.name] = _json_ready(value)
     return result
+
+
+def _json_ready(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {key: _json_ready(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_json_ready(item) for item in value]
+    if isinstance(value, list):
+        return [_json_ready(item) for item in value]
+    return value
 
 
 def _read(cls: type[Any], payload: Payload) -> Any:
@@ -290,6 +298,85 @@ class EntityReferencesResult(PublicModel):
 
 
 @dataclass(frozen=True, kw_only=True)
+class EntityOwnerTreeRequest(PublicModel):
+    entity_id: str
+    entity_type: str | None = None
+    max_depth: int = 5
+    max_children_per_node: int = 200
+    include_deleted: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.entity_id.strip():
+            raise ValueError("entity_id must be non-empty")
+        if self.max_depth < 0 or self.max_depth > 20:
+            raise ValueError("max_depth must be between 0 and 20")
+        if self.max_children_per_node < 1 or self.max_children_per_node > 500:
+            raise ValueError("max_children_per_node must be between 1 and 500")
+
+
+@dataclass(frozen=True, kw_only=True)
+class EntityOwnerTreeResult(PublicModel):
+    entity_type: str
+    id: str
+    tree: Mapping[str, Any]
+    max_depth: int = 5
+    max_children_per_node: int = 200
+    include_deleted: bool = False
+
+
+@dataclass(frozen=True, kw_only=True)
+class SemanticChunkMetadataUpdateRequest(PublicModel):
+    chunk_id: str | None = None
+    chunk_ids: tuple[str, ...] | None = None
+    filters: Mapping[str, Any] | None = None
+    updates: Mapping[str, Any] | None = None
+    items: tuple[Mapping[str, Any], ...] | None = None
+    limit: int = 100
+    offset: int = 0
+    include_deleted: bool = False
+    dry_run: bool = False
+
+    def __post_init__(self) -> None:
+        selector_count = sum(
+            value is not None for value in (self.chunk_id, self.chunk_ids, self.filters)
+        )
+        if self.items is not None:
+            if self.updates is not None or selector_count:
+                raise ValueError("items cannot be combined with selectors or updates")
+            if not self.items:
+                raise ValueError("items must not be empty")
+        else:
+            if self.updates is None:
+                raise ValueError("updates is required without items")
+            if selector_count != 1:
+                raise ValueError("select exactly one of chunk_id, chunk_ids, or filters")
+        if self.chunk_id is not None and not self.chunk_id.strip():
+            raise ValueError("chunk_id must be non-empty")
+        if self.chunk_ids is not None and not self.chunk_ids:
+            raise ValueError("chunk_ids must not be empty")
+        if self.limit < 1 or self.limit > 10000:
+            raise ValueError("limit must be between 1 and 10000")
+        if self.offset < 0:
+            raise ValueError("offset must be non-negative")
+
+
+@dataclass(frozen=True, kw_only=True)
+class SemanticChunkMetadataUpdateResult(PublicModel):
+    outcome: str
+    requested: int
+    matched: int
+    updated: int
+    items: tuple[Mapping[str, Any], ...] = ()
+    dry_run: bool = False
+
+    @classmethod
+    def from_payload(cls, payload: Payload) -> Self:
+        values = dict(payload)
+        values["items"] = tuple(values.get("items", ()))
+        return _read(cls, values)
+
+
+@dataclass(frozen=True, kw_only=True)
 class ProcessingStatusRequest(PublicModel):
     operation_id: str
     document_id: str | None = None
@@ -495,8 +582,10 @@ __all__ = [
     "DocumentRebindRequest", "DocumentRebindResult", "DocumentUpdateRequest", "DocumentUpdateResult",
     "DocumentWriteRequest", "DocumentWriteResult", "EntityGetRequest", "EntityGetResult",
     "EntityIdsRequest", "EntityLifecycleResult", "EntityListRequest", "EntityListResult",
-    "EntityReferencesRequest", "EntityReferencesResult", "OperationState",
+    "EntityOwnerTreeRequest", "EntityOwnerTreeResult", "EntityReferencesRequest",
+    "EntityReferencesResult", "OperationState",
     "ParagraphGetByNumberRequest", "ParagraphGetByNumberResult", "ParagraphGetRequest",
     "ParagraphGetResult", "ProcessingStatusRequest", "ProcessingStatusResult", "RankedSearchHit",
     "RetrievalRequest", "RetrievalResult", "SearchResult", "ServerError",
+    "SemanticChunkMetadataUpdateRequest", "SemanticChunkMetadataUpdateResult",
 ]

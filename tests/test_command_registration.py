@@ -22,6 +22,7 @@ from doc_store_server.commands.entity_lifecycle_commands import (
     EntityGetCommand,
     EntityHardDeleteCommand,
     EntityListCommand,
+    EntityOwnerTreeCommand,
     EntityRebindOwnerCommand,
     EntityReferencesCommand,
     EntitySoftDeleteCommand,
@@ -42,6 +43,9 @@ from doc_store_server.commands.retrieval_commands import (
     ParagraphGetCommand,
 )
 from doc_store_server.commands.semantic_relations_command import SemanticRelationsCommand
+from doc_store_server.commands.semantic_chunk_metadata_command import (
+    SemanticChunkMetadataUpdateCommand,
+)
 from doc_store_server.commands.uuid4_command import Uuid4Command
 from doc_store_server.commands.vectorization_command import EmbeddingsRebuildCommand
 
@@ -251,6 +255,14 @@ def test_manifest_has_exact_command_identity_and_registration_shape() -> None:
             "EntityRebindOwnerCommand.get_schema",
         ),
         (
+            "entity_owner_tree",
+            EntityOwnerTreeCommand,
+            "doc_store_server.commands.entity_lifecycle_commands",
+            "sync",
+            "EntityOwnerTreeCommand.metadata",
+            "EntityOwnerTreeCommand.get_schema",
+        ),
+        (
             "entity_soft_delete",
             EntitySoftDeleteCommand,
             "doc_store_server.commands.entity_lifecycle_commands",
@@ -297,6 +309,14 @@ def test_manifest_has_exact_command_identity_and_registration_shape() -> None:
             "sync",
             "SemanticRelationsCommand.metadata",
             "SemanticRelationsCommand.get_schema",
+        ),
+        (
+            "semantic_chunk_metadata_update",
+            SemanticChunkMetadataUpdateCommand,
+            "doc_store_server.commands.semantic_chunk_metadata_command",
+            "sync",
+            "SemanticChunkMetadataUpdateCommand.metadata",
+            "SemanticChunkMetadataUpdateCommand.get_schema",
         ),
         (
             "corpus_audit",

@@ -14,6 +14,7 @@ from doc_store_server.runtime.vectorization import (
     InMemoryVectorizationStatus,
     RuntimeVectorizationService,
     VectorizationError,
+    _extract_bm25_token_groups,
     _extract_vectors,
     _last_vectorizer_activity_event,
 )
@@ -30,7 +31,10 @@ class _EmbeddingClient:
         assert kwargs["dimension"] == self.dimension
         return {
             "results": [
-                {"embedding": [float(index), float(index + 1)]}
+                {
+                    "embedding": [float(index), float(index + 1)],
+                    "bm25_tokens": [f"token-{index}", "  spaced token  "],
+                }
                 for index, _text in enumerate(texts)
             ],
             "model": "model-a",
@@ -134,6 +138,7 @@ async def test_vectorizer_calls_embed_client_in_text_batches() -> None:
     ]
     assert [record.chunk_id for record in records] == [chunk.chunk_id for chunk in chunks]
     assert all(len(record.vector) == 2 for record in records)
+    assert records[0].bm25_tokens == ("token-0", "spaced token")
 
 
 @pytest.mark.asyncio
@@ -235,11 +240,33 @@ def test_vectorizer_reports_embedding_item_error_before_vector_validation() -> N
         )
 
 
+def test_vectorizer_extracts_optional_bm25_tokens_from_embedding_items() -> None:
+    groups = _extract_bm25_token_groups(
+        {
+            "results": [
+                {"embedding": [0.0, 1.0], "bm25_tokens": ["alpha", "  beta  ", ""]},
+                {"embedding": [1.0, 2.0]},
+            ]
+        },
+        expected_count=2,
+    )
+
+    assert groups == (("alpha", "beta"), None)
+
+
+def test_vectorizer_rejects_malformed_bm25_tokens() -> None:
+    with pytest.raises(VectorizationError, match="bm25_tokens 0 is not a sequence"):
+        _extract_bm25_token_groups({"results": [{"bm25_tokens": "alpha"}]}, expected_count=1)
+
+
 def test_vectorizer_embedding_persistence_is_idempotent_for_same_model_version() -> None:
     source = inspect.getsource(RuntimeVectorizationService._persist_vectors)
 
     assert "ON CONFLICT ON CONSTRAINT uq_semantic_chunk_embeddings_version" in source
     assert "DO UPDATE SET vector = EXCLUDED.vector, active = TRUE" in source
+    assert "DELETE FROM semantic_chunk_tokens" in source
+    assert "INSERT INTO semantic_chunk_tokens" in source
+    assert "bm25_tokens" in source
 
 
 def test_vectorizer_unavailable_log_is_suppressed_until_recovery(tmp_path, monkeypatch) -> None:

@@ -33,6 +33,7 @@ class ChunkVectorInput:
 class ChunkVectorRecord:
     chunk_id: UUID
     vector: tuple[float, ...]
+    bm25_tokens: tuple[str, ...] | None = None
 
 
 class InMemoryVectorizationStatus:
@@ -375,9 +376,10 @@ class RuntimeVectorizationService:
             except Exception as exc:
                 raise VectorizationError(f"embedding client failed: {exc}") from exc
             vectors = _extract_vectors(response, expected_count=len(batch), config=config)
+            bm25_tokens = _extract_bm25_token_groups(response, expected_count=len(batch))
             records.extend(
-                ChunkVectorRecord(chunk_id=item.chunk_id, vector=vector)
-                for item, vector in zip(batch, vectors, strict=True)
+                ChunkVectorRecord(chunk_id=item.chunk_id, vector=vector, bm25_tokens=tokens)
+                for item, vector, tokens in zip(batch, vectors, bm25_tokens, strict=True)
             )
         return tuple(records)
 
@@ -419,6 +421,30 @@ class RuntimeVectorizationService:
                             "model_version": config.model_version,
                         },
                     )
+                    if record.bm25_tokens is not None:
+                        connection.execute(
+                            text(
+                                "DELETE FROM semantic_chunk_tokens "
+                                "WHERE chunk_uuid = :chunk_uuid AND token_kind = 'bm25_tokens'"
+                            ),
+                            {"chunk_uuid": record.chunk_id},
+                        )
+                        if record.bm25_tokens:
+                            connection.execute(
+                                text(
+                                    "INSERT INTO semantic_chunk_tokens "
+                                    "(chunk_uuid, token_kind, ordinal, token_value) "
+                                    "VALUES (:chunk_uuid, 'bm25_tokens', :ordinal, :token_value)"
+                                ),
+                                [
+                                    {
+                                        "chunk_uuid": record.chunk_id,
+                                        "ordinal": ordinal,
+                                        "token_value": token_value,
+                                    }
+                                    for ordinal, token_value in enumerate(record.bm25_tokens)
+                                ],
+                            )
                 connection.execute(
                     text(
                         "UPDATE documents SET needs_revectorize = FALSE, updated_at = now() "
@@ -638,6 +664,42 @@ def _extract_vectors(
             raw = item
         vectors.append(_vector(raw, index, config.dimension))
     return tuple(vectors)
+
+
+def _extract_bm25_token_groups(
+    response: Mapping[str, Any],
+    *,
+    expected_count: int,
+) -> tuple[tuple[str, ...] | None, ...]:
+    if not isinstance(response, Mapping):
+        raise VectorizationError("embedding client returned a non-mapping response")
+    results = response.get("results", response.get("embeddings"))
+    if not isinstance(results, Sequence) or isinstance(results, (str, bytes, bytearray)):
+        raise VectorizationError("embedding response must contain a results sequence")
+    if len(results) != expected_count:
+        raise VectorizationError("embedding response count does not match input count")
+    groups: list[tuple[str, ...] | None] = []
+    for index, item in enumerate(results):
+        if not isinstance(item, Mapping) or "bm25_tokens" not in item:
+            groups.append(None)
+            continue
+        groups.append(_bm25_tokens(item["bm25_tokens"], index))
+    return tuple(groups)
+
+
+def _bm25_tokens(value: Any, index: int) -> tuple[str, ...]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
+        raise VectorizationError(f"embedding response bm25_tokens {index} is not a sequence")
+    result: list[str] = []
+    for token_index, token in enumerate(value):
+        if not isinstance(token, str):
+            raise VectorizationError(
+                f"embedding response bm25_tokens {index}.{token_index} is not a string"
+            )
+        normalized = " ".join(token.split())
+        if normalized:
+            result.append(normalized)
+    return tuple(result[:256])
 
 
 def _vector(value: Any, index: int, dimension: int) -> tuple[float, ...]:

@@ -25,6 +25,7 @@ class EntityLifecycleBoundary(Protocol):
     def undelete(self, **kwargs: Any) -> Mapping[str, Any]: ...
     def hard_delete(self, **kwargs: Any) -> Mapping[str, Any]: ...
     def references_for(self, **kwargs: Any) -> Mapping[str, Any]: ...
+    def owner_tree(self, **kwargs: Any) -> Mapping[str, Any]: ...
 
 
 DICTIONARY_ENTITY_TYPES = (
@@ -477,12 +478,88 @@ class EntityReferencesCommand(_EntityCommand):
             return self._error(str(exc))
 
 
+class EntityOwnerTreeCommand(_EntityCommand):
+    name = "entity_owner_tree"
+    descr = "Return the owner_id subordinate entity tree for one registered entity UUID."
+    _description = descr
+
+    @classmethod
+    def get_schema(cls) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "entity_id": {"type": "string", "description": "UUID4 root entity identifier."},
+                "entity_type": {
+                    "type": "string",
+                    "enum": list(ENTITY_TYPES),
+                    "description": "Optional expected entity table/scope for the root id.",
+                },
+                "max_depth": {
+                    "type": "integer",
+                    "description": "Maximum subordinate depth from 0 to 20. Default is 5.",
+                },
+                "max_children_per_node": {
+                    "type": "integer",
+                    "description": "Maximum direct children returned per node from 1 to 500. Default is 200.",
+                },
+                "include_deleted": {
+                    "type": "boolean",
+                    "description": "Include rows marked deleted in the tree.",
+                },
+            },
+            "required": ["entity_id"],
+            "additionalProperties": False,
+        }
+
+    @classmethod
+    def usage_examples(cls) -> list[dict[str, Any]]:
+        return [
+            {
+                "entity_id": "550e8400-e29b-41d4-a716-446655440000",
+                "max_depth": 3,
+                "max_children_per_node": 50,
+            },
+            {
+                "entity_type": "projects",
+                "entity_id": "550e8400-e29b-41d4-a716-446655440000",
+            },
+        ]
+
+    async def execute(
+        self,
+        entity_id: str,
+        entity_type: str | None = None,
+        max_depth: int = 5,
+        max_children_per_node: int = 200,
+        include_deleted: bool = False,
+        context: Mapping[str, Any] | None = None,
+    ) -> CommandResult:
+        boundary = self._boundary(context)
+        if boundary is None:
+            return self._error("Entity lifecycle boundary is unavailable.", code="LIFECYCLE_BOUNDARY_UNAVAILABLE")
+        try:
+            return CommandResult(
+                data=boundary.owner_tree(
+                    entity_id=str(parse_uuid4(entity_id, "entity_id", self.name)),
+                    entity_type=entity_type,
+                    max_depth=max_depth,
+                    max_children_per_node=max_children_per_node,
+                    include_deleted=include_deleted,
+                )
+            )
+        except LookupError as exc:
+            return self._error(str(exc), code="NOT_FOUND")
+        except Exception as exc:
+            return self._error(str(exc))
+
+
 __all__ = [
     "EntityCreateCommand",
     "EntityGetCommand",
     "EntityHardDeleteCommand",
     "EntityLifecycleBoundary",
     "EntityListCommand",
+    "EntityOwnerTreeCommand",
     "EntityRebindOwnerCommand",
     "EntityReferencesCommand",
     "EntitySoftDeleteCommand",
