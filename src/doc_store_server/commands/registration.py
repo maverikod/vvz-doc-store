@@ -12,6 +12,7 @@ from mcp_proxy_adapter.commands.hooks import (
 )
 
 from doc_store_server.commands.chunk_query_search_command import ChunkQuerySearchCommand
+from doc_store_server.commands.corpus_audit_command import CorpusAuditCommand
 from doc_store_server.commands.document_delete_command import DocumentDeleteCommand
 from doc_store_server.commands.document_export_command import DocumentExportCommand
 from doc_store_server.commands.document_rebind_command import DocumentRebindCommand
@@ -39,6 +40,7 @@ from doc_store_server.commands.retrieval_commands import (
     ParagraphGetByNumberCommand,
     ParagraphGetCommand,
 )
+from doc_store_server.commands.semantic_relations_command import SemanticRelationsCommand
 from doc_store_server.commands.uuid4_command import Uuid4Command
 
 
@@ -250,6 +252,22 @@ DOC_STORE_COMMAND_MANIFEST: Final[tuple[CommandManifestEntry, ...]] = (
         "ChunkQuerySearchCommand.metadata",
         "ChunkQuerySearchCommand.get_schema",
     ),
+    CommandManifestEntry(
+        "semantic_relations",
+        SemanticRelationsCommand,
+        "doc_store_server.commands.semantic_relations_command",
+        "sync",
+        "SemanticRelationsCommand.metadata",
+        "SemanticRelationsCommand.get_schema",
+    ),
+    CommandManifestEntry(
+        "corpus_audit",
+        CorpusAuditCommand,
+        "doc_store_server.commands.corpus_audit_command",
+        "sync",
+        "CorpusAuditCommand.metadata",
+        "CorpusAuditCommand.get_schema",
+    ),
 )
 
 DOC_STORE_COMMAND_MODULE_MANIFEST: Final[tuple[str, ...]] = (
@@ -264,6 +282,8 @@ DOC_STORE_COMMAND_MODULE_MANIFEST: Final[tuple[str, ...]] = (
     "doc_store_server.commands.document_delete_command",
     "doc_store_server.commands.entity_lifecycle_commands",
     "doc_store_server.commands.chunk_query_search_command",
+    "doc_store_server.commands.semantic_relations_command",
+    "doc_store_server.commands.corpus_audit_command",
 )
 DOC_STORE_QUEUED_COMMAND_MODULES: Final[tuple[str, ...]] = (
     "doc_store_server.commands.ingestion_commands",
@@ -291,6 +311,7 @@ register_custom_commands_hook(register_doc_store_commands)
 __all__ = [
     "ChunkQuerySearchCommand",
     "CommandManifestEntry",
+    "CorpusAuditCommand",
     "DOC_STORE_COMMAND_MANIFEST",
     "DOC_STORE_COMMAND_MODULE_MANIFEST",
     "DOC_STORE_QUEUED_COMMAND_MODULES",
@@ -315,6 +336,7 @@ __all__ = [
     "ParagraphGetByNumberCommand",
     "ParagraphGetCommand",
     "ProcessingStatusCommand",
+    "SemanticRelationsCommand",
     "Uuid4Command",
     "register_doc_store_commands",
 ]

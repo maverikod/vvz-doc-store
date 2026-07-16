@@ -11,6 +11,7 @@ import pytest
 
 from doc_store_server.commands import registration
 from doc_store_server.commands.chunk_query_search_command import ChunkQuerySearchCommand
+from doc_store_server.commands.corpus_audit_command import CorpusAuditCommand
 from doc_store_server.commands.document_delete_command import DocumentDeleteCommand
 from doc_store_server.commands.document_export_command import DocumentExportCommand
 from doc_store_server.commands.document_rebind_command import DocumentRebindCommand
@@ -38,6 +39,7 @@ from doc_store_server.commands.retrieval_commands import (
     ParagraphGetByNumberCommand,
     ParagraphGetCommand,
 )
+from doc_store_server.commands.semantic_relations_command import SemanticRelationsCommand
 from doc_store_server.commands.uuid4_command import Uuid4Command
 
 
@@ -66,6 +68,8 @@ EXPECTED_COMMANDS = {
     "entity_hard_delete": (EntityHardDeleteCommand, "sync"),
     "entity_references": (EntityReferencesCommand, "sync"),
     "chunk_query_search": (ChunkQuerySearchCommand, "sync"),
+    "semantic_relations": (SemanticRelationsCommand, "sync"),
+    "corpus_audit": (CorpusAuditCommand, "sync"),
 }
 EXPECTED_METADATA = {
     "name",

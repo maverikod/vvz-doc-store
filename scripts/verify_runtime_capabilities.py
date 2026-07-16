@@ -321,6 +321,284 @@ def _has_vectorization_surface(health: Mapping[str, Any]) -> bool:
     )
 
 
+async def _verify_command_help_surface(
+    client: DocStoreClient,
+    commands: Mapping[str, Any],
+) -> list[Check]:
+    checks: list[Check] = []
+    missing_help: list[str] = []
+    missing_schema: list[str] = []
+
+    for command in sorted(commands):
+        try:
+            help_payload = await client.help(cmdname=command)
+        except Exception as exc:
+            missing_help.append(f"{command}: {exc!r}")
+            continue
+        if not isinstance(help_payload, Mapping):
+            missing_schema.append(command)
+            continue
+        if "schema" in help_payload:
+            continue
+        command_payload = help_payload.get(command)
+        if isinstance(command_payload, Mapping) and "schema" in command_payload:
+            continue
+        missing_schema.append(command)
+
+    _add_check(
+        checks,
+        "command help schemas",
+        not missing_help and not missing_schema,
+        f"{len(commands)} command(s)",
+        {"missing_help": missing_help, "missing_schema": missing_schema},
+    )
+    return checks
+
+
+def _metadata_section(help_payload: Mapping[str, Any], command: str) -> Mapping[str, Any]:
+    if isinstance(help_payload.get("metadata"), Mapping):
+        return help_payload["metadata"]
+    if isinstance(help_payload.get("ai_metadata"), Mapping):
+        return help_payload["ai_metadata"]
+    command_payload = help_payload.get(command)
+    if isinstance(command_payload, Mapping):
+        if isinstance(command_payload.get("metadata"), Mapping):
+            return command_payload["metadata"]
+        if isinstance(command_payload.get("ai_metadata"), Mapping):
+            return command_payload["ai_metadata"]
+    return {}
+
+
+async def _verify_metadata_paradigm(client: DocStoreClient) -> list[Check]:
+    checks: list[Check] = []
+    required_metadata_keys = {
+        "name",
+        "version",
+        "description",
+        "category",
+        "author",
+        "email",
+        "detailed_description",
+        "parameters",
+        "return_value",
+        "usage_examples",
+        "error_cases",
+        "best_practices",
+    }
+    required_schema_keys = {"type", "properties", "required", "additionalProperties"}
+    for command in ("info", "semantic_relations", "corpus_audit"):
+        try:
+            help_payload = await client.help(cmdname=command)
+        except Exception as exc:
+            _add_check(checks, f"metadata paradigm {command}", False, repr(exc))
+            continue
+        if not isinstance(help_payload, Mapping):
+            _add_check(checks, f"metadata paradigm {command}", False, "help payload is not an object")
+            continue
+        metadata = _metadata_section(help_payload, command)
+        schema = help_payload.get("schema")
+        command_payload = help_payload.get(command)
+        if not isinstance(schema, Mapping) and isinstance(command_payload, Mapping):
+            schema = command_payload.get("schema")
+        schema = schema if isinstance(schema, Mapping) else {}
+
+        missing_metadata = sorted(required_metadata_keys - set(metadata))
+        missing_schema = sorted(required_schema_keys - set(schema))
+        parameters = metadata.get("parameters")
+        examples = metadata.get("usage_examples")
+        errors = metadata.get("error_cases")
+        practices = metadata.get("best_practices")
+        detailed = str(metadata.get("detailed_description", ""))
+        return_value = metadata.get("return_value")
+        ok = (
+            not missing_metadata
+            and not missing_schema
+            and isinstance(parameters, Mapping)
+            and isinstance(examples, list)
+            and bool(examples)
+            and isinstance(errors, Mapping)
+            and bool(errors)
+            and isinstance(practices, list)
+            and bool(practices)
+            and isinstance(return_value, Mapping)
+            and len(detailed) >= 80
+        )
+        _add_check(
+            checks,
+            f"metadata paradigm {command}",
+            ok,
+            json.dumps(
+                {
+                    "missing_metadata": missing_metadata,
+                    "missing_schema": missing_schema,
+                    "examples": len(examples) if isinstance(examples, list) else 0,
+                    "errors": len(errors) if isinstance(errors, Mapping) else 0,
+                    "best_practices": len(practices) if isinstance(practices, list) else 0,
+                },
+                ensure_ascii=False,
+            ),
+        )
+    return checks
+
+
+async def _verify_info_sections(client: DocStoreClient) -> list[Check]:
+    checks: list[Check] = []
+    for section in ("semantic_relations", "corpus_audit", "unit_title_editing"):
+        try:
+            result = await client.call("info", {"section": section})
+        except Exception as exc:
+            _add_check(checks, f"info section {section}", False, repr(exc))
+            continue
+        content = result.get("sections", {}).get(section, {}) if isinstance(result, Mapping) else {}
+        _add_check(
+            checks,
+            f"info section {section}",
+            isinstance(result, Mapping)
+            and result.get("selected_section") == section
+            and bool(content.get("content")),
+            str(content.get("content", ""))[:200],
+        )
+    try:
+        full = await client.call("info", {})
+    except Exception as exc:
+        _add_check(checks, "info full technical documentation", False, repr(exc))
+    else:
+        sections = full.get("sections", {}) if isinstance(full, Mapping) else {}
+        reference = full.get("command_reference", {}) if isinstance(full, Mapping) else {}
+        serialized = json.dumps(full, ensure_ascii=False, default=str) if isinstance(full, Mapping) else ""
+        required_fragments = (
+            "semantic_relations",
+            "corpus_audit",
+            "usage_examples",
+            "cosine_distance",
+            "exact_duplicates",
+            "entity_update",
+            "version",
+            "maintenance",
+        )
+        _add_check(
+            checks,
+            "info full technical documentation",
+            isinstance(full, Mapping)
+            and len(sections) >= 20
+            and len(reference) >= 40
+            and all(fragment in serialized for fragment in required_fragments),
+            json.dumps(
+                {
+                    "sections": len(sections),
+                    "commands": len(reference),
+                    "missing_fragments": [
+                        fragment for fragment in required_fragments if fragment not in serialized
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+        )
+    return checks
+
+
+async def _verify_corpus_audit(client: DocStoreClient) -> list[Check]:
+    checks: list[Check] = []
+    mode_params: tuple[tuple[str, Mapping[str, Any]], ...] = (
+        ("unit_title_capabilities", {}),
+        ("inventory", {"limit": 3}),
+        ("corrections", {"limit": 3}),
+        ("conflicts", {"limit": 3}),
+        ("exact_duplicates", {"min_length": 80, "limit": 3}),
+        ("topics", {"limit": 3}),
+    )
+    for mode, extra_params in mode_params:
+        try:
+            result = await client.call("corpus_audit", {"mode": mode, **extra_params})
+        except Exception as exc:
+            _add_check(checks, f"corpus_audit {mode}", False, repr(exc))
+            continue
+        diagnostics = result.get("diagnostics", {}) if isinstance(result, Mapping) else {}
+        title_capabilities = diagnostics.get("unit_title_editing", {})
+        _add_check(
+            checks,
+            f"corpus_audit {mode}",
+            isinstance(result, Mapping)
+            and result.get("status") == "ok"
+            and result.get("mode") == mode
+            and isinstance(title_capabilities, Mapping),
+            json.dumps(result.get("pagination", {}), ensure_ascii=False, default=str)
+            if isinstance(result, Mapping)
+            else "",
+        )
+    return checks
+
+
+async def _verify_semantic_relations(client: DocStoreClient) -> list[Check]:
+    checks: list[Check] = []
+    requests: tuple[tuple[str, Mapping[str, Any]], ...] = (
+        (
+            "chunk similar distance",
+            {
+                "level": "chunk",
+                "relation": "similar",
+                "metric": "cosine_distance",
+                "threshold": 0.2,
+            },
+        ),
+        (
+            "chunk opposite distance",
+            {
+                "level": "chunk",
+                "relation": "opposite",
+                "metric": "cosine_distance",
+                "threshold": 0.8,
+            },
+        ),
+        (
+            "paragraph similar similarity",
+            {
+                "level": "paragraph",
+                "relation": "similar",
+                "metric": "cosine_similarity",
+                "threshold": 0.86,
+            },
+        ),
+    )
+    for name, params in requests:
+        try:
+            result = await client.call(
+                "semantic_relations",
+                {
+                    **params,
+                    "max_candidates": 40,
+                    "max_pairs": 200,
+                    "limit": 3,
+                    "max_group_size": 4,
+                },
+            )
+        except Exception as exc:
+            _add_check(checks, f"semantic_relations {name}", False, repr(exc))
+            continue
+        _add_check(
+            checks,
+            f"semantic_relations {name}",
+            isinstance(result, Mapping)
+            and result.get("status") == "ok"
+            and result.get("model")
+            and result.get("dimension"),
+            json.dumps(
+                {
+                    "groups": len(result.get("groups", []))
+                    if isinstance(result, Mapping)
+                    else 0,
+                    "model": result.get("model") if isinstance(result, Mapping) else None,
+                    "dimension": result.get("dimension")
+                    if isinstance(result, Mapping)
+                    else None,
+                },
+                ensure_ascii=False,
+                default=str,
+            ),
+        )
+    return checks
+
+
 async def _wait_vectorized(
     client: DocStoreClient,
     *,
@@ -728,6 +1006,10 @@ async def _run(args: argparse.Namespace) -> int:
         "entity_hard_delete",
         "entity_references",
         "chunk_query_search",
+        "semantic_relations",
+        "corpus_audit",
+        "info",
+        "uuid4",
         "health",
         "help",
         "transfer_upload_begin",
@@ -740,6 +1022,11 @@ async def _run(args: argparse.Namespace) -> int:
         f"{len(commands)} command(s)",
         {"missing": sorted(required_commands - set(commands))},
     )
+    all_checks.extend(await _verify_command_help_surface(client, commands))
+    all_checks.extend(await _verify_metadata_paradigm(client))
+    all_checks.extend(await _verify_info_sections(client))
+    all_checks.extend(await _verify_corpus_audit(client))
+    all_checks.extend(await _verify_semantic_relations(client))
 
     with tempfile.TemporaryDirectory(prefix="doc-store-runtime-verify-") as temp_root:
         tmpdir = Path(temp_root)

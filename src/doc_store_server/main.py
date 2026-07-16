@@ -146,7 +146,7 @@ def create_server_application(config: ServerConfig | None = None) -> Any:
     return create_app(
         title="doc-store",
         description="doc-store adapter server",
-        version="0.1.28",
+        version="0.1.30",
         app_config=dict(config or {}),
     )
 

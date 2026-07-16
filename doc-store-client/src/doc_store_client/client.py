@@ -52,6 +52,9 @@ DOC_STORE_COMMANDS: tuple[str, ...] = (
     "queue_get_job_logs",
     "queue_list_jobs",
     "queue_health",
+    "health",
+    "info",
+    "uuid4",
     "document_get",
     "chapter_get",
     "paragraph_get",
@@ -59,18 +62,22 @@ DOC_STORE_COMMANDS: tuple[str, ...] = (
     "document_create",
     "document_update",
     "document_chunk",
+    "document_export",
     "document_rebind",
     "processing_status",
     "document_delete",
+    "entity_create",
     "entity_list",
     "entity_get",
+    "entity_update",
     "entity_soft_delete",
     "entity_undelete",
     "entity_hard_delete",
     "entity_references",
     "chunk_query_search",
+    "semantic_relations",
+    "corpus_audit",
     "help",
-    "health",
     "config",
     "reload",
     "settings",
@@ -234,6 +241,11 @@ class DocStoreClient:
     ) -> Any:
         return await self.call("document_chunk", params, **kwargs)
 
+    async def document_export(
+        self, params: Mapping[str, Any] | None = None, **kwargs: Any
+    ) -> Any:
+        return await self.call("document_export", params, **kwargs)
+
     async def document_rebind(
         self, params: Mapping[str, Any] | None = None, **kwargs: Any
     ) -> Any:
@@ -249,6 +261,11 @@ class DocStoreClient:
     ) -> Any:
         return await self.call("document_delete", params, **kwargs)
 
+    async def entity_create(
+        self, params: Mapping[str, Any] | None = None, **kwargs: Any
+    ) -> Any:
+        return await self.call("entity_create", params, **kwargs)
+
     async def entity_list(
         self, params: Mapping[str, Any] | None = None, **kwargs: Any
     ) -> Any:
@@ -258,6 +275,11 @@ class DocStoreClient:
         self, params: Mapping[str, Any] | None = None, **kwargs: Any
     ) -> Any:
         return await self.call("entity_get", params, **kwargs)
+
+    async def entity_update(
+        self, params: Mapping[str, Any] | None = None, **kwargs: Any
+    ) -> Any:
+        return await self.call("entity_update", params, **kwargs)
 
     async def entity_soft_delete(
         self, params: Mapping[str, Any] | None = None, **kwargs: Any
@@ -284,6 +306,16 @@ class DocStoreClient:
     ) -> Any:
         return await self.call("chunk_query_search", params, **kwargs)
 
+    async def semantic_relations(
+        self, params: Mapping[str, Any] | None = None, **kwargs: Any
+    ) -> Any:
+        return await self.call("semantic_relations", params, **kwargs)
+
+    async def corpus_audit(
+        self, params: Mapping[str, Any] | None = None, **kwargs: Any
+    ) -> Any:
+        return await self.call("corpus_audit", params, **kwargs)
+
     async def help(
         self,
         cmdname: str | None = None,
@@ -299,6 +331,12 @@ class DocStoreClient:
 
     async def health(self, params: Mapping[str, Any] | None = None, **kwargs: Any) -> Any:
         return await self.call("health", params, **kwargs)
+
+    async def info(self, params: Mapping[str, Any] | None = None, **kwargs: Any) -> Any:
+        return await self.call("info", params, **kwargs)
+
+    async def uuid4(self, params: Mapping[str, Any] | None = None, **kwargs: Any) -> Any:
+        return await self.call("uuid4", params, **kwargs)
 
     async def config(self, params: Mapping[str, Any] | None = None, **kwargs: Any) -> Any:
         return await self.call("config", params, **kwargs)

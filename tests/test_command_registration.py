@@ -13,6 +13,7 @@ import pytest
 
 from doc_store_server.commands import registration
 from doc_store_server.commands.chunk_query_search_command import ChunkQuerySearchCommand
+from doc_store_server.commands.corpus_audit_command import CorpusAuditCommand
 from doc_store_server.commands.document_delete_command import DocumentDeleteCommand
 from doc_store_server.commands.document_export_command import DocumentExportCommand
 from doc_store_server.commands.document_rebind_command import DocumentRebindCommand
@@ -39,6 +40,7 @@ from doc_store_server.commands.retrieval_commands import (
     ParagraphGetByNumberCommand,
     ParagraphGetCommand,
 )
+from doc_store_server.commands.semantic_relations_command import SemanticRelationsCommand
 from doc_store_server.commands.uuid4_command import Uuid4Command
 
 
@@ -277,6 +279,22 @@ def test_manifest_has_exact_command_identity_and_registration_shape() -> None:
             "sync",
             "ChunkQuerySearchCommand.metadata",
             "ChunkQuerySearchCommand.get_schema",
+        ),
+        (
+            "semantic_relations",
+            SemanticRelationsCommand,
+            "doc_store_server.commands.semantic_relations_command",
+            "sync",
+            "SemanticRelationsCommand.metadata",
+            "SemanticRelationsCommand.get_schema",
+        ),
+        (
+            "corpus_audit",
+            CorpusAuditCommand,
+            "doc_store_server.commands.corpus_audit_command",
+            "sync",
+            "CorpusAuditCommand.metadata",
+            "CorpusAuditCommand.get_schema",
         ),
     ]
     assert _manifest_rows() == expected

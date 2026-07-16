@@ -70,6 +70,9 @@ SECTION_NAMES: Final[tuple[str, ...]] = (
     "semantic_chunk_metadata",
     "checksum_lifecycle",
     "query_and_export",
+    "semantic_relations",
+    "corpus_audit",
+    "unit_title_editing",
     "configuration",
     "secrets_tls_mtls",
     "postgresql_pgvector",
@@ -177,11 +180,69 @@ def build_info_document(registry: CommandHelpRegistry) -> InfoDocument:
             "projected back to adapter-visible enum/category/language values without "
             "duplicating canonical child-table data."
         ),
+        "semantic_relations": (
+            "semantic_relations is the public corpus-wide embedding comparison API. "
+            "It compares stored active semantic_chunk_embeddings at document, file, "
+            "paragraph, or chunk level. The command accepts relation=similar or "
+            "relation=opposite, metric=cosine_distance or cosine_similarity, bounded "
+            "candidate/pair limits, scope filters, and returns groups containing item "
+            "ids, previews, source names, parsed 7d numbers, scores, model, provider, "
+            "model_version, dimension, pagination, and diagnostics. Similar mode "
+            "selects distance below or similarity above the threshold; opposite mode "
+            "selects distance above or similarity below the threshold. Example similar "
+            "call: {\"level\":\"chunk\",\"relation\":\"similar\",\"metric\":\"cosine_distance\","
+            "\"threshold\":0.2,\"max_candidates\":40,\"max_pairs\":200,\"limit\":3}. "
+            "Example opposite call: {\"level\":\"paragraph\",\"relation\":\"opposite\","
+            "\"metric\":\"cosine_similarity\",\"threshold\":0.2,\"project\":\"7d\"}. "
+            "Operational nuances: keep max_candidates and max_pairs bounded on large "
+            "corpora; compare model/provider/model_version/dimension before treating "
+            "scores from different runs as equivalent; use seven_d_number/source_name "
+            "filters for focused analysis; treat groups as candidates until a domain "
+            "review or evaluator worker classifies the relation."
+        ),
+        "corpus_audit": (
+            "corpus_audit is the public indexed-corpus inspection API. Modes are "
+            "inventory, corrections, conflicts, exact_duplicates, topics, and "
+            "unit_title_capabilities. inventory parses 7d-NN identifiers from source "
+            "names or leading text and reports missing, duplicate, non-monotonic, and "
+            "metadata-mismatched numbering. corrections and conflicts return marker "
+            "evidence with locations and previews. exact_duplicates normalizes text "
+            "and groups equal chunk bodies. topics returns an ordered source/topic map. "
+            "unit_title_capabilities documents which hierarchy title fields can be "
+            "edited through current public APIs. Example inventory call: "
+            "{\"mode\":\"inventory\",\"project\":\"7d\",\"limit\":50}. Example corrections "
+            "call: {\"mode\":\"corrections\",\"markers\":[\"корректировка\",\"уточнение\"],"
+            "\"limit\":20}. Example duplicate call: {\"mode\":\"exact_duplicates\","
+            "\"min_length\":120,\"include_aggregators\":false,\"limit\":20}. "
+            "Nuances: corrections/conflicts are evidence finders, not final truth; "
+            "conflict grouping currently combines marker evidence and source/topic "
+            "context, while semantic contradiction classification belongs to the later "
+            "evaluator worker; inventory reports parsed and metadata 7d numbers so "
+            "import mistakes can be separated from source-text numbering."
+        ),
+        "unit_title_editing": (
+            "Current public editing support is deliberately narrow. documents.title "
+            "is editable via entity_update because documents are root CRUD entities. "
+            "chapters.heading exists in the database but chapters are not root update "
+            "targets in entity_update. Paragraphs and semantic chunks have no direct "
+            "title column; title-like values may exist as block_meta.title, but public "
+            "write support is not exposed because changing unit text/metadata must "
+            "preserve search vectors, embeddings, checksums, and ingestion provenance. "
+            "To change a document title, call entity_update with "
+            "{\"entity_type\":\"documents\",\"entity_id\":\"<uuid4>\","
+            "\"updates\":{\"title\":\"New title\"}}. To inspect current support, call "
+            "corpus_audit with {\"mode\":\"unit_title_capabilities\"}. Do not edit "
+            "paragraph or chunk titles by direct database mutation: that would bypass "
+            "checksum, full-text, embedding, and export consistency rules."
+        ),
         "configuration": (
-            "Keep application configuration transport-neutral and pass adapter "
-            "configuration to the adapter-owned application boundary. Configure server "
-            "address, port, logging, database connectivity, queue behavior, and feature "
-            "settings through deployment configuration or environment variables."
+            "Configure doc-store with the installed config JSON, systemd/default "
+            "environment, or process environment. Database settings may be supplied as "
+            "DOC_STORE_DATABASE_URL or DATABASE_URL, or through the configured database "
+            "section consumed by database_url_from_config. Registration metadata, proxy "
+            "URL, server URL, command transport, queue settings, logging, and feature "
+            "flags are passed to mcp-proxy-adapter; doc-store must not create a parallel "
+            "transport stack."
         ),
         "secrets_tls_mtls": (
             "Keep credentials, signing material, and private keys outside source "
@@ -205,9 +266,19 @@ def build_info_document(registry: CommandHelpRegistry) -> InfoDocument:
             "Routine maintenance starts with health, info, processing_status, command "
             "help, database health, migration state, queue/worker status, and service "
             "logs. Before rebuilding or deploying, bump the package and image version, "
-            "build the package, install it into the deployed environment, run database "
-            "migrations if the schema changed, restart the service, and verify live "
-            "health and command availability through the adapter/proxy surface."
+            "and keep client and server versions equal. Build the package, install it "
+            "into the deployed environment, run database migrations if the schema "
+            "changed, restart the service, and verify live health, command help, info, "
+            "runtime ingestion, search, semantic_relations, and corpus_audit through the "
+            "adapter/proxy surface. The deployed post-deploy pipeline is "
+            "scripts/verify_runtime_capabilities.py; it must be run against the real "
+            "server after deploy, not only against local tests. It creates temporary "
+            "documents, verifies file transfer, ingestion, rechunk, rebind, vectorization, "
+            "full-text search, semantic search, retrieval, entity lifecycle, full command "
+            "help schemas, metadata paradigm, info sections, corpus_audit, and "
+            "semantic_relations. Treat a pipeline failure as a release blocker until "
+            "the failing command is fixed, rebuilt with a new version, redeployed, and "
+            "retested."
         ),
         "deployment_systemd": (
             "Run the adapter-owned server entrypoint with the installed package "
