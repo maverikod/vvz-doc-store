@@ -65,13 +65,28 @@ DICTIONARY_REFERENCE_COLUMNS: dict[str, str] = {
     "categories": "category_id",
 }
 
+OWNER_TABLES = frozenset(ENTITY_TABLES.values())
+UPDATED_AT_TABLES = frozenset(
+    {
+        "chunk_types",
+        "chunk_roles",
+        "chunk_statuses",
+        "block_types",
+        "languages",
+        "categories",
+        "projects",
+        "files",
+        "documents",
+    }
+)
+
 DEFAULT_FIELDS: dict[str, tuple[str, ...]] = {
-    "chunk_types": ("id", "descr", "is_deleted", "created_at", "updated_at"),
-    "chunk_roles": ("id", "descr", "is_deleted", "created_at", "updated_at"),
-    "chunk_statuses": ("id", "descr", "is_deleted", "created_at", "updated_at"),
-    "block_types": ("id", "descr", "is_deleted", "created_at", "updated_at"),
-    "languages": ("id", "descr", "is_deleted", "created_at", "updated_at"),
-    "categories": ("id", "descr", "is_deleted", "created_at", "updated_at"),
+    "chunk_types": ("id", "owner_id", "descr", "is_deleted", "created_at", "updated_at"),
+    "chunk_roles": ("id", "owner_id", "descr", "is_deleted", "created_at", "updated_at"),
+    "chunk_statuses": ("id", "owner_id", "descr", "is_deleted", "created_at", "updated_at"),
+    "block_types": ("id", "owner_id", "descr", "is_deleted", "created_at", "updated_at"),
+    "languages": ("id", "owner_id", "descr", "is_deleted", "created_at", "updated_at"),
+    "categories": ("id", "owner_id", "descr", "is_deleted", "created_at", "updated_at"),
     "projects": ("id", "owner_id", "name", "description", "is_deleted", "created_at", "updated_at"),
     "files": (
         "id",
@@ -99,9 +114,9 @@ DEFAULT_FIELDS: dict[str, tuple[str, ...]] = {
         "updated_at",
         "block_meta",
     ),
-    "chapters": ("id", "document_id", "order_index", "heading", "is_deleted", "block_meta"),
-    "paragraphs": ("id", "document_id", "chapter_id", "order_index", "text", "is_deleted", "block_meta"),
-    "semantic_chunks": ("id", "document_id", "paragraph_id", "chapter_id", "order_index", "text", "is_deleted", "block_meta"),
+    "chapters": ("id", "owner_id", "document_id", "order_index", "heading", "is_deleted", "block_meta"),
+    "paragraphs": ("id", "owner_id", "document_id", "chapter_id", "order_index", "text", "is_deleted", "block_meta"),
+    "semantic_chunks": ("id", "owner_id", "document_id", "paragraph_id", "chapter_id", "order_index", "text", "is_deleted", "block_meta"),
 }
 
 LIST_TABLES = frozenset(DEFAULT_FIELDS)
@@ -246,6 +261,40 @@ class EntityLifecycleService:
         if row is None:
             raise LookupError(entity_id)
         return {"entity_type": table, "outcome": "updated", "value": _json_row(row)}
+
+    def rebind_owner(
+        self,
+        *,
+        entity_type: str,
+        ids: Sequence[str],
+        owner_id: str | None,
+    ) -> dict[str, Any]:
+        table = _entity_table(entity_type)
+        if table not in OWNER_TABLES:
+            raise ValueError(f"owner rebind is unsupported for {table}")
+        parsed_ids = [UUID(item) for item in ids]
+        if not parsed_ids:
+            raise ValueError("ids must not be empty")
+        parsed_owner = UUID(owner_id) if owner_id is not None else None
+        selected = DEFAULT_FIELDS[table]
+        updated_at = ", updated_at = now()" if table in UPDATED_AT_TABLES else ""
+        with self._transaction() as connection:
+            _validate_owner(connection, parsed_owner)
+            rows = connection.execute(
+                text(
+                    f"UPDATE {table} SET owner_id = :owner_id{updated_at} "
+                    "WHERE id = ANY(CAST(:ids AS uuid[])) "
+                    f"RETURNING {', '.join(selected)}"
+                ),
+                {"owner_id": parsed_owner, "ids": [str(item) for item in parsed_ids]},
+            ).mappings().all()
+        return {
+            "entity_type": table,
+            "owner_id": str(parsed_owner) if parsed_owner is not None else None,
+            "requested": len(parsed_ids),
+            "updated": len(rows),
+            "items": [_json_row(row) for row in rows],
+        }
 
     def soft_delete(self, *, entity_type: str, ids: Sequence[str]) -> dict[str, Any]:
         return self._mark_deleted(entity_type=entity_type, ids=ids, deleted=True)
@@ -583,7 +632,7 @@ def _crud_tables() -> set[str]:
 
 def _writable_fields(table: str) -> set[str]:
     if table in DICTIONARY_TABLES:
-        return {"id", "descr", "is_deleted", "deleted_at"}
+        return {"id", "owner_id", "descr", "is_deleted", "deleted_at"}
     fields: dict[str, set[str]] = {
         "projects": {"id", "owner_id", "name", "description", "is_deleted", "deleted_at"},
         "files": {
@@ -776,7 +825,7 @@ def _add_owner_children(
     owner_id: UUID,
 ) -> bool:
     changed = False
-    for table in ("projects", "documents", "files"):
+    for table in OWNER_TABLES:
         rows = connection.execute(
             text(f"SELECT id FROM {table} WHERE owner_id = :owner_id"),
             {"owner_id": owner_id},
@@ -835,7 +884,7 @@ def _external_owner_rows(
     deleting: set[tuple[str, UUID]],
 ) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
-    for table in ("projects", "documents", "files"):
+    for table in OWNER_TABLES:
         rows = connection.execute(
             text(f"SELECT id FROM {table} WHERE owner_id = :target_id"),
             {"target_id": target_id},

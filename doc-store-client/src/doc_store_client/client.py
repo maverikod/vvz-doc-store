@@ -70,6 +70,7 @@ DOC_STORE_COMMANDS: tuple[str, ...] = (
     "entity_list",
     "entity_get",
     "entity_update",
+    "entity_rebind_owner",
     "entity_soft_delete",
     "entity_undelete",
     "entity_hard_delete",
@@ -77,6 +78,7 @@ DOC_STORE_COMMANDS: tuple[str, ...] = (
     "chunk_query_search",
     "semantic_relations",
     "corpus_audit",
+    "embeddings_rebuild",
     "help",
     "config",
     "reload",
@@ -280,6 +282,11 @@ class DocStoreClient:
         self, params: Mapping[str, Any] | None = None, **kwargs: Any
     ) -> Any:
         return await self.call("entity_update", params, **kwargs)
+
+    async def entity_rebind_owner(
+        self, params: Mapping[str, Any] | None = None, **kwargs: Any
+    ) -> Any:
+        return await self.call("entity_rebind_owner", params, **kwargs)
 
     async def entity_soft_delete(
         self, params: Mapping[str, Any] | None = None, **kwargs: Any

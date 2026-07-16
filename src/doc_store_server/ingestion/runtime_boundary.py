@@ -585,9 +585,9 @@ class RuntimeIngestionBoundary:
                 connection.execute(
                     text(
                         "INSERT INTO chapters "
-                        "(id, document_id, order_index, heading, level, source_start, source_end, "
+                        "(id, owner_id, document_id, order_index, heading, level, source_start, source_end, "
                         "block_meta) "
-                        "VALUES (:id, :document_id, 0, :heading, 1, 0, :source_end, "
+                        "VALUES (:id, :document_id, :document_id, 0, :heading, 1, 0, :source_end, "
                         "CAST(:block_meta AS jsonb))"
                     ),
                     {
@@ -631,9 +631,9 @@ class RuntimeIngestionBoundary:
                     connection.execute(
                         text(
                             "INSERT INTO paragraphs "
-                            "(id, document_id, chapter_id, order_index, text, source_start, "
+                            "(id, owner_id, document_id, chapter_id, order_index, text, source_start, "
                             "source_end, search_weight, block_meta) "
-                            "VALUES (:id, :document_id, :chapter_id, :order_index, :body, "
+                            "VALUES (:id, :chapter_id, :document_id, :chapter_id, :order_index, :body, "
                             ":source_start, :source_end, 1, CAST(:block_meta AS jsonb))"
                         ),
                         {
@@ -650,11 +650,11 @@ class RuntimeIngestionBoundary:
                     connection.execute(
                         text(
                             "INSERT INTO semantic_chunks "
-                            "(id, document_id, paragraph_id, chapter_id, order_index, text, "
+                            "(id, owner_id, document_id, paragraph_id, chapter_id, order_index, text, "
                             "source_start, source_end, char_count, chunk_type, chunk_type_id, "
                             "role_id, status_id, block_type_id, language_id, category_id, "
                             "search_weight, block_meta) "
-                            "VALUES (:id, :document_id, :paragraph_id, :chapter_id, "
+                            "VALUES (:id, :paragraph_id, :document_id, :paragraph_id, :chapter_id, "
                             ":order_index, :body, :source_start, :source_end, :char_count, "
                             ":chunk_type, :chunk_type_id, :role_id, :status_id, "
                             ":block_type_id, :language_id, :category_id, 1, "

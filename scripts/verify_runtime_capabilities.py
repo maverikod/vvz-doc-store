@@ -504,6 +504,7 @@ async def _verify_info_sections(client: DocStoreClient) -> list[Check]:
             "cosine_distance",
             "exact_duplicates",
             "entity_update",
+            "entity_rebind_owner",
             "version",
             "maintenance",
         )

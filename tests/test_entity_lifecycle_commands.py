@@ -10,6 +10,7 @@ from doc_store_server.commands.entity_lifecycle_commands import (
     EntityGetCommand,
     EntityHardDeleteCommand,
     EntityListCommand,
+    EntityRebindOwnerCommand,
     EntityReferencesCommand,
     EntitySoftDeleteCommand,
     EntityUpdateCommand,
@@ -33,6 +34,16 @@ class Boundary:
     def update_entity(self, **kwargs: Any) -> dict[str, Any]:
         self.calls.append(("update", kwargs))
         return {"entity_type": kwargs["entity_type"], "outcome": "updated", "value": dict(kwargs["values"])}
+
+    def rebind_owner(self, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(("rebind_owner", kwargs))
+        return {
+            "entity_type": kwargs["entity_type"],
+            "owner_id": kwargs["owner_id"],
+            "requested": len(kwargs["ids"]),
+            "updated": len(kwargs["ids"]),
+            "items": [],
+        }
 
     def get_entity(self, **kwargs: Any) -> dict[str, Any]:
         self.calls.append(("get", kwargs))
@@ -110,6 +121,45 @@ def test_dictionary_create_and_update_use_generic_entity_boundary() -> None:
     assert [name for name, _ in boundary.calls] == ["create", "update"]
 
 
+def test_rebind_owner_delegates_uuid4_checked_batch() -> None:
+    boundary = Boundary()
+    result = asyncio.run(
+        EntityRebindOwnerCommand().execute(
+            entity_type="files",
+            ids=["550e8400-e29b-41d4-a716-446655440001"],
+            owner_id="550e8400-e29b-41d4-a716-446655440002",
+            context={"entity_lifecycle_boundary": boundary},
+        )
+    )
+
+    assert result.success is True
+    assert boundary.calls == [
+        (
+            "rebind_owner",
+            {
+                "entity_type": "files",
+                "ids": ["550e8400-e29b-41d4-a716-446655440001"],
+                "owner_id": "550e8400-e29b-41d4-a716-446655440002",
+            },
+        )
+    ]
+
+
+def test_rebind_owner_accepts_null_owner_for_unbinding() -> None:
+    boundary = Boundary()
+    result = asyncio.run(
+        EntityRebindOwnerCommand().execute(
+            entity_type="semantic_chunks",
+            ids=["550e8400-e29b-41d4-a716-446655440001"],
+            owner_id=None,
+            context={"entity_lifecycle_boundary": boundary},
+        )
+    )
+
+    assert result.success is True
+    assert boundary.calls[0][1]["owner_id"] is None
+
+
 def test_batch_soft_undelete_and_hard_delete_delegate_to_lifecycle_boundary() -> None:
     boundary = Boundary()
     params = {
@@ -171,11 +221,21 @@ def test_entity_commands_reject_non_v4_uuid_fields_before_boundary_delegation() 
             context={"entity_lifecycle_boundary": boundary},
         )
     )
+    rebind_result = asyncio.run(
+        EntityRebindOwnerCommand().execute(
+            entity_type="files",
+            ids=["550e8400-e29b-41d4-a716-446655440001"],
+            owner_id=v1_uuid,
+            context={"entity_lifecycle_boundary": boundary},
+        )
+    )
 
     assert get_result.to_dict()["success"] is False
     assert create_result.to_dict()["success"] is False
+    assert rebind_result.to_dict()["success"] is False
     assert get_result.to_dict()["error"]["data"]["code"] == "INVALID_PARAMS"
     assert create_result.to_dict()["error"]["data"]["code"] == "INVALID_PARAMS"
+    assert rebind_result.to_dict()["error"]["data"]["code"] == "INVALID_PARAMS"
     assert boundary.calls == []
 
 

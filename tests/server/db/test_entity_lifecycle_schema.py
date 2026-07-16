@@ -135,3 +135,30 @@ def test_0011_adds_checksum_lifecycle_flags_and_draft_backfill() -> None:
     downgrade = _offline_sql(migration, "downgrade")
     assert "ALTER TABLE documents DROP COLUMN needs_revectorize" in downgrade
     assert "ALTER TABLE files DROP COLUMN needs_rechunk" in downgrade
+
+
+def test_0013_adds_owner_id_to_all_remaining_entity_tables() -> None:
+    migration = _load("0013_owner_id_all_entities")
+    sql = _offline_sql(migration, "upgrade")
+
+    for table in (
+        "chunk_types",
+        "chunk_roles",
+        "chunk_statuses",
+        "block_types",
+        "languages",
+        "categories",
+        "chapters",
+        "paragraphs",
+        "semantic_chunks",
+    ):
+        assert f"ALTER TABLE {table} ADD COLUMN owner_id" in sql
+        assert f"CREATE INDEX ix_{table}_owner_id" in sql
+
+    assert "UPDATE chapters SET owner_id = document_id" in sql
+    assert "UPDATE paragraphs SET owner_id = chapter_id" in sql
+    assert "UPDATE semantic_chunks SET owner_id = paragraph_id" in sql
+
+    downgrade = _offline_sql(migration, "downgrade")
+    assert "ALTER TABLE semantic_chunks DROP COLUMN owner_id" in downgrade
+    assert "ALTER TABLE chunk_types DROP COLUMN owner_id" in downgrade

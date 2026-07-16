@@ -22,6 +22,7 @@ from doc_store_server.commands.entity_lifecycle_commands import (
     EntityGetCommand,
     EntityHardDeleteCommand,
     EntityListCommand,
+    EntityRebindOwnerCommand,
     EntityReferencesCommand,
     EntitySoftDeleteCommand,
     EntityUpdateCommand,
@@ -42,6 +43,7 @@ from doc_store_server.commands.retrieval_commands import (
 )
 from doc_store_server.commands.semantic_relations_command import SemanticRelationsCommand
 from doc_store_server.commands.uuid4_command import Uuid4Command
+from doc_store_server.commands.vectorization_command import EmbeddingsRebuildCommand
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -241,6 +243,14 @@ def test_manifest_has_exact_command_identity_and_registration_shape() -> None:
             "EntityUpdateCommand.get_schema",
         ),
         (
+            "entity_rebind_owner",
+            EntityRebindOwnerCommand,
+            "doc_store_server.commands.entity_lifecycle_commands",
+            "sync",
+            "EntityRebindOwnerCommand.metadata",
+            "EntityRebindOwnerCommand.get_schema",
+        ),
+        (
             "entity_soft_delete",
             EntitySoftDeleteCommand,
             "doc_store_server.commands.entity_lifecycle_commands",
@@ -295,6 +305,14 @@ def test_manifest_has_exact_command_identity_and_registration_shape() -> None:
             "sync",
             "CorpusAuditCommand.metadata",
             "CorpusAuditCommand.get_schema",
+        ),
+        (
+            "embeddings_rebuild",
+            EmbeddingsRebuildCommand,
+            "doc_store_server.commands.vectorization_command",
+            "queue",
+            "EmbeddingsRebuildCommand.metadata",
+            "EmbeddingsRebuildCommand.get_schema",
         ),
     ]
     assert _manifest_rows() == expected

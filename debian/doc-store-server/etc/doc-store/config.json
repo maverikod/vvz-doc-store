@@ -33,7 +33,7 @@
       "server_id": "doc-store-vvz",
       "server_name": "doc-store",
       "description": "doc-store MCP adapter server",
-      "version": "0.1.40"
+      "version": "0.1.41"
     },
     "instance_uuid": "REPLACE_ON_INSTALL",
     "auto_on_startup": true,

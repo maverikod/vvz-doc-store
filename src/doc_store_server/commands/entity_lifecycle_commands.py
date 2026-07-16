@@ -18,6 +18,7 @@ from doc_store_server.runtime.entity_lifecycle import (
 class EntityLifecycleBoundary(Protocol):
     def create_entity(self, **kwargs: Any) -> Mapping[str, Any]: ...
     def update_entity(self, **kwargs: Any) -> Mapping[str, Any]: ...
+    def rebind_owner(self, **kwargs: Any) -> Mapping[str, Any]: ...
     def list_entities(self, **kwargs: Any) -> Mapping[str, Any]: ...
     def get_entity(self, **kwargs: Any) -> Mapping[str, Any]: ...
     def soft_delete(self, **kwargs: Any) -> Mapping[str, Any]: ...
@@ -264,6 +265,69 @@ class EntityUpdateCommand(_EntityCommand):
             return self._error(str(exc))
 
 
+class EntityRebindOwnerCommand(_EntityCommand):
+    name = "entity_rebind_owner"
+    descr = "Rebind one or more addressable entities to a new owner entity."
+    _description = descr
+
+    @classmethod
+    def get_schema(cls) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "entity_type": {"type": "string", "enum": list(ENTITY_TYPES), "description": "Entity table/scope."},
+                "ids": {"type": "array", "items": {"type": "string"}, "description": "UUID4 entity identifiers to rebind."},
+                "owner_id": {
+                    "type": "string",
+                    "nullable": True,
+                    "description": "New owner UUID4. Use null to clear ownership.",
+                },
+            },
+            "required": ["entity_type", "ids", "owner_id"],
+            "additionalProperties": False,
+        }
+
+    @classmethod
+    def usage_examples(cls) -> list[dict[str, Any]]:
+        return [
+            {
+                "entity_type": "files",
+                "ids": ["550e8400-e29b-41d4-a716-446655440000"],
+                "owner_id": "550e8400-e29b-41d4-a716-446655440001",
+            },
+            {
+                "entity_type": "semantic_chunks",
+                "ids": ["550e8400-e29b-41d4-a716-446655440000"],
+                "owner_id": None,
+            },
+        ]
+
+    async def execute(
+        self,
+        entity_type: str,
+        ids: Sequence[str],
+        owner_id: str | None,
+        context: Mapping[str, Any] | None = None,
+    ) -> CommandResult:
+        boundary = self._boundary(context)
+        if boundary is None:
+            return self._error("Entity lifecycle boundary is unavailable.", code="LIFECYCLE_BOUNDARY_UNAVAILABLE")
+        try:
+            parsed_ids = [str(parse_uuid4(item, "ids", self.name)) for item in ids]
+            parsed_owner = None if owner_id is None else str(parse_uuid4(owner_id, "owner_id", self.name))
+            return CommandResult(
+                data=boundary.rebind_owner(
+                    entity_type=entity_type,
+                    ids=parsed_ids,
+                    owner_id=parsed_owner,
+                )
+            )
+        except LookupError as exc:
+            return self._error(str(exc), code="NOT_FOUND")
+        except Exception as exc:
+            return self._error(str(exc))
+
+
 class EntityGetCommand(_EntityCommand):
     name = "entity_get"
     descr = "Get one addressable entity by UUID."
@@ -419,6 +483,7 @@ __all__ = [
     "EntityHardDeleteCommand",
     "EntityLifecycleBoundary",
     "EntityListCommand",
+    "EntityRebindOwnerCommand",
     "EntityReferencesCommand",
     "EntitySoftDeleteCommand",
     "EntityUpdateCommand",

@@ -70,6 +70,7 @@ SECTION_NAMES: Final[tuple[str, ...]] = (
     "data_model",
     "semantic_chunk_metadata",
     "checksum_lifecycle",
+    "ownership_model",
     "query_and_export",
     "semantic_relations",
     "corpus_audit",
@@ -192,6 +193,22 @@ def build_info_document(registry: CommandHelpRegistry) -> InfoDocument:
             "work to the separate vectorizer when only revectorization is requested, "
             "and batch-marks old hierarchy rows deleted before writing changed chunks "
             "for a new file/version."
+        ),
+        "ownership_model": (
+            "Every addressable entity table exposes a nullable owner_id field: "
+            "projects, files, documents, chapters, paragraphs, semantic_chunks, "
+            "chunk_types, chunk_roles, chunk_statuses, block_types, languages, and "
+            "categories. owner_id references the shared entity_uuid_registry, so an "
+            "owner may be any registered entity, not only a project. The canonical "
+            "hierarchy defaults are file.owner_id -> project when a file is assigned "
+            "to a project, document.owner_id -> file, chapter.owner_id -> document, "
+            "paragraph.owner_id -> chapter, and semantic_chunk.owner_id -> paragraph. "
+            "Use entity_rebind_owner for ownership changes: "
+            "{\"entity_type\":\"files\",\"ids\":[\"<file_uuid4>\"],"
+            "\"owner_id\":\"<project_uuid4>\"}. Use owner_id:null only for explicit "
+            "unbinding. entity_update remains available for single root CRUD rows, "
+            "but entity_rebind_owner is the public command for batch ownership "
+            "changes across all entity scopes."
         ),
         "query_and_export": (
             "Retrieval uses the canonical relational hierarchy plus pgvector "
