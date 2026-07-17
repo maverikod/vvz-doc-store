@@ -19,11 +19,11 @@ class VectorizationBoundary(Protocol):
 
 
 class EmbeddingsRebuildCommand(Command):
-    """Rebuild stored chunk embeddings through the external embed-client."""
+    """Rebuild stored hierarchy embeddings through the external embed-client."""
 
     name: ClassVar[str] = "embeddings_rebuild"
     version: ClassVar[str] = "0.1.0"
-    descr: ClassVar[str] = "Batch-vectorize stored chunks through embed-client."
+    descr: ClassVar[str] = "Batch-vectorize hierarchy entities through embed-client."
     category: ClassVar[str] = "doc-store.vectorization"
     author: ClassVar[str] = "Vasiliy Zdanovskiy"
     email: ClassVar[str] = "vasilyvz@gmail.com"
@@ -53,7 +53,7 @@ class EmbeddingsRebuildCommand(Command):
                 },
                 "dry_run": {
                     "type": "boolean",
-                    "description": "Only report selected documents/chunks; do not call embed-client or write vectors.",
+                    "description": "Only report selected documents/entities; do not call embed-client or write vectors.",
                 },
             },
             "required": [],
@@ -72,19 +72,26 @@ class EmbeddingsRebuildCommand(Command):
             "detailed_description": (
                 "Runs the vectorizer boundary separately from ingestion/chunking. "
                 "It reads documents with needs_revectorize flags in document batches, "
-                "calls embed-client in configured text batches, writes "
-                "semantic_chunk_embeddings in database batches, clears processed flags, "
-                "and records vectorizer_activity.jsonl / vectorizer_processed.jsonl / "
-                "vectorizer_errors.jsonl events. The activity log is written before "
-                "embedding each document and after successful persistence so health can "
-                "show the current file while vectorization is still incomplete. "
+                "vectorizes paragraph and semantic_chunk/sentence text through "
+                "embed-client in configured text batches, then derives document "
+                "vectors as the arithmetic mean of paragraph vectors and file vectors "
+                "as the arithmetic mean of document vectors. This avoids sending very "
+                "large document/file bodies to the embedding service while keeping one "
+                "database-wide model and vector dimension. Embeddings are stored in "
+                "semantic_chunk_embeddings with entity_type/entity_id; semantic chunks "
+                "also keep chunk_uuid for existing semantic search compatibility. The "
+                "command clears processed flags and records vectorizer_activity.jsonl / "
+                "vectorizer_processed.jsonl / vectorizer_errors.jsonl events. The "
+                "activity log is written before embedding each document and after "
+                "successful persistence so health can show the current file while "
+                "vectorization is still incomplete. "
                 "When the embedding service is unavailable the command returns an "
                 "embedding_unavailable status instead of crashing and suppresses repeated "
                 "unavailable log entries until a later successful batch."
             ),
             "parameters": cls.get_schema()["properties"],
             "return_value": {
-                "description": "Status, processed document/chunk counts, selected document ids, and effective embedding metadata."
+                "description": "Status, processed document/entity counts, selected document ids, and effective embedding metadata."
             },
             "usage_examples": [
                 {},
@@ -101,6 +108,7 @@ class EmbeddingsRebuildCommand(Command):
                 "Keep this command queued for large corpora.",
                 "Use dry_run before all_documents=true rebuilds.",
                 "Do not vectorize during chunking; chunking sets flags and this command clears them after successful batches.",
+                "Do not send full document/file text directly to embed-client; top-level vectors are calculated from lower-level averages.",
             ],
         }
 

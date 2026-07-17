@@ -186,11 +186,25 @@ class SemanticChunkLink(Base):
 
 
 class SemanticChunkEmbedding(Base):
-    """Versioned embedding child; inactive rows preserve embedding history."""
+    """Versioned embedding child for any vectorized hierarchy entity.
+
+    ``chunk_uuid`` is retained as the compatibility foreign key used by the
+    existing semantic chunk search path. New non-chunk targets are addressed by
+    ``entity_type`` and ``entity_id``.
+    """
 
     __tablename__ = "semantic_chunk_embeddings"
     __table_args__ = (
         CheckConstraint("dimension > 0", name="semantic_chunk_embeddings_dimension_positive"),
+        UniqueConstraint(
+            "entity_type",
+            "entity_id",
+            "model",
+            "provider",
+            "model_version",
+            "dimension",
+            name="uq_semantic_chunk_embeddings_entity_version",
+        ),
         UniqueConstraint(
             "chunk_uuid",
             "model",
@@ -199,6 +213,7 @@ class SemanticChunkEmbedding(Base):
             "dimension",
             name="uq_semantic_chunk_embeddings_version",
         ),
+        Index("ix_semantic_chunk_embeddings_entity_model", "entity_type", "entity_id", "model", "dimension"),
         Index("ix_semantic_chunk_embeddings_chunk_model", "chunk_uuid", "model", "dimension"),
         Index(
             "ix_semantic_chunk_embeddings_vector_cosine",
@@ -212,13 +227,24 @@ class SemanticChunkEmbedding(Base):
             "model",
             "dimension",
             unique=True,
+            postgresql_where="active IS TRUE AND chunk_uuid IS NOT NULL",
+        ),
+        Index(
+            "uq_semantic_chunk_embeddings_active_entity",
+            "entity_type",
+            "entity_id",
+            "model",
+            "dimension",
+            unique=True,
             postgresql_where="active IS TRUE",
         ),
     )
 
     id: Mapped[UUID] = mapped_column(UUID4, primary_key=True, default=uuid4)
+    entity_type: Mapped[str] = mapped_column(String(64), nullable=False, default="semantic_chunk")
+    entity_id: Mapped[UUID] = mapped_column(UUID4, nullable=False)
     chunk_uuid: Mapped[UUID] = mapped_column(
-        UUID4, ForeignKey("semantic_chunks.id", ondelete="CASCADE"), nullable=False
+        UUID4, ForeignKey("semantic_chunks.id", ondelete="CASCADE"), nullable=True
     )
     vector: Mapped[list[float]] = mapped_column(VECTOR(384), nullable=False)
     model: Mapped[str] = mapped_column(String(256), nullable=False)

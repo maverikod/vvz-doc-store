@@ -27,6 +27,12 @@ class ChunkVectorInput:
     chunk_id: UUID
     document_id: UUID
     body: str
+    entity_type: str = "semantic_chunk"
+    entity_id: UUID | None = None
+
+    @property
+    def vector_entity_id(self) -> UUID:
+        return self.entity_id or self.chunk_id
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +40,13 @@ class ChunkVectorRecord:
     chunk_id: UUID
     vector: tuple[float, ...]
     bm25_tokens: tuple[str, ...] | None = None
+    entity_type: str = "semantic_chunk"
+    entity_id: UUID | None = None
+    document_id: UUID | None = None
+
+    @property
+    def vector_entity_id(self) -> UUID:
+        return self.entity_id or self.chunk_id
 
 
 class InMemoryVectorizationStatus:
@@ -217,7 +230,7 @@ class RuntimeVectorizationService:
                 )
                 if not docs:
                     break
-            chunks = self._select_chunks(docs)
+            chunks = self._select_vector_inputs(docs)
             document_details = self._document_details(docs)
             if dry_run:
                 processed_docs.extend(docs)
@@ -305,13 +318,24 @@ class RuntimeVectorizationService:
         finally:
             engine.dispose()
 
-    def _select_chunks(self, document_ids: Sequence[UUID]) -> tuple[ChunkVectorInput, ...]:
+    def _select_vector_inputs(self, document_ids: Sequence[UUID]) -> tuple[ChunkVectorInput, ...]:
         if not document_ids:
             return ()
         engine = create_engine(self._database_url, pool_pre_ping=True)
         try:
             with engine.connect() as connection:
-                rows = connection.execute(
+                paragraph_rows = connection.execute(
+                    text(
+                        "SELECT p.id, p.document_id, p.text "
+                        "FROM paragraphs AS p "
+                        "WHERE p.deleted_at IS NULL "
+                        "AND p.document_id = ANY(CAST(:document_ids AS uuid[])) "
+                        "AND btrim(p.text) <> '' "
+                        "ORDER BY p.document_id, p.order_index ASC, p.id ASC"
+                    ),
+                    {"document_ids": [str(item) for item in document_ids]},
+                ).mappings().all()
+                chunk_rows = connection.execute(
                     text(
                         "SELECT sc.id, sc.document_id, sct.text "
                         "FROM semantic_chunks AS sc "
@@ -324,14 +348,27 @@ class RuntimeVectorizationService:
                 ).mappings().all()
         finally:
             engine.dispose()
-        return tuple(
+        paragraphs = tuple(
             ChunkVectorInput(
                 chunk_id=row["id"],
+                entity_id=row["id"],
+                entity_type="paragraph",
                 document_id=row["document_id"],
                 body=str(row["text"]),
             )
-            for row in rows
+            for row in paragraph_rows
         )
+        chunks = tuple(
+            ChunkVectorInput(
+                chunk_id=row["id"],
+                entity_id=row["id"],
+                entity_type="semantic_chunk",
+                document_id=row["document_id"],
+                body=str(row["text"]),
+            )
+            for row in chunk_rows
+        )
+        return paragraphs + chunks
 
     def _document_details(self, document_ids: Sequence[UUID]) -> tuple[dict[str, Any], ...]:
         if not document_ids:
@@ -380,7 +417,14 @@ class RuntimeVectorizationService:
             vectors = _extract_vectors(response, expected_count=len(batch), config=config)
             bm25_tokens = _extract_bm25_token_groups(response, expected_count=len(batch))
             records.extend(
-                ChunkVectorRecord(chunk_id=item.chunk_id, vector=vector, bm25_tokens=tokens)
+                ChunkVectorRecord(
+                    chunk_id=item.chunk_id,
+                    entity_id=item.vector_entity_id,
+                    entity_type=item.entity_type,
+                    document_id=item.document_id,
+                    vector=vector,
+                    bm25_tokens=tokens if item.entity_type == "semantic_chunk" else None,
+                )
                 for item, vector, tokens in zip(batch, vectors, bm25_tokens, strict=True)
             )
         return tuple(records)
@@ -394,28 +438,44 @@ class RuntimeVectorizationService:
         engine = create_engine(self._database_url, pool_pre_ping=True)
         try:
             with engine.begin() as connection:
-                chunk_ids = [str(record.chunk_id) for record in vectors]
-                if chunk_ids:
+                all_vectors = tuple(vectors) + self._aggregate_document_file_vectors(
+                    connection,
+                    document_ids,
+                    vectors,
+                )
+                for record in all_vectors:
                     connection.execute(
                         text(
                             "UPDATE semantic_chunk_embeddings SET active = FALSE "
-                            "WHERE chunk_uuid = ANY(CAST(:chunk_ids AS uuid[]))"
+                            "WHERE entity_type = :entity_type "
+                            "AND entity_id = :entity_id "
+                            "AND model = :model "
+                            "AND dimension = :dimension"
                         ),
-                        {"chunk_ids": chunk_ids},
+                        {
+                            "entity_type": record.entity_type,
+                            "entity_id": record.vector_entity_id,
+                            "model": config.model,
+                            "dimension": config.dimension,
+                        },
                     )
-                for record in vectors:
                     connection.execute(
                         text(
                             "INSERT INTO semantic_chunk_embeddings "
-                            "(chunk_uuid, vector, model, dimension, provider, model_version, active) "
-                            "VALUES (:chunk_uuid, CAST(:vector AS vector), :model, :dimension, "
+                            "(entity_type, entity_id, chunk_uuid, vector, model, dimension, "
+                            "provider, model_version, active) "
+                            "VALUES (:entity_type, :entity_id, :chunk_uuid, CAST(:vector AS vector), :model, :dimension, "
                             ":provider, :model_version, TRUE) "
-                            "ON CONFLICT ON CONSTRAINT uq_semantic_chunk_embeddings_version "
+                            "ON CONFLICT ON CONSTRAINT uq_semantic_chunk_embeddings_entity_version "
                             "DO UPDATE SET vector = EXCLUDED.vector, active = TRUE, "
                             "created_at = now()"
                         ),
                         {
-                            "chunk_uuid": record.chunk_id,
+                            "entity_type": record.entity_type,
+                            "entity_id": record.vector_entity_id,
+                            "chunk_uuid": record.vector_entity_id
+                            if record.entity_type == "semantic_chunk"
+                            else None,
                             "vector": _vector_literal(record.vector),
                             "model": config.model,
                             "dimension": config.dimension,
@@ -423,7 +483,7 @@ class RuntimeVectorizationService:
                             "model_version": config.model_version,
                         },
                     )
-                    if record.bm25_tokens is not None:
+                    if record.entity_type == "semantic_chunk" and record.bm25_tokens is not None:
                         connection.execute(
                             text(
                                 "DELETE FROM semantic_chunk_tokens "
@@ -465,13 +525,75 @@ class RuntimeVectorizationService:
         finally:
             engine.dispose()
 
+    def _aggregate_document_file_vectors(
+        self,
+        connection: Any,
+        document_ids: Sequence[UUID],
+        vectors: Sequence[ChunkVectorRecord],
+    ) -> tuple[ChunkVectorRecord, ...]:
+        by_document: dict[UUID, list[tuple[float, ...]]] = {}
+        for record in vectors:
+            if record.entity_type != "paragraph":
+                continue
+            document_id = record.document_id
+            if document_id is not None:
+                by_document.setdefault(document_id, []).append(record.vector)
+        if not by_document:
+            for record in vectors:
+                if record.entity_type != "semantic_chunk":
+                    continue
+                document_id = record.document_id
+                if document_id is not None:
+                    by_document.setdefault(document_id, []).append(record.vector)
+        document_records = tuple(
+            ChunkVectorRecord(
+                chunk_id=document_id,
+                entity_id=document_id,
+                entity_type="document",
+                vector=_mean_vector(items),
+            )
+            for document_id, items in by_document.items()
+            if items
+        )
+        file_rows = connection.execute(
+            text(
+                "SELECT id, owner_id FROM documents "
+                "WHERE id = ANY(CAST(:document_ids AS uuid[])) AND owner_id IS NOT NULL"
+            ),
+            {"document_ids": [str(item) for item in document_ids]},
+        ).mappings().all()
+        document_vectors = {record.vector_entity_id: record.vector for record in document_records}
+        by_file: dict[UUID, list[tuple[float, ...]]] = {}
+        for row in file_rows:
+            vector = document_vectors.get(row["id"])
+            if vector is not None:
+                by_file.setdefault(row["owner_id"], []).append(vector)
+        file_records = tuple(
+            ChunkVectorRecord(
+                chunk_id=file_id,
+                entity_id=file_id,
+                entity_type="file",
+                vector=_mean_vector(items),
+            )
+            for file_id, items in by_file.items()
+            if items
+        )
+        return document_records + file_records
+
     def _log_processed_chunks(self, chunks: Sequence[ChunkVectorInput]) -> None:
         for chunk in chunks:
+            event = (
+                "chunk_vectorized"
+                if chunk.entity_type == "semantic_chunk"
+                else f"{chunk.entity_type}_vectorized"
+            )
             _append_vectorizer_log(
                 "vectorizer_processed.jsonl",
                 {
-                    "event": "chunk_vectorized",
-                    "chunk_id": str(chunk.chunk_id),
+                    "event": event,
+                    "entity_type": chunk.entity_type,
+                    "entity_id": str(chunk.vector_entity_id),
+                    "chunk_id": str(chunk.chunk_id) if chunk.entity_type == "semantic_chunk" else None,
                     "document_id": str(chunk.document_id),
                     "preview": chunk_preview(chunk.body),
                 },
@@ -564,6 +686,8 @@ class RuntimeVectorizationService:
             "documents": [str(item) for item in document_ids],
             "document_count": len(document_ids),
             "chunk_count": len(chunks),
+            "entity_count": len(chunks),
+            "entity_counts": _entity_counts(chunks),
             "embedding": {
                 "provider": config.provider,
                 "model": config.model,
@@ -727,6 +851,29 @@ def _chunk_counts_by_document(chunks: Sequence[ChunkVectorInput]) -> dict[str, i
     return counts
 
 
+def _entity_counts(chunks: Sequence[ChunkVectorInput]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for chunk in chunks:
+        counts[chunk.entity_type] = counts.get(chunk.entity_type, 0) + 1
+    return counts
+
+
+def _mean_vector(vectors: Sequence[Sequence[float]]) -> tuple[float, ...]:
+    if not vectors:
+        raise VectorizationError("cannot average an empty vector set")
+    dimension = len(vectors[0])
+    if dimension <= 0:
+        raise VectorizationError("cannot average empty vectors")
+    totals = [0.0] * dimension
+    for vector in vectors:
+        if len(vector) != dimension:
+            raise VectorizationError("cannot average vectors with different dimensions")
+        for index, value in enumerate(vector):
+            totals[index] += float(value)
+    count = float(len(vectors))
+    return tuple(value / count for value in totals)
+
+
 def _document_detail(row: Mapping[str, Any]) -> dict[str, Any]:
     file_value = (
         row.get("file_path")
@@ -840,17 +987,28 @@ def _document_needs_active_vectors(
             missing = connection.execute(
                 text(
                     "SELECT EXISTS ("
-                    "SELECT 1 FROM semantic_chunks AS c "
+                    "SELECT 1 FROM ("
+                    "SELECT 'document'::text AS entity_type, d.id AS entity_id "
+                    "FROM documents AS d "
+                    "WHERE d.deleted_at IS NULL AND d.id = CAST(:document_id AS uuid) "
+                    "UNION ALL "
+                    "SELECT 'paragraph'::text AS entity_type, p.id AS entity_id "
+                    "FROM paragraphs AS p "
+                    "WHERE p.deleted_at IS NULL AND p.document_id = CAST(:document_id AS uuid) "
+                    "UNION ALL "
+                    "SELECT 'semantic_chunk'::text AS entity_type, c.id AS entity_id "
+                    "FROM semantic_chunks AS c "
+                    "WHERE c.deleted_at IS NULL AND c.document_id = CAST(:document_id AS uuid) "
+                    ") AS targets "
                     "LEFT JOIN semantic_chunk_embeddings AS e "
-                    "ON e.chunk_uuid = c.id "
+                    "ON e.entity_type = targets.entity_type "
+                    "AND e.entity_id = targets.entity_id "
                     "AND e.active IS TRUE "
                     "AND e.provider = :provider "
                     "AND e.model = :model "
                     "AND e.model_version = :model_version "
                     "AND e.dimension = :dimension "
-                    "WHERE c.deleted_at IS NULL "
-                    "AND c.document_id = CAST(:document_id AS uuid) "
-                    "AND e.id IS NULL "
+                    "WHERE e.id IS NULL "
                     ")"
                 ),
                 {

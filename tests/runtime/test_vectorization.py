@@ -17,6 +17,7 @@ from doc_store_server.runtime.vectorization import (
     _extract_bm25_token_groups,
     _extract_vectors,
     _last_vectorizer_activity_event,
+    _mean_vector,
 )
 
 
@@ -90,9 +91,18 @@ class _BatchSelectingVectorizationService(RuntimeVectorizationService):
 
     def _select_chunks(self, document_ids: Any) -> tuple[ChunkVectorInput, ...]:
         return tuple(
-            ChunkVectorInput(chunk_id=uuid4(), document_id=document_id, body=str(document_id))
+            ChunkVectorInput(
+                chunk_id=uuid4(),
+                entity_id=uuid4(),
+                entity_type="paragraph",
+                document_id=document_id,
+                body=str(document_id),
+            )
             for document_id in document_ids
         )
+
+    def _select_vector_inputs(self, document_ids: Any) -> tuple[ChunkVectorInput, ...]:
+        return self._select_chunks(document_ids)
 
     def _document_details(self, document_ids: Any) -> tuple[dict[str, Any], ...]:
         return tuple(
@@ -125,7 +135,13 @@ async def test_vectorizer_calls_embed_client_in_text_batches() -> None:
     client = _EmbeddingClient()
     service = RuntimeVectorizationService("postgresql://unused", client, _config(batch_size=2))
     chunks = tuple(
-        ChunkVectorInput(chunk_id=uuid4(), document_id=uuid4(), body=f"chunk {index}")
+        ChunkVectorInput(
+            chunk_id=uuid4(),
+            entity_id=uuid4(),
+            entity_type="paragraph" if index == 0 else "semantic_chunk",
+            document_id=uuid4(),
+            body=f"chunk {index}",
+        )
         for index in range(5)
     )
 
@@ -138,7 +154,10 @@ async def test_vectorizer_calls_embed_client_in_text_batches() -> None:
     ]
     assert [record.chunk_id for record in records] == [chunk.chunk_id for chunk in chunks]
     assert all(len(record.vector) == 2 for record in records)
-    assert records[0].bm25_tokens == ("token-0", "spaced token")
+    assert records[0].bm25_tokens is None
+    assert records[1].bm25_tokens == ("token-1", "spaced token")
+    assert records[0].entity_type == "paragraph"
+    assert records[1].entity_type == "semantic_chunk"
 
 
 @pytest.mark.asyncio
@@ -259,10 +278,64 @@ def test_vectorizer_rejects_malformed_bm25_tokens() -> None:
         _extract_bm25_token_groups({"results": [{"bm25_tokens": "alpha"}]}, expected_count=1)
 
 
+def test_vectorizer_aggregates_document_and_file_vectors_by_average() -> None:
+    document_id = uuid4()
+    file_id = uuid4()
+    service = RuntimeVectorizationService("postgresql://unused", _EmbeddingClient(), _config())
+
+    class _Result:
+        def mappings(self) -> Any:
+            return self
+
+        def all(self) -> list[dict[str, Any]]:
+            return [{"id": document_id, "owner_id": file_id}]
+
+    class _Connection:
+        def execute(self, *_args: Any, **_kwargs: Any) -> _Result:
+            return _Result()
+
+    records = (
+        ChunkVectorRecord(
+            chunk_id=uuid4(),
+            entity_id=uuid4(),
+            entity_type="paragraph",
+            document_id=document_id,
+            vector=(1.0, 3.0),
+        ),
+        ChunkVectorRecord(
+            chunk_id=uuid4(),
+            entity_id=uuid4(),
+            entity_type="paragraph",
+            document_id=document_id,
+            vector=(3.0, 5.0),
+        ),
+        ChunkVectorRecord(
+            chunk_id=uuid4(),
+            entity_id=uuid4(),
+            entity_type="semantic_chunk",
+            document_id=document_id,
+            vector=(100.0, 100.0),
+        ),
+    )
+
+    aggregate = service._aggregate_document_file_vectors(_Connection(), [document_id], records)
+
+    assert [(item.entity_type, item.vector_entity_id, item.vector) for item in aggregate] == [
+        ("document", document_id, (2.0, 4.0)),
+        ("file", file_id, (2.0, 4.0)),
+    ]
+
+
+def test_mean_vector_rejects_mismatched_dimensions() -> None:
+    with pytest.raises(VectorizationError, match="different dimensions"):
+        _mean_vector(((1.0, 2.0), (1.0,)))
+
+
 def test_vectorizer_embedding_persistence_is_idempotent_for_same_model_version() -> None:
     source = inspect.getsource(RuntimeVectorizationService._persist_vectors)
 
-    assert "ON CONFLICT ON CONSTRAINT uq_semantic_chunk_embeddings_version" in source
+    assert "ON CONFLICT ON CONSTRAINT uq_semantic_chunk_embeddings_entity_version" in source
+    assert "entity_type, entity_id, chunk_uuid" in source
     assert "DO UPDATE SET vector = EXCLUDED.vector, active = TRUE" in source
     assert "DELETE FROM semantic_chunk_tokens" in source
     assert "INSERT INTO semantic_chunk_tokens" in source

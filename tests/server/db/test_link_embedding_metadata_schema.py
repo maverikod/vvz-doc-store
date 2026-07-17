@@ -94,8 +94,8 @@ def test_metadata_has_canonical_link_and_versioned_embedding_relations() -> None
     assert metadata.tables[EMBEDDING_TABLE] is embeddings
     assert set(links.c.keys()) == {"source_chunk_uuid", "relation_type", "target_chunk_uuid", "ordinal", "relation_data"}
     assert set(embeddings.c.keys()) == {
-        "id", "chunk_uuid", "vector", "model", "dimension", "provider", "model_version",
-        "created_at", "active",
+        "id", "entity_type", "entity_id", "chunk_uuid", "vector", "model", "dimension",
+        "provider", "model_version", "created_at", "active",
     }
 
     assert isinstance(LINK_FIELD_ALIASES, MappingProxyType)
@@ -141,9 +141,16 @@ def test_link_constraints_indexes_and_ordered_queries_are_deterministic() -> Non
 
 def test_versioned_embeddings_retain_history_and_select_one_compatible_active_row() -> None:
     embeddings = metadata.tables[EMBEDDING_TABLE]
-    assert {"uq_semantic_chunk_embeddings_version", "ck_semantic_chunk_embeddings_semantic_chunk_embeddings_dimension_positive"} <= _constraint_names(
+    assert {
+        "uq_semantic_chunk_embeddings_version",
+        "uq_semantic_chunk_embeddings_entity_version",
+        "ck_semantic_chunk_embeddings_semantic_chunk_embeddings_dimension_positive",
+    } <= _constraint_names(
         embeddings, (UniqueConstraint, CheckConstraint)
     )
+    assert set(_index(embeddings, "ix_semantic_chunk_embeddings_entity_model").columns) == {
+        embeddings.c.entity_type, embeddings.c.entity_id, embeddings.c.model, embeddings.c.dimension
+    }
     assert set(_index(embeddings, "ix_semantic_chunk_embeddings_chunk_model").columns) == {
         embeddings.c.chunk_uuid, embeddings.c.model, embeddings.c.dimension
     }
@@ -152,7 +159,10 @@ def test_versioned_embeddings_retain_history_and_select_one_compatible_active_ro
     assert vector_index.dialect_options["postgresql"]["ops"] == {"vector": "vector_cosine_ops"}
     active_index = _index(embeddings, "uq_semantic_chunk_embeddings_active_compatibility")
     assert active_index.unique
-    assert active_index.dialect_options["postgresql"]["where"] == "active IS TRUE"
+    assert active_index.dialect_options["postgresql"]["where"] == "active IS TRUE AND chunk_uuid IS NOT NULL"
+    active_entity_index = _index(embeddings, "uq_semantic_chunk_embeddings_active_entity")
+    assert active_entity_index.unique
+    assert active_entity_index.dialect_options["postgresql"]["where"] == "active IS TRUE"
 
     base = datetime(2026, 1, 1, tzinfo=timezone.utc)
     rows = [
@@ -244,12 +254,14 @@ def test_0001_then_0004_round_trip_constraints_cascades_and_root_preservation(po
             with pytest.raises(SQLAlchemyError), connection.begin_nested():
                 connection.execute(text("INSERT INTO semantic_chunk_links (source_chunk_uuid, relation_type, target_chunk_uuid, ordinal, relation_data) VALUES (:source, 'related', :target, -1, '{}'::jsonb)"), {"source": chunk, "target": target})
             with pytest.raises(SQLAlchemyError), connection.begin_nested():
-                connection.execute(text("INSERT INTO semantic_chunk_embeddings (chunk_uuid, vector, model, dimension, provider, model_version, active) VALUES (:chunk, CAST(:vector AS vector), 'm', 0, 'p', '1', true)"), {"chunk": chunk, "vector": _vector_literal(1.0)})
-            connection.execute(text("INSERT INTO semantic_chunk_embeddings (chunk_uuid, vector, model, dimension, provider, model_version, active) VALUES (:chunk, CAST(:vector AS vector), 'm', 384, 'p', '1', false)"), {"chunk": chunk, "vector": _vector_literal(1.0)})
-            connection.execute(text("INSERT INTO semantic_chunk_embeddings (chunk_uuid, vector, model, dimension, provider, model_version, active) VALUES (:chunk, CAST(:vector AS vector), 'm', 384, 'p', '2', true)"), {"chunk": chunk, "vector": _vector_literal(4.0)})
+                connection.execute(text("INSERT INTO semantic_chunk_embeddings (entity_type, entity_id, chunk_uuid, vector, model, dimension, provider, model_version, active) VALUES ('semantic_chunk', :chunk, :chunk, CAST(:vector AS vector), 'm', 0, 'p', '1', true)"), {"chunk": chunk, "vector": _vector_literal(1.0)})
+            connection.execute(text("INSERT INTO semantic_chunk_embeddings (entity_type, entity_id, chunk_uuid, vector, model, dimension, provider, model_version, active) VALUES ('semantic_chunk', :chunk, :chunk, CAST(:vector AS vector), 'm', 384, 'p', '1', false)"), {"chunk": chunk, "vector": _vector_literal(1.0)})
+            connection.execute(text("INSERT INTO semantic_chunk_embeddings (entity_type, entity_id, chunk_uuid, vector, model, dimension, provider, model_version, active) VALUES ('semantic_chunk', :chunk, :chunk, CAST(:vector AS vector), 'm', 384, 'p', '2', true)"), {"chunk": chunk, "vector": _vector_literal(4.0)})
             with pytest.raises(SQLAlchemyError), connection.begin_nested():
-                connection.execute(text("INSERT INTO semantic_chunk_embeddings (chunk_uuid, vector, model, dimension, provider, model_version, active) VALUES (:chunk, CAST(:vector AS vector), 'm', 384, 'q', '3', true)"), {"chunk": chunk, "vector": _vector_literal(7.0)})
+                connection.execute(text("INSERT INTO semantic_chunk_embeddings (entity_type, entity_id, chunk_uuid, vector, model, dimension, provider, model_version, active) VALUES ('semantic_chunk', :chunk, :chunk, CAST(:vector AS vector), 'm', 384, 'q', '3', true)"), {"chunk": chunk, "vector": _vector_literal(7.0)})
+            connection.execute(text("INSERT INTO semantic_chunk_embeddings (entity_type, entity_id, chunk_uuid, vector, model, dimension, provider, model_version, active) VALUES ('document', :document, NULL, CAST(:vector AS vector), 'm', 384, 'p', '1', true)"), {"document": doc, "vector": _vector_literal(9.0)})
             assert connection.execute(text("SELECT count(*) FROM semantic_chunk_embeddings WHERE chunk_uuid = :chunk"), {"chunk": chunk}).scalar() == 2
+            assert connection.execute(text("SELECT count(*) FROM semantic_chunk_embeddings WHERE entity_type = 'document' AND entity_id = :document"), {"document": doc}).scalar() == 1
             assert connection.execute(text("SELECT block_meta->'unknown' FROM semantic_chunks WHERE id = :id"), {"id": chunk}).scalar() == {"keep": [1, 2]}
             connection.execute(text("DELETE FROM semantic_chunks WHERE id = :id"), {"id": chunk})
             assert connection.execute(text("SELECT count(*) FROM semantic_chunk_links WHERE source_chunk_uuid = :id"), {"id": chunk}).scalar() == 0

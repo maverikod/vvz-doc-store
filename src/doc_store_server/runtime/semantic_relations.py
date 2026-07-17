@@ -73,48 +73,36 @@ class SemanticRelationService:
         offset = _bounded_int(offset, "offset", 0, 100000)
 
         params: dict[str, Any] = {
+            "entity_type": "semantic_chunk" if level == "chunk" else level,
             "max_candidates": max_candidates,
             "max_pairs": max_pairs,
         }
-        where = ["sce.active IS TRUE"]
+        candidate_where = ["sce.active IS TRUE", "sce.entity_type = :entity_type"]
         if not include_deleted:
-            where.extend(["sc.deleted_at IS NULL", "d.deleted_at IS NULL"])
+            candidate_where.extend(_candidate_not_deleted(level))
+        filter_where: list[str] = []
         if project is not None:
             params["project"] = project
-            where.append("(sc.block_meta ->> 'project' = :project OR sc.block_meta ->> 'project_id' = :project)")
+            filter_where.append("(filter_meta ->> 'project' = :project OR filter_meta ->> 'project_id' = :project)")
         if document_id is not None:
             params["document_id"] = document_id
-            where.append("sc.document_id = CAST(:document_id AS uuid)")
+            filter_where.append("document_id = :document_id")
         if source_name is not None:
             params["source_name"] = source_name
-            where.append("(d.source_name = :source_name OR d.source_path = :source_name)")
+            filter_where.append("(source_name = :source_name OR source_path = :source_name)")
         if seven_d_number is not None:
             params["seven_d_number"] = f"7d-{seven_d_number:02d}"
-            where.append("(d.source_name ILIKE :seven_d_number || '%' OR sct.text ILIKE :seven_d_number || '%')")
+            filter_where.append("(source_name ILIKE :seven_d_number || '%' OR text ILIKE :seven_d_number || '%')")
 
-        item_expr = _item_id_expr(level)
         sql = f"""
-            WITH candidates AS (
-                SELECT sc.id::text AS chunk_id,
-                       sc.document_id::text AS document_id,
-                       sc.paragraph_id::text AS paragraph_id,
-                       sc.order_index,
-                       sct.text,
-                       sc.block_meta,
-                       d.source_name,
-                       d.source_path,
-                       sce.provider,
-                       sce.model,
-                       sce.model_version,
-                       sce.dimension,
-                       sce.vector,
-                       {item_expr} AS item_id
-                FROM semantic_chunks AS sc
-                JOIN semantic_chunk_texts AS sct ON sct.chunk_uuid = sc.id
-                JOIN semantic_chunk_embeddings AS sce ON sce.chunk_uuid = sc.id
-                JOIN documents AS d ON d.id = sc.document_id
-                WHERE {' AND '.join(where)}
-                ORDER BY d.created_at ASC, sc.order_index ASC, sc.id ASC
+            WITH raw_candidates AS (
+                {_candidate_select_sql(level, candidate_where)}
+            ),
+            candidates AS (
+                SELECT *
+                FROM raw_candidates
+                WHERE {' AND '.join(filter_where) if filter_where else 'TRUE'}
+                ORDER BY sort_created_at ASC NULLS LAST, sort_order_index ASC NULLS LAST, sort_id ASC
                 LIMIT :max_candidates
             )
             SELECT c1.item_id AS left_item_id,
@@ -249,6 +237,132 @@ def unit_title_edit_capabilities() -> dict[str, Any]:
             "note": "semantic chunk text is sentence text stored in semantic_chunk_texts; writes invalidate stale machine metadata",
         },
     }
+
+
+def _candidate_not_deleted(level: str) -> list[str]:
+    if level == "document":
+        return ["d.deleted_at IS NULL"]
+    if level == "file":
+        return ["f.deleted_at IS NULL"]
+    if level == "paragraph":
+        return ["p.deleted_at IS NULL", "d.deleted_at IS NULL"]
+    return ["sc.deleted_at IS NULL", "d.deleted_at IS NULL"]
+
+
+def _candidate_select_sql(level: str, where: Sequence[str]) -> str:
+    where_sql = " AND ".join(where)
+    if level == "document":
+        return f"""
+                SELECT d.id::text AS chunk_id,
+                       d.id::text AS document_id,
+                       NULL::text AS paragraph_id,
+                       NULL::integer AS order_index,
+                       d.title AS text,
+                       d.block_meta AS block_meta,
+                       d.block_meta AS filter_meta,
+                       d.source_name,
+                       d.source_path,
+                       sce.provider,
+                       sce.model,
+                       sce.model_version,
+                       sce.dimension,
+                       sce.vector,
+                       d.id::text AS item_id,
+                       d.created_at AS sort_created_at,
+                       0 AS sort_order_index,
+                       d.id::text AS sort_id
+                FROM semantic_chunk_embeddings AS sce
+                JOIN documents AS d ON d.id = sce.entity_id
+                WHERE {where_sql}
+        """
+    if level == "file":
+        return f"""
+                SELECT f.id::text AS chunk_id,
+                       COALESCE(d.id::text, f.id::text) AS document_id,
+                       NULL::text AS paragraph_id,
+                       NULL::integer AS order_index,
+                       COALESCE(f.name, f.path, d.title, f.id::text) AS text,
+                       COALESCE(f.block_meta, d.block_meta, '{{}}'::jsonb) AS block_meta,
+                       COALESCE(f.block_meta, d.block_meta, '{{}}'::jsonb) AS filter_meta,
+                       COALESCE(d.source_name, f.name) AS source_name,
+                       COALESCE(d.source_path, f.path) AS source_path,
+                       sce.provider,
+                       sce.model,
+                       sce.model_version,
+                       sce.dimension,
+                       sce.vector,
+                       f.id::text AS item_id,
+                       f.created_at AS sort_created_at,
+                       0 AS sort_order_index,
+                       f.id::text AS sort_id
+                FROM semantic_chunk_embeddings AS sce
+                JOIN files AS f ON f.id = sce.entity_id
+                LEFT JOIN LATERAL (
+                    SELECT id, title, source_name, source_path, block_meta
+                    FROM documents
+                    WHERE owner_id = f.id
+                    ORDER BY created_at ASC, id ASC
+                    LIMIT 1
+                ) AS d ON TRUE
+                WHERE {where_sql}
+        """
+    if level == "paragraph":
+        return f"""
+                SELECT COALESCE(first_chunk.id::text, p.id::text) AS chunk_id,
+                       p.document_id::text AS document_id,
+                       p.id::text AS paragraph_id,
+                       p.order_index,
+                       p.text,
+                       p.block_meta AS block_meta,
+                       p.block_meta AS filter_meta,
+                       d.source_name,
+                       d.source_path,
+                       sce.provider,
+                       sce.model,
+                       sce.model_version,
+                       sce.dimension,
+                       sce.vector,
+                       p.id::text AS item_id,
+                       d.created_at AS sort_created_at,
+                       p.order_index AS sort_order_index,
+                       p.id::text AS sort_id
+                FROM semantic_chunk_embeddings AS sce
+                JOIN paragraphs AS p ON p.id = sce.entity_id
+                JOIN documents AS d ON d.id = p.document_id
+                LEFT JOIN LATERAL (
+                    SELECT id
+                    FROM semantic_chunks
+                    WHERE paragraph_id = p.id
+                    ORDER BY order_index ASC, id ASC
+                    LIMIT 1
+                ) AS first_chunk ON TRUE
+                WHERE {where_sql}
+        """
+    return f"""
+                SELECT sc.id::text AS chunk_id,
+                       sc.document_id::text AS document_id,
+                       sc.paragraph_id::text AS paragraph_id,
+                       sc.order_index,
+                       sct.text,
+                       sc.block_meta AS block_meta,
+                       sc.block_meta AS filter_meta,
+                       d.source_name,
+                       d.source_path,
+                       sce.provider,
+                       sce.model,
+                       sce.model_version,
+                       sce.dimension,
+                       sce.vector,
+                       sc.id::text AS item_id,
+                       d.created_at AS sort_created_at,
+                       sc.order_index AS sort_order_index,
+                       sc.id::text AS sort_id
+                FROM semantic_chunk_embeddings AS sce
+                JOIN semantic_chunks AS sc ON sc.id = sce.entity_id
+                JOIN semantic_chunk_texts AS sct ON sct.chunk_uuid = sc.id
+                JOIN documents AS d ON d.id = sc.document_id
+                WHERE {where_sql}
+    """
 
 
 def _item_id_expr(level: str) -> str:
