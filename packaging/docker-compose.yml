@@ -19,6 +19,10 @@ services:
     image: vasilyvz/doc-store:${DOC_STORE_VERSION:-latest}
     container_name: doc-store
     restart: unless-stopped
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
     env_file:
       - /var/doc-store/secrets/.env
     environment:

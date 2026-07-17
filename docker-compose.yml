@@ -17,6 +17,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
     environment:
       DOC_STORE_UID: "${DOC_STORE_UID:-1000}"
       DOC_STORE_GID: "${DOC_STORE_GID:-1000}"
