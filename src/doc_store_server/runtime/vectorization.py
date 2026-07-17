@@ -346,8 +346,61 @@ class RuntimeVectorizationService:
                     ),
                     {"document_ids": [str(item) for item in document_ids]},
                 ).mappings().all()
+                document_rows: Sequence[Mapping[str, Any]] = ()
+                file_rows: Sequence[Mapping[str, Any]] = ()
+                direct_max = self._embedding_config.direct_text_max_chars
+                if direct_max > 0:
+                    document_rows = connection.execute(
+                        text(
+                            "SELECT d.id, d.id AS document_id, "
+                            "string_agg(p.text, E'\\n\\n' ORDER BY p.order_index ASC, p.id ASC) AS text "
+                            "FROM documents AS d "
+                            "JOIN paragraphs AS p ON p.document_id = d.id AND p.deleted_at IS NULL "
+                            "WHERE d.deleted_at IS NULL "
+                            "AND d.id = ANY(CAST(:document_ids AS uuid[])) "
+                            "GROUP BY d.id "
+                            "HAVING sum(char_length(p.text)) <= :direct_max "
+                            "AND btrim(string_agg(p.text, E'\\n\\n' ORDER BY p.order_index ASC, p.id ASC)) <> ''"
+                        ),
+                        {"document_ids": [str(item) for item in document_ids], "direct_max": direct_max},
+                    ).mappings().all()
+                    file_rows = connection.execute(
+                        text(
+                            "SELECT f.id, min(d.id) AS document_id, "
+                            "string_agg(p.text, E'\\n\\n' ORDER BY d.created_at ASC, d.id ASC, p.order_index ASC, p.id ASC) AS text "
+                            "FROM files AS f "
+                            "JOIN documents AS d ON d.owner_id = f.id AND d.deleted_at IS NULL "
+                            "JOIN paragraphs AS p ON p.document_id = d.id AND p.deleted_at IS NULL "
+                            "WHERE f.deleted_at IS NULL "
+                            "AND d.id = ANY(CAST(:document_ids AS uuid[])) "
+                            "GROUP BY f.id "
+                            "HAVING sum(char_length(p.text)) <= :direct_max "
+                            "AND btrim(string_agg(p.text, E'\\n\\n' ORDER BY d.created_at ASC, d.id ASC, p.order_index ASC, p.id ASC)) <> ''"
+                        ),
+                        {"document_ids": [str(item) for item in document_ids], "direct_max": direct_max},
+                    ).mappings().all()
         finally:
             engine.dispose()
+        documents = tuple(
+            ChunkVectorInput(
+                chunk_id=row["id"],
+                entity_id=row["id"],
+                entity_type="document",
+                document_id=row["document_id"],
+                body=str(row["text"]),
+            )
+            for row in document_rows
+        )
+        files = tuple(
+            ChunkVectorInput(
+                chunk_id=row["id"],
+                entity_id=row["id"],
+                entity_type="file",
+                document_id=row["document_id"],
+                body=str(row["text"]),
+            )
+            for row in file_rows
+        )
         paragraphs = tuple(
             ChunkVectorInput(
                 chunk_id=row["id"],
@@ -368,7 +421,7 @@ class RuntimeVectorizationService:
             )
             for row in chunk_rows
         )
-        return paragraphs + chunks
+        return paragraphs + chunks + documents + files
 
     def _document_details(self, document_ids: Sequence[UUID]) -> tuple[dict[str, Any], ...]:
         if not document_ids:
@@ -531,19 +584,23 @@ class RuntimeVectorizationService:
         document_ids: Sequence[UUID],
         vectors: Sequence[ChunkVectorRecord],
     ) -> tuple[ChunkVectorRecord, ...]:
+        direct_documents = {
+            record.vector_entity_id for record in vectors if record.entity_type == "document"
+        }
+        direct_files = {record.vector_entity_id for record in vectors if record.entity_type == "file"}
         by_document: dict[UUID, list[tuple[float, ...]]] = {}
         for record in vectors:
             if record.entity_type != "paragraph":
                 continue
             document_id = record.document_id
-            if document_id is not None:
+            if document_id is not None and document_id not in direct_documents:
                 by_document.setdefault(document_id, []).append(record.vector)
         if not by_document:
             for record in vectors:
                 if record.entity_type != "semantic_chunk":
                     continue
                 document_id = record.document_id
-                if document_id is not None:
+                if document_id is not None and document_id not in direct_documents:
                     by_document.setdefault(document_id, []).append(record.vector)
         document_records = tuple(
             ChunkVectorRecord(
@@ -562,11 +619,15 @@ class RuntimeVectorizationService:
             ),
             {"document_ids": [str(item) for item in document_ids]},
         ).mappings().all()
-        document_vectors = {record.vector_entity_id: record.vector for record in document_records}
+        document_vectors = {
+            record.vector_entity_id: record.vector
+            for record in tuple(document_records) + tuple(vectors)
+            if record.entity_type == "document"
+        }
         by_file: dict[UUID, list[tuple[float, ...]]] = {}
         for row in file_rows:
             vector = document_vectors.get(row["id"])
-            if vector is not None:
+            if vector is not None and row["owner_id"] not in direct_files:
                 by_file.setdefault(row["owner_id"], []).append(vector)
         file_records = tuple(
             ChunkVectorRecord(

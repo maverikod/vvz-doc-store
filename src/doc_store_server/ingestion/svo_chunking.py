@@ -33,6 +33,8 @@ class PublicSvoChunker(Protocol):
 
     async def chunk(self, text: str, **kwargs: Any) -> Sequence[SemanticChunk]: ...
 
+    async def chunk_batch(self, texts: Sequence[str], **kwargs: Any) -> Sequence[Sequence[SemanticChunk]]: ...
+
 
 class SvoChunkingError(ValueError):
     """Raised when capabilities or a chunker result violates the contract."""
@@ -145,6 +147,85 @@ class SvoRuntimeChunker:
                 {"error_type": type(exc).__name__, "message": str(exc)},
             ) from exc
         return _validate_runtime_chunks(raw_chunks, text, source_id)
+
+    async def chunk_batch(
+        self,
+        *,
+        texts: Sequence[str],
+        strategy: str,
+        source_ids: Sequence[str],
+    ) -> tuple[tuple[RuntimeChunk, ...], ...]:
+        if len(texts) != len(source_ids):
+            raise ChunkerError(
+                "CHUNKER_CONTRACT_ERROR",
+                "chunk batch texts and source_ids have different lengths",
+                {"text_count": len(texts), "source_id_count": len(source_ids)},
+            )
+        if not texts:
+            return ()
+        params = _strategy_params(strategy)
+        chunk_set = self._chunk_sets.get(strategy)
+        if chunk_set:
+            params["chunk_set"] = chunk_set
+        if self._language:
+            params["language"] = self._language
+        if self._project:
+            params["project"] = self._project
+        try:
+            source_id = str(source_ids[0]) if len(set(str(item) for item in source_ids)) == 1 else None
+            raw_batches = await self._client.chunk_batch(
+                list(texts),
+                source_id=source_id,
+                chunk_only=True,
+                chunk_type="DocBlock",
+                chunking_version="1.0",
+                **params,
+            )
+        except AttributeError as exc:
+            raise ChunkerError(
+                "CHUNKER_BATCH_UNAVAILABLE",
+                "external chunker client does not support chunk_batch",
+                {"strategy": strategy},
+            ) from exc
+        except ChunkerError:
+            raise
+        except (TimeoutError, OSError) as exc:
+            raise ChunkerError(
+                "CHUNKER_UNAVAILABLE",
+                "external chunker is unavailable",
+                {"error_type": type(exc).__name__, "message": str(exc)},
+            ) from exc
+        except Exception as exc:
+            if _looks_like_connection_error(exc):
+                raise ChunkerError(
+                    "CHUNKER_UNAVAILABLE",
+                    "external chunker is unavailable",
+                    {"error_type": type(exc).__name__, "message": str(exc)},
+                ) from exc
+            raise ChunkerError(
+                "CHUNKER_INTERNAL_ERROR",
+                "external chunker failed",
+                {"error_type": type(exc).__name__, "message": str(exc)},
+            ) from exc
+        if (
+            isinstance(raw_batches, (str, bytes, bytearray))
+            or not isinstance(raw_batches, Sequence)
+            or len(raw_batches) != len(texts)
+        ):
+            raise ChunkerError(
+                "CHUNKER_INVALID_RESPONSE",
+                "external chunker returned an invalid batch response",
+                {"response_type": type(raw_batches).__name__, "expected_count": len(texts)},
+            )
+        if source_id is not None:
+            return tuple(
+                _validate_runtime_chunks(raw_chunks, text, source_id)
+                for raw_chunks, text in zip(raw_batches, texts, strict=True)
+            )
+        return tuple(
+            _validate_runtime_chunks(raw_chunks, text, str(source_id))
+            for raw_chunks, text, source_id in zip(raw_batches, texts, source_ids, strict=True)
+        )
 
 
 def _strategy_params(strategy: str) -> dict[str, Any]:

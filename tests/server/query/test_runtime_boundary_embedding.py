@@ -62,6 +62,7 @@ def _config() -> RuntimeEmbeddingConfig:
         dimension=3,
         device=None,
         batch_size=16,
+        direct_text_max_chars=0,
     )
 
 

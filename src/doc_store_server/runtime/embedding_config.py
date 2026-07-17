@@ -30,6 +30,7 @@ class RuntimeEmbeddingConfig:
     dimension: int
     device: str | None
     batch_size: int
+    direct_text_max_chars: int
 
 
 def runtime_embedding_config(config: Mapping[str, Any] | None = None) -> RuntimeEmbeddingConfig:
@@ -79,6 +80,12 @@ def runtime_embedding_config(config: Mapping[str, Any] | None = None) -> Runtime
         device=_optional(os.getenv("DOC_STORE_EMBEDDING_DEVICE", str(section.get("device", "")))),
         batch_size=int(
             os.getenv("DOC_STORE_EMBEDDING_BATCH_SIZE", str(section.get("batch_size", 16)))
+        ),
+        direct_text_max_chars=int(
+            os.getenv(
+                "DOC_STORE_EMBEDDING_DIRECT_TEXT_MAX_CHARS",
+                str(section.get("direct_text_max_chars", 0)),
+            )
         ),
     )
 

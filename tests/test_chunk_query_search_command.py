@@ -98,6 +98,21 @@ def test_validate_params_preserves_typed_filters_limits_and_semantic_threshold(
     assert query.model_extra == {"limit": 7, "offset": 14}
 
 
+def test_validate_params_keeps_semantic_refinement_outside_chunk_query(
+    command: ChunkQuerySearchCommand,
+) -> None:
+    validated = command.validate_params(
+        {
+            "query": {"search_query": "semantic", "hybrid_search": True},
+            "semantic_refinement": {"enabled": True, "threshold": 0.4, "candidate_limit": 12, "result_limit": 5},
+        }
+    )
+
+    assert type(validated["query"]) is ChunkQuery
+    assert validated["semantic_refinement"]["threshold"] == pytest.approx(0.4)
+    assert "semantic_refinement" not in validated["query"].model_dump()
+
+
 def test_validate_params_rejects_unknown_fields_and_legacy_lark_filter_text(
     command: ChunkQuerySearchCommand,
 ) -> None:
@@ -158,6 +173,25 @@ def test_execute_supports_object_orchestrator_and_async_response(command: ChunkQ
     assert len(owner.calls) == 1
 
 
+def test_execute_passes_semantic_refinement_as_command_context(command: ChunkQuerySearchCommand) -> None:
+    calls: list[dict[str, Any]] = []
+
+    def orchestrator(_: ChunkQuery, **context: Any) -> dict[str, Any]:
+        calls.append(context)
+        return {"status": "success", "data": {"results": []}}
+
+    result = asyncio.run(
+        command.execute(
+            query=ChunkQuery(search_query="semantic"),
+            semantic_refinement={"enabled": True, "threshold": 0.5},
+            context={"search_orchestrator": orchestrator},
+        )
+    )
+
+    assert result.success is True
+    assert calls == [{"semantic_refinement": {"enabled": True, "threshold": 0.5}}]
+
+
 def test_execute_reports_missing_and_failed_orchestrator_with_stable_errors(
     command: ChunkQuerySearchCommand,
 ) -> None:
@@ -181,10 +215,12 @@ def test_schema_and_metadata_are_complete_live_contracts() -> None:
     assert schema["required"] == ["query"]
     assert schema["additionalProperties"] is False
     assert schema["properties"]["query"]["additionalProperties"] is False
+    assert schema["properties"]["semantic_refinement"]["additionalProperties"] is False
     assert set(schema["properties"]["query"]["properties"]) == set(ChunkQuery.model_fields) | {"limit", "offset"}
     assert "offset" in metadata["parameters"]["query"]["properties"]
+    assert "semantic_refinement" in metadata["parameters"]
     assert metadata["name"] == "chunk_query_search"
-    assert metadata["parameters"] == {"query": schema["properties"]["query"]}
+    assert metadata["parameters"] == schema["properties"]
     assert metadata["usage_examples"]
     assert metadata["error_cases"]
     assert metadata["best_practices"]

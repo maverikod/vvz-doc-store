@@ -356,9 +356,9 @@ class RuntimeIngestionBoundary:
             strategy="paragraph",
             source_id=str(prepared.document_id),
         )
-        sentence_chunks = await chunker.chunk(
-            text=prepared.text_value,
-            strategy="sentence",
+        sentence_chunks = await _sentence_chunks_from_paragraph_batch(
+            chunker=chunker,
+            paragraph_chunks=paragraph_chunks,
             source_id=str(prepared.document_id),
         )
         return await asyncio.to_thread(
@@ -1054,6 +1054,68 @@ def _sentence_chunks_for_paragraph(
             f"{paragraph_chunk.start}:{paragraph_chunk.end}"
         )
     return tuple(sorted(matches, key=lambda chunk: (chunk.start, chunk.end, chunk.ordinal)))
+
+
+async def _sentence_chunks_from_paragraph_batch(
+    *,
+    chunker: Any,
+    paragraph_chunks: Sequence[RuntimeChunk],
+    source_id: str,
+) -> tuple[RuntimeChunk, ...]:
+    if not paragraph_chunks:
+        return ()
+    batch_chunk = getattr(chunker, "chunk_batch", None)
+    if not callable(batch_chunk):
+        raise ChunkerError(
+            "CHUNKER_BATCH_UNAVAILABLE",
+            "external chunker wrapper does not support paragraph sentence batches",
+        )
+    batches = await batch_chunk(
+        texts=[chunk.text for chunk in paragraph_chunks],
+        strategy="sentence",
+        source_ids=[source_id for _ in paragraph_chunks],
+    )
+    if len(batches) != len(paragraph_chunks):
+        raise ChunkerError(
+            "CHUNKER_INVALID_RESPONSE",
+            "sentence chunk batch count does not match paragraph count",
+            {"paragraph_count": len(paragraph_chunks), "batch_count": len(batches)},
+        )
+    result: list[RuntimeChunk] = []
+    ordinal = 0
+    for paragraph, sentence_batch in zip(paragraph_chunks, batches, strict=True):
+        if not sentence_batch:
+            raise ChunkerError(
+                "CHUNKER_EMPTY_RESULT",
+                "sentence chunker returned no chunks for paragraph",
+                {"paragraph_start": paragraph.start, "paragraph_end": paragraph.end},
+            )
+        for sentence in sentence_batch:
+            start = paragraph.start + sentence.start
+            end = paragraph.start + sentence.end
+            if start < paragraph.start or end > paragraph.end or start >= end:
+                raise ChunkerError(
+                    "CHUNKER_CONTRACT_ERROR",
+                    "sentence chunk range is outside its paragraph range",
+                    {
+                        "paragraph_start": paragraph.start,
+                        "paragraph_end": paragraph.end,
+                        "sentence_start": sentence.start,
+                        "sentence_end": sentence.end,
+                    },
+                )
+            result.append(
+                RuntimeChunk(
+                    uuid=sentence.uuid,
+                    text=sentence.text,
+                    start=start,
+                    end=end,
+                    ordinal=ordinal,
+                    metadata=sentence.metadata,
+                )
+            )
+            ordinal += 1
+    return tuple(result)
 
 
 def _existing_references(

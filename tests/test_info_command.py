@@ -187,6 +187,8 @@ def test_info_text_documents_bm25_and_owner_tree_commands(registry: RegistryFixt
     assert "bm25_tokens" in serialized
     assert "entity_type/entity_id" in serialized
     assert "arithmetic mean" in serialized
+    assert "DOC_STORE_EMBEDDING_DIRECT_TEXT_MAX_CHARS" in serialized
+    assert "semantic_refinement" in serialized
     assert "semantic_chunk_tokens" in serialized
     assert "entity_owner_tree" in serialized
     assert "entity_rebind_owner" in serialized

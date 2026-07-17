@@ -88,7 +88,19 @@ class ChunkQuerySearchCommand(Command):
                         "The server also accepts limit as an alias for max_results and "
                         "offset for ordered paging."
                     ),
-                }
+                },
+                "semantic_refinement": {
+                    "type": "object",
+                    "description": "Optional hierarchy-aware semantic controls outside ChunkQuery.",
+                    "properties": {
+                        "enabled": {"type": "boolean", "description": "Enable hierarchy-aware refinement."},
+                        "threshold": {"type": "number", "minimum": 0.0, "maximum": 1.0, "description": "Minimum cosine similarity."},
+                        "candidate_limit": {"type": "integer", "minimum": 1, "maximum": 1000, "description": "Primary cross-level candidate limit."},
+                        "result_limit": {"type": "integer", "minimum": 1, "maximum": 1000, "description": "Final result window size N."},
+                        "diagnostics": {"type": "boolean", "description": "Include refinement diagnostics."},
+                    },
+                    "additionalProperties": False,
+                },
             },
             "required": ["query"],
             "additionalProperties": False,
@@ -111,10 +123,12 @@ class ChunkQuerySearchCommand(Command):
                 "and diagnostics supplied by that orchestrator. For semantic text "
                 "search, send search_query with hybrid_search=true and bm25_weight=0; "
                 "the server obtains the query embedding through embed-client before "
-                "executing the semantic branch. For ordered corpus scans, send "
+                "executing the semantic branch. Hierarchy-aware semantic refinement "
+                "uses the separate semantic_refinement command parameter, not "
+                "extra ChunkQuery fields. For ordered corpus scans, send "
                 "block_meta filters with limit/max_results and offset."
             ),
-            "parameters": {"query": cls.get_schema()["properties"]["query"]},
+            "parameters": cls.get_schema()["properties"],
             "return_value": {
                 "description": "Stable ranked ChunkQuery results with provenance and diagnostics."
             },
@@ -122,6 +136,7 @@ class ChunkQuerySearchCommand(Command):
                 {"query": {"search_query": "canonical retrieval", "max_results": 10}},
                 {"query": {"block_meta": {"source_name": "7d-55-Периодический_закон_Менделеева.md"}, "limit": 100, "offset": 100}},
                 {"query": {"search_query": "semantic concept", "hybrid_search": True, "bm25_weight": 0.0, "semantic_weight": 1.0, "max_results": 10}},
+                {"query": {"search_query": "semantic concept", "hybrid_search": True, "bm25_weight": 0.0, "semantic_weight": 1.0}, "semantic_refinement": {"enabled": True, "threshold": 0.45, "candidate_limit": 80, "result_limit": 10}},
                 {"query": {"project": "doc-store", "type": "DocBlock", "tags": ["api"]}},
             ],
             "error_cases": {
@@ -169,12 +184,26 @@ class ChunkQuerySearchCommand(Command):
                 f"INVALID_PARAMS: {exc}",
                 data={"remediation": "Provide values accepted by ChunkQuery."},
             ) from exc
+        refinement = validated.get("semantic_refinement")
+        if refinement is not None and not isinstance(refinement, Mapping):
+            raise AdapterValidationError(
+                "INVALID_PARAMS: semantic_refinement must be an object",
+                data={"field": "semantic_refinement"},
+            )
         return validated
 
-    async def execute(self, *, query: ChunkQuery, context: Mapping[str, Any] | None = None) -> CommandResult:
+    async def execute(
+        self,
+        *,
+        query: ChunkQuery,
+        semantic_refinement: Mapping[str, Any] | None = None,
+        context: Mapping[str, Any] | None = None,
+    ) -> CommandResult:
         """Delegate exactly once to G-007 and serialize its stable response."""
 
         runtime_context = dict(context or {})
+        if semantic_refinement is not None:
+            runtime_context["semantic_refinement"] = dict(semantic_refinement)
         orchestrator: SearchOrchestrator | Any = runtime_context.pop("search_orchestrator", None)
         if orchestrator is None:
             orchestrator = self.search_orchestrator

@@ -73,10 +73,13 @@ class EmbeddingsRebuildCommand(Command):
                 "Runs the vectorizer boundary separately from ingestion/chunking. "
                 "It reads documents with needs_revectorize flags in document batches, "
                 "vectorizes paragraph and semantic_chunk/sentence text through "
-                "embed-client in configured text batches, then derives document "
-                "vectors as the arithmetic mean of paragraph vectors and file vectors "
-                "as the arithmetic mean of document vectors. This avoids sending very "
-                "large document/file bodies to the embedding service while keeping one "
+                "embed-client in configured text batches. When "
+                "DOC_STORE_EMBEDDING_DIRECT_TEXT_MAX_CHARS is positive, small "
+                "document/file bodies at or below that character limit may be embedded "
+                "directly. Larger document vectors are derived as the arithmetic mean "
+                "of paragraph vectors, and larger file vectors are derived as the "
+                "arithmetic mean of document vectors. This avoids sending very large "
+                "document/file bodies to the embedding service while keeping one "
                 "database-wide model and vector dimension. Embeddings are stored in "
                 "semantic_chunk_embeddings with entity_type/entity_id; semantic chunks "
                 "also keep chunk_uuid for existing semantic search compatibility. The "
@@ -108,7 +111,7 @@ class EmbeddingsRebuildCommand(Command):
                 "Keep this command queued for large corpora.",
                 "Use dry_run before all_documents=true rebuilds.",
                 "Do not vectorize during chunking; chunking sets flags and this command clears them after successful batches.",
-                "Do not send full document/file text directly to embed-client; top-level vectors are calculated from lower-level averages.",
+                "Set DOC_STORE_EMBEDDING_DIRECT_TEXT_MAX_CHARS only for small top-level bodies; large top-level vectors are calculated from lower-level averages.",
             ],
         }
 

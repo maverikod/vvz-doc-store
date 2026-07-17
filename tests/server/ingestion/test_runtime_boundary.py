@@ -16,6 +16,7 @@ from doc_store_server.ingestion.runtime_boundary import (
     _clear_reprocessing_flags,
     _insert_semantic_chunk_default_metrics,
     _mark_existing_hierarchy_deleted,
+    _sentence_chunks_from_paragraph_batch,
     _sentence_chunks_for_paragraph,
     _semantic_classifier_values,
 )
@@ -128,13 +129,25 @@ def test_runtime_ingestion_requests_paragraph_and_sentence_chunks(monkeypatch) -
 
     class FakeChunker:
         def __init__(self) -> None:
-            self.calls: list[str] = []
+            self.calls: list[object] = []
 
         async def chunk(self, *, text: str, strategy: str, source_id: str) -> tuple[RuntimeChunk, ...]:
             assert text == "First sentence. Second sentence."
             assert source_id == str(document_id)
             self.calls.append(strategy)
-            return (paragraph,) if strategy == "paragraph" else sentences
+            return (paragraph,)
+
+        async def chunk_batch(
+            self,
+            *,
+            texts: list[str],
+            strategy: str,
+            source_ids: list[str],
+        ) -> tuple[tuple[RuntimeChunk, ...], ...]:
+            assert texts == ["First sentence. Second sentence."]
+            assert source_ids == [str(document_id)]
+            self.calls.append((strategy, tuple(texts)))
+            return (sentences,)
 
     fake = FakeChunker()
     boundary = RuntimeIngestionBoundary("postgresql://unused", InMemoryRuntimeStatus(), fake)
@@ -184,7 +197,7 @@ def test_runtime_ingestion_requests_paragraph_and_sentence_chunks(monkeypatch) -
         chunking_strategy="paragraph",
     ))
 
-    assert fake.calls == ["paragraph", "sentence"]
+    assert fake.calls == ["paragraph", ("sentence", ("First sentence. Second sentence.",))]
     assert result["chunk_ids"] == tuple(str(item.uuid) for item in sentences)
 
 
@@ -195,6 +208,40 @@ def test_sentence_chunks_are_selected_by_paragraph_ranges() -> None:
     second = RuntimeChunk(uuid=uuid4(), text="second", start=25, end=39, ordinal=2, metadata={})
 
     assert _sentence_chunks_for_paragraph(paragraph, (second, before, first)) == (first, second)
+
+
+def test_sentence_batch_offsets_are_mapped_to_document_ranges() -> None:
+    paragraph = RuntimeChunk(
+        uuid=uuid4(),
+        text="First sentence. Second.",
+        start=100,
+        end=123,
+        ordinal=0,
+        metadata={},
+    )
+    local_sentence = RuntimeChunk(
+        uuid=uuid4(),
+        text="Second.",
+        start=16,
+        end=23,
+        ordinal=0,
+        metadata={},
+    )
+
+    class FakeChunker:
+        async def chunk_batch(self, **kwargs: object) -> tuple[tuple[RuntimeChunk, ...], ...]:
+            assert kwargs["texts"] == ["First sentence. Second."]
+            return ((local_sentence,),)
+
+    result = _run(
+        _sentence_chunks_from_paragraph_batch(
+            chunker=FakeChunker(),
+            paragraph_chunks=(paragraph,),
+            source_id="550e8400-e29b-41d4-a716-446655440000",
+        )
+    )
+
+    assert [(item.start, item.end, item.ordinal) for item in result] == [(116, 123, 0)]
 
 
 def test_runtime_default_metrics_preserve_quality_for_later_worker() -> None:

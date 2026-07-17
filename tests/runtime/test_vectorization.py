@@ -63,6 +63,7 @@ def _config(*, batch_size: int = 2, dimension: int = 2) -> RuntimeEmbeddingConfi
         dimension=dimension,
         device=None,
         batch_size=batch_size,
+        direct_text_max_chars=0,
     )
 
 
@@ -323,6 +324,45 @@ def test_vectorizer_aggregates_document_and_file_vectors_by_average() -> None:
     assert [(item.entity_type, item.vector_entity_id, item.vector) for item in aggregate] == [
         ("document", document_id, (2.0, 4.0)),
         ("file", file_id, (2.0, 4.0)),
+    ]
+
+
+def test_vectorizer_uses_direct_document_vectors_for_file_average() -> None:
+    document_id = uuid4()
+    file_id = uuid4()
+    service = RuntimeVectorizationService("postgresql://unused", _EmbeddingClient(), _config())
+
+    class _Result:
+        def mappings(self) -> Any:
+            return self
+
+        def all(self) -> list[dict[str, Any]]:
+            return [{"id": document_id, "owner_id": file_id}]
+
+    class _Connection:
+        def execute(self, *_args: Any, **_kwargs: Any) -> _Result:
+            return _Result()
+
+    records = (
+        ChunkVectorRecord(
+            chunk_id=document_id,
+            entity_id=document_id,
+            entity_type="document",
+            vector=(10.0, 20.0),
+        ),
+        ChunkVectorRecord(
+            chunk_id=uuid4(),
+            entity_id=uuid4(),
+            entity_type="paragraph",
+            document_id=document_id,
+            vector=(1.0, 3.0),
+        ),
+    )
+
+    aggregate = service._aggregate_document_file_vectors(_Connection(), [document_id], records)
+
+    assert [(item.entity_type, item.vector_entity_id, item.vector) for item in aggregate] == [
+        ("file", file_id, (10.0, 20.0)),
     ]
 
 
