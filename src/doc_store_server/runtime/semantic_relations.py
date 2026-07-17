@@ -90,7 +90,7 @@ class SemanticRelationService:
             where.append("(d.source_name = :source_name OR d.source_path = :source_name)")
         if seven_d_number is not None:
             params["seven_d_number"] = f"7d-{seven_d_number:02d}"
-            where.append("(d.source_name ILIKE :seven_d_number || '%' OR sc.text ILIKE :seven_d_number || '%')")
+            where.append("(d.source_name ILIKE :seven_d_number || '%' OR sct.text ILIKE :seven_d_number || '%')")
 
         item_expr = _item_id_expr(level)
         sql = f"""
@@ -99,7 +99,7 @@ class SemanticRelationService:
                        sc.document_id::text AS document_id,
                        sc.paragraph_id::text AS paragraph_id,
                        sc.order_index,
-                       sc.text,
+                       sct.text,
                        sc.block_meta,
                        d.source_name,
                        d.source_path,
@@ -110,6 +110,7 @@ class SemanticRelationService:
                        sce.vector,
                        {item_expr} AS item_id
                 FROM semantic_chunks AS sc
+                JOIN semantic_chunk_texts AS sct ON sct.chunk_uuid = sc.id
                 JOIN semantic_chunk_embeddings AS sce ON sce.chunk_uuid = sc.id
                 JOIN documents AS d ON d.id = sc.document_id
                 WHERE {' AND '.join(where)}

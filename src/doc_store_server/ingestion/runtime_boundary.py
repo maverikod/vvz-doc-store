@@ -655,7 +655,7 @@ class RuntimeIngestionBoundary:
                             "role_id, status_id, block_type_id, language_id, category_id, "
                             "search_weight, block_meta) "
                             "VALUES (:id, :paragraph_id, :document_id, :paragraph_id, :chapter_id, "
-                            ":order_index, :body, :source_start, :source_end, :char_count, "
+                            ":order_index, '', :source_start, :source_end, :char_count, "
                             ":chunk_type, :chunk_type_id, :role_id, :status_id, "
                             ":block_type_id, :language_id, :category_id, 1, "
                             "CAST(:block_meta AS jsonb))"
@@ -677,6 +677,21 @@ class RuntimeIngestionBoundary:
                             "block_type_id": dictionary_ids["block_type_id"],
                             "language_id": dictionary_ids["language_id"],
                             "category_id": dictionary_ids["category_id"],
+                            "block_meta": json.dumps(chunk_meta),
+                        },
+                    )
+                    connection.execute(
+                        text(
+                            "INSERT INTO semantic_chunk_texts "
+                            "(chunk_uuid, text, text_sha256, char_count, block_meta) "
+                            "VALUES (:chunk_uuid, :body, :text_sha256, :char_count, "
+                            "CAST(:block_meta AS jsonb))"
+                        ),
+                        {
+                            "chunk_uuid": chunk_id,
+                            "body": paragraph_text,
+                            "text_sha256": hashlib.sha256(paragraph_text.encode("utf-8")).hexdigest(),
+                            "char_count": len(paragraph_text),
                             "block_meta": json.dumps(chunk_meta),
                         },
                     )

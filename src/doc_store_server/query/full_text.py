@@ -10,7 +10,14 @@ from sqlalchemy import text
 
 from chunk_metadata_adapter import SearchResult, SemanticChunk
 
-from .chunk_payload import CLASSIFIER_JOIN_SQL, CLASSIFIER_SELECT_SQL, chunk_payload_from_row
+from .chunk_payload import (
+    CHUNK_TEXT_COLUMN_SQL,
+    CHUNK_TEXT_JOIN_SQL,
+    CHUNK_TEXT_SELECT_SQL,
+    CLASSIFIER_JOIN_SQL,
+    CLASSIFIER_SELECT_SQL,
+    chunk_payload_from_row,
+)
 from .compiler import ExecutionMode, ExecutionPlan
 
 
@@ -45,8 +52,8 @@ _PREDICATE_COLUMNS = {
     "source": "sc.block_meta ->> 'source'",
     "source_id": "sc.document_id",
     "block_id": "sc.paragraph_id",
-    "body": "sc.text",
-    "text": "sc.text",
+    "body": CHUNK_TEXT_COLUMN_SQL,
+    "text": CHUNK_TEXT_COLUMN_SQL,
     "summary": "sc.block_meta ->> 'summary'",
     "title": "d.title",
 }
@@ -70,8 +77,8 @@ def _field_expression(field: str) -> str:
     if field not in _FIELDS:
         raise FullTextExecutionError(f"unsupported full-text field: {field}")
     return {
-        "body": "coalesce(sc.text, '')",
-        "text": "coalesce(sc.text, '')",
+        "body": f"coalesce({CHUNK_TEXT_COLUMN_SQL}, '')",
+        "text": f"coalesce({CHUNK_TEXT_COLUMN_SQL}, '')",
         "summary": "coalesce(sc.block_meta ->> 'summary', '')",
         "title": "coalesce(d.title, '')",
     }[field]
@@ -182,7 +189,7 @@ def _statement(plan: ExecutionPlan) -> tuple[Any, dict[str, Any]]:
         params["offset"] = plan.offset
     sql = f"""
         SELECT sc.id, sc.document_id, sc.paragraph_id, sc.chapter_id,
-               sc.order_index, sc.text, sc.source_start, sc.source_end,
+               sc.order_index, {CHUNK_TEXT_SELECT_SQL}, sc.source_start, sc.source_end,
                sc.char_count, sc.chunk_type, sc.block_meta,
                {CLASSIFIER_SELECT_SQL},
                (ts_rank_cd({vector}, {query}) /
@@ -190,6 +197,7 @@ def _statement(plan: ExecutionPlan) -> tuple[Any, dict[str, Any]]:
                ARRAY_REMOVE(ARRAY[{matched}], NULL) AS matched_fields,
                jsonb_strip_nulls(jsonb_build_object({highlight_pairs})) AS highlights
         FROM semantic_chunks AS sc
+        {CHUNK_TEXT_JOIN_SQL}
         JOIN documents AS d ON d.id = sc.document_id
         {CLASSIFIER_JOIN_SQL}
         WHERE {' AND '.join(where)}

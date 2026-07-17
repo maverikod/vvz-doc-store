@@ -162,3 +162,25 @@ def test_0013_adds_owner_id_to_all_remaining_entity_tables() -> None:
     downgrade = _offline_sql(migration, "downgrade")
     assert "ALTER TABLE semantic_chunks DROP COLUMN owner_id" in downgrade
     assert "ALTER TABLE chunk_types DROP COLUMN owner_id" in downgrade
+
+
+def test_0014_separates_semantic_chunk_text_payloads() -> None:
+    migration = _load("0014_semantic_chunk_texts")
+    sql = _offline_sql(migration, "upgrade")
+
+    assert "CREATE TABLE semantic_chunk_texts" in sql
+    assert "chunk_uuid UUID NOT NULL" in sql
+    assert "text TEXT NOT NULL" in sql
+    assert "text_sha256 VARCHAR(128) NOT NULL" in sql
+    assert "FOREIGN KEY(chunk_uuid) REFERENCES semantic_chunks (id) ON DELETE CASCADE" in sql
+    assert "CREATE INDEX ix_semantic_chunk_texts_text_sha256" in sql
+    assert "CREATE INDEX ix_semantic_chunk_texts_tsvector" in sql
+    assert "INSERT INTO semantic_chunk_texts (chunk_uuid, text, text_sha256, char_count)" in sql
+    assert "encode(digest(text, 'sha256'), 'hex')" in sql
+    assert "UPDATE semantic_chunks SET text = '' WHERE text <> ''" in sql
+
+    downgrade = _offline_sql(migration, "downgrade")
+    assert "UPDATE semantic_chunks AS sc" in downgrade
+    assert "SET text = sct.text" in downgrade
+    assert "DROP INDEX IF EXISTS ix_semantic_chunk_texts_tsvector" in downgrade
+    assert "DROP TABLE semantic_chunk_texts" in downgrade

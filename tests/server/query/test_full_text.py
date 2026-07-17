@@ -102,7 +102,8 @@ def test_full_text_binds_allowlisted_metadata_and_searches_all_canonical_fields(
     assert "sc.block_meta @> CAST(:p0 AS jsonb)" in sql
     assert "sc.block_meta ->> 'project' = :p1" in sql
     assert "sc.block_meta -> 'tags' @> CAST(:p2 AS jsonb)" in sql
-    assert "coalesce(sc.text, '')" in sql
+    assert "JOIN semantic_chunk_texts AS sct ON sct.chunk_uuid = sc.id" in sql
+    assert "coalesce(sct.text, '')" in sql
     assert "coalesce(sc.block_meta ->> 'summary', '')" in sql
     assert "coalesce(d.title, '')" in sql
     assert sql.count("plainto_tsquery('simple', :query_text)") >= 4

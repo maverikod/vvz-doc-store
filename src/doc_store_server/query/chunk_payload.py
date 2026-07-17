@@ -30,6 +30,10 @@ CLASSIFIER_JOIN_SQL = """
         LEFT JOIN categories AS cat ON cat.id = COALESCE(scca.category_id, sc.category_id)
 """
 
+CHUNK_TEXT_JOIN_SQL = "JOIN semantic_chunk_texts AS sct ON sct.chunk_uuid = sc.id"
+CHUNK_TEXT_SELECT_SQL = "sct.text AS text"
+CHUNK_TEXT_COLUMN_SQL = "sct.text"
+
 
 def chunk_payload_from_row(
     row: Mapping[str, Any],
@@ -70,4 +74,11 @@ def chunk_payload_from_row(
     }
 
 
-__all__ = ["CLASSIFIER_JOIN_SQL", "CLASSIFIER_SELECT_SQL", "chunk_payload_from_row"]
+__all__ = [
+    "CHUNK_TEXT_COLUMN_SQL",
+    "CHUNK_TEXT_JOIN_SQL",
+    "CHUNK_TEXT_SELECT_SQL",
+    "CLASSIFIER_JOIN_SQL",
+    "CLASSIFIER_SELECT_SQL",
+    "chunk_payload_from_row",
+]

@@ -157,9 +157,10 @@ class CorpusAuditService:
                    count(DISTINCT sc.id) AS chunk_count,
                    count(DISTINCT sce.chunk_uuid) FILTER (WHERE sce.active IS TRUE) AS vectorized_chunk_count,
                    min(sc.order_index) AS first_order_index,
-                   (array_agg(sc.text ORDER BY sc.order_index ASC, sc.id ASC))[1] AS first_preview
+                   (array_agg(sct.text ORDER BY sc.order_index ASC, sc.id ASC))[1] AS first_preview
             FROM documents AS d
             LEFT JOIN semantic_chunks AS sc ON sc.document_id = d.id AND (:include_deleted OR sc.deleted_at IS NULL)
+            LEFT JOIN semantic_chunk_texts AS sct ON sct.chunk_uuid = sc.id
             LEFT JOIN semantic_chunk_embeddings AS sce ON sce.chunk_uuid = sc.id AND sce.active IS TRUE
             WHERE {' AND '.join(where)}
             GROUP BY d.id
@@ -193,7 +194,7 @@ class CorpusAuditService:
         for index, marker in enumerate(markers):
             key = f"marker_{index}"
             params[key] = f"%{marker}%"
-            marker_clauses.append(f"sc.text ILIKE :{key}")
+            marker_clauses.append(f"sct.text ILIKE :{key}")
         where.append("(" + " OR ".join(marker_clauses) + ")")
         if not scope.include_deleted:
             where.append("sc.deleted_at IS NULL")
@@ -202,11 +203,12 @@ class CorpusAuditService:
                    sc.document_id::text AS document_id,
                    sc.paragraph_id::text AS paragraph_id,
                    sc.order_index,
-                   sc.text,
+                   sct.text,
                    d.source_name,
                    d.title,
                    d.block_meta
             FROM semantic_chunks AS sc
+            JOIN semantic_chunk_texts AS sct ON sct.chunk_uuid = sc.id
             JOIN documents AS d ON d.id = sc.document_id
             WHERE {' AND '.join(where)}
             ORDER BY d.created_at ASC, sc.order_index ASC, sc.id ASC
@@ -232,7 +234,7 @@ class CorpusAuditService:
         offset: int,
     ) -> dict[str, Any]:
         where, params = _scope_where(scope, prefix="d")
-        where.append("length(sc.text) >= :min_length")
+        where.append("length(sct.text) >= :min_length")
         params["min_length"] = min_length
         if not scope.include_deleted:
             where.append("sc.deleted_at IS NULL")
@@ -241,10 +243,11 @@ class CorpusAuditService:
                    sc.document_id::text AS document_id,
                    sc.paragraph_id::text AS paragraph_id,
                    sc.order_index,
-                   sc.text,
+                   sct.text,
                    d.source_name,
                    d.title
             FROM semantic_chunks AS sc
+            JOIN semantic_chunk_texts AS sct ON sct.chunk_uuid = sc.id
             JOIN documents AS d ON d.id = sc.document_id
             WHERE {' AND '.join(where)}
             ORDER BY d.created_at ASC, sc.order_index ASC, sc.id ASC
@@ -290,10 +293,11 @@ class CorpusAuditService:
             SELECT d.id::text AS document_id,
                    d.source_name,
                    d.title,
-                   (array_agg(sc.text ORDER BY sc.order_index ASC, sc.id ASC))[1:8] AS previews,
+                   (array_agg(sct.text ORDER BY sc.order_index ASC, sc.id ASC))[1:8] AS previews,
                    count(sc.id) AS chunk_count
             FROM documents AS d
             LEFT JOIN semantic_chunks AS sc ON sc.document_id = d.id AND (:include_deleted OR sc.deleted_at IS NULL)
+            LEFT JOIN semantic_chunk_texts AS sct ON sct.chunk_uuid = sc.id
             WHERE {' AND '.join(where)}
             GROUP BY d.id
             ORDER BY d.created_at ASC, d.id ASC

@@ -313,10 +313,12 @@ class RuntimeVectorizationService:
             with engine.connect() as connection:
                 rows = connection.execute(
                     text(
-                        "SELECT id, document_id, text FROM semantic_chunks "
-                        "WHERE deleted_at IS NULL "
-                        "AND document_id = ANY(CAST(:document_ids AS uuid[])) "
-                        "ORDER BY document_id, order_index ASC, id ASC"
+                        "SELECT sc.id, sc.document_id, sct.text "
+                        "FROM semantic_chunks AS sc "
+                        "JOIN semantic_chunk_texts AS sct ON sct.chunk_uuid = sc.id "
+                        "WHERE sc.deleted_at IS NULL "
+                        "AND sc.document_id = ANY(CAST(:document_ids AS uuid[])) "
+                        "ORDER BY sc.document_id, sc.order_index ASC, sc.id ASC"
                     ),
                     {"document_ids": [str(item) for item in document_ids]},
                 ).mappings().all()

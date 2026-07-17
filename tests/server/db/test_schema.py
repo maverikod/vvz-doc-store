@@ -166,6 +166,7 @@ def test_typed_lifecycle_scoring_search_and_structural_columns() -> None:
     documents = metadata.tables["documents"]
     paragraphs = metadata.tables["paragraphs"]
     chunks = metadata.tables["semantic_chunks"]
+    chunk_texts = metadata.tables["semantic_chunk_texts"]
     assert documents.c.processing_status.type.length == 32
     assert paragraphs.c.quality_score.type.python_type is float
     assert chunks.c.score.type.python_type is float
@@ -173,6 +174,24 @@ def test_typed_lifecycle_scoring_search_and_structural_columns() -> None:
     assert chunks.c.search_vector.type._type_affinity is TSVECTOR()._type_affinity
     assert {"document_id", "chapter_id", "order_index"} <= set(paragraphs.c.keys())
     assert {"document_id", "chapter_id", "paragraph_id", "order_index"} <= set(chunks.c.keys())
+    assert set(chunk_texts.c.keys()) == {
+        "chunk_uuid",
+        "text",
+        "text_sha256",
+        "char_count",
+        "created_at",
+        "updated_at",
+        "block_meta",
+    }
+    assert chunk_texts.c.chunk_uuid.primary_key is True
+    assert chunk_texts.c.text.nullable is False
+    assert chunk_texts.c.text_sha256.nullable is False
+    assert chunk_texts.c.char_count.nullable is False
+    assert chunk_texts.c.block_meta.nullable is False
+    assert {
+        (foreign_key.parent.name, foreign_key.column.table.name, foreign_key.column.name, foreign_key.ondelete)
+        for foreign_key in chunk_texts.foreign_keys
+    } == {("chunk_uuid", "semantic_chunks", "id", "CASCADE")}
 
 
 def test_uniqueness_checks_and_full_text_indexes_are_named_and_deterministic() -> None:

@@ -364,7 +364,7 @@ class SemanticChunk(EntityCRUDMixin, Base):
         UUID4, ForeignKey("chapters.id", ondelete="CASCADE"), nullable=False
     )
     order_index: Mapped[int] = mapped_column(Integer, nullable=False)
-    text: Mapped[str] = mapped_column(Text, nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False, default="")
     source_start: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     source_end: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     char_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -384,6 +384,35 @@ class SemanticChunk(EntityCRUDMixin, Base):
     document: Mapped[Document] = relationship(back_populates="semantic_chunks")
     paragraph: Mapped[Paragraph] = relationship(back_populates="semantic_chunks")
     chapter: Mapped[Chapter] = relationship(back_populates="semantic_chunks")
+    text_payload: Mapped[SemanticChunkText | None] = relationship(
+        back_populates="chunk", cascade="all, delete-orphan", uselist=False
+    )
+
+
+class SemanticChunkText(Base):
+    """Full text payload for a semantic chunk, separated from structural metadata."""
+
+    __tablename__ = "semantic_chunk_texts"
+    __table_args__ = (
+        CheckConstraint("char_count >= 0", name="semantic_chunk_texts_char_count_nonnegative"),
+        Index("ix_semantic_chunk_texts_text_sha256", "text_sha256"),
+    )
+
+    chunk_uuid: Mapped[UUID] = mapped_column(
+        UUID4, ForeignKey("semantic_chunks.id", ondelete="CASCADE"), primary_key=True
+    )
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    text_sha256: Mapped[str] = mapped_column(String(128), nullable=False)
+    char_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+    block_meta: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+
+    chunk: Mapped[SemanticChunk] = relationship(back_populates="text_payload")
 
 
 class SemanticChunkTypeAssignment(Base):
@@ -540,6 +569,7 @@ __all__ = (
     "SemanticChunkLanguageAssignment",
     "SemanticChunkRoleAssignment",
     "SemanticChunkStatusAssignment",
+    "SemanticChunkText",
     "SemanticChunkTypeAssignment",
     "metadata",
 )

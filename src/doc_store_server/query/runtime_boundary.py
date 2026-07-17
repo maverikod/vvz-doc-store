@@ -14,7 +14,13 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from doc_store_server.db.health import database_url_from_config
 from doc_store_server.runtime.embedding_config import RuntimeEmbeddingConfig, runtime_embedding_config
 
-from .chunk_payload import CLASSIFIER_JOIN_SQL, CLASSIFIER_SELECT_SQL
+from .chunk_payload import (
+    CHUNK_TEXT_COLUMN_SQL,
+    CHUNK_TEXT_JOIN_SQL,
+    CHUNK_TEXT_SELECT_SQL,
+    CLASSIFIER_JOIN_SQL,
+    CLASSIFIER_SELECT_SQL,
+)
 from .compiler import ExecutionMode, ExecutionPlan, compile_query
 from .full_text import FullTextExecutor
 from .semantic import _result_from_row as _semantic_result_from_row
@@ -39,8 +45,8 @@ _PREDICATE_COLUMNS = {
     "source": "sc.block_meta ->> 'source'",
     "source_id": "sc.document_id",
     "block_id": "sc.paragraph_id",
-    "body": "sc.text",
-    "text": "sc.text",
+    "body": CHUNK_TEXT_COLUMN_SQL,
+    "text": CHUNK_TEXT_COLUMN_SQL,
     "summary": "sc.block_meta ->> 'summary'",
     "title": "d.title",
 }
@@ -146,11 +152,12 @@ class RuntimeSearchBoundary:
             params["offset"] = plan.offset
         sql = f"""
             SELECT sc.id, sc.document_id, sc.paragraph_id, sc.chapter_id,
-                   sc.order_index, sc.text, sc.source_start, sc.source_end,
+                   sc.order_index, {CHUNK_TEXT_SELECT_SQL}, sc.source_start, sc.source_end,
                    sc.char_count, sc.chunk_type, sc.block_meta,
                    {CLASSIFIER_SELECT_SQL},
                    1.0 AS semantic_score
             FROM semantic_chunks AS sc
+            {CHUNK_TEXT_JOIN_SQL}
             JOIN documents AS d ON d.id = sc.document_id
             {CLASSIFIER_JOIN_SQL}
             WHERE {' AND '.join(where)}

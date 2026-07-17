@@ -12,7 +12,14 @@ from sqlalchemy import text
 
 from chunk_metadata_adapter import SearchResult, SemanticChunk
 
-from .chunk_payload import CLASSIFIER_JOIN_SQL, CLASSIFIER_SELECT_SQL, chunk_payload_from_row
+from .chunk_payload import (
+    CHUNK_TEXT_COLUMN_SQL,
+    CHUNK_TEXT_JOIN_SQL,
+    CHUNK_TEXT_SELECT_SQL,
+    CLASSIFIER_JOIN_SQL,
+    CLASSIFIER_SELECT_SQL,
+    chunk_payload_from_row,
+)
 from .compiler import ExecutionMode, ExecutionPlan
 
 
@@ -50,8 +57,8 @@ _PREDICATE_COLUMNS = {
     "source": "sc.block_meta ->> 'source'",
     "source_id": "sc.document_id",
     "block_id": "sc.paragraph_id",
-    "body": "sc.text",
-    "text": "sc.text",
+    "body": CHUNK_TEXT_COLUMN_SQL,
+    "text": CHUNK_TEXT_COLUMN_SQL,
     "summary": "sc.block_meta ->> 'summary'",
     "title": "d.title",
 }
@@ -182,11 +189,12 @@ def _statement(plan: ExecutionPlan, vector: tuple[float, ...], *, model: str, di
         params["offset"] = plan.offset
     sql = f"""
         SELECT sc.id, sc.document_id, sc.paragraph_id, sc.chapter_id,
-               sc.order_index, sc.text, sc.source_start, sc.source_end,
+               sc.order_index, {CHUNK_TEXT_SELECT_SQL}, sc.source_start, sc.source_end,
                sc.char_count, sc.chunk_type, sc.block_meta,
                {CLASSIFIER_SELECT_SQL},
                (1.0 - (sce.vector <=> CAST(:query_vector AS vector))) AS semantic_score
         FROM semantic_chunks AS sc
+        {CHUNK_TEXT_JOIN_SQL}
         JOIN semantic_chunk_embeddings AS sce ON sce.chunk_uuid = sc.id
         JOIN documents AS d ON d.id = sc.document_id
         {CLASSIFIER_JOIN_SQL}

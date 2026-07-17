@@ -174,13 +174,15 @@ class EntityLifecycleService:
         selected = _validated_fields(table, fields)
         where, params = _filters_sql(table, filters or {})
         if not show_deleted:
-            where.append("is_deleted IS FALSE")
+            where.append(f"{_field_sql(table, 'is_deleted')} IS FALSE")
+        select_sql = _select_sql(table, selected)
+        from_sql = _from_sql(table)
         sql = (
-            f"SELECT {', '.join(selected)} FROM {table} "
+            f"SELECT {select_sql} FROM {from_sql} "
             f"{'WHERE ' + ' AND '.join(where) if where else ''} "
-            f"ORDER BY {ORDER_BY[table]} LIMIT :limit OFFSET :offset"
+            f"ORDER BY {_order_by_sql(table)} LIMIT :limit OFFSET :offset"
         )
-        count_sql = f"SELECT count(*) FROM {table} {'WHERE ' + ' AND '.join(where) if where else ''}"
+        count_sql = f"SELECT count(*) FROM {from_sql} {'WHERE ' + ' AND '.join(where) if where else ''}"
         params.update({"limit": _limit(limit), "offset": _offset(offset)})
         with self._connect() as connection:
             rows = connection.execute(text(sql), params).mappings().all()
@@ -204,12 +206,12 @@ class EntityLifecycleService:
     ) -> dict[str, Any]:
         table = _entity_table(entity_type)
         selected = _validated_fields(table, fields)
-        where = ["id = CAST(:entity_id AS uuid)"]
+        where = [f"{_field_sql(table, 'id')} = CAST(:entity_id AS uuid)"]
         if not show_deleted:
-            where.append("is_deleted IS FALSE")
+            where.append(f"{_field_sql(table, 'is_deleted')} IS FALSE")
         with self._connect() as connection:
             row = connection.execute(
-                text(f"SELECT {', '.join(selected)} FROM {table} WHERE {' AND '.join(where)}"),
+                text(f"SELECT {_select_sql(table, selected)} FROM {_from_sql(table)} WHERE {' AND '.join(where)}"),
                 {"entity_id": str(UUID(entity_id))},
             ).mappings().one_or_none()
         if row is None:
@@ -278,18 +280,28 @@ class EntityLifecycleService:
         if not parsed_ids:
             raise ValueError("ids must not be empty")
         parsed_owner = UUID(owner_id) if owner_id is not None else None
-        selected = DEFAULT_FIELDS[table]
         updated_at = ", updated_at = now()" if table in UPDATED_AT_TABLES else ""
         with self._transaction() as connection:
             _validate_owner(connection, parsed_owner)
+            returning = "id" if table == "semantic_chunks" else ", ".join(DEFAULT_FIELDS[table])
             rows = connection.execute(
                 text(
                     f"UPDATE {table} SET owner_id = :owner_id{updated_at} "
                     "WHERE id = ANY(CAST(:ids AS uuid[])) "
-                    f"RETURNING {', '.join(selected)}"
+                    f"RETURNING {returning}"
                 ),
                 {"owner_id": parsed_owner, "ids": [str(item) for item in parsed_ids]},
             ).mappings().all()
+            if table == "semantic_chunks" and rows:
+                rows = connection.execute(
+                    text(
+                        f"SELECT {_select_sql(table, DEFAULT_FIELDS[table])} "
+                        f"FROM {_from_sql(table)} "
+                        "WHERE sc.id = ANY(CAST(:ids AS uuid[])) "
+                        f"ORDER BY {_order_by_sql(table)}"
+                    ),
+                    {"ids": [str(row["id"]) for row in rows]},
+                ).mappings().all()
         return {
             "entity_type": table,
             "owner_id": str(parsed_owner) if parsed_owner is not None else None,
@@ -659,6 +671,7 @@ def _allowed_fields(table: str) -> set[str]:
         "name",
         "description",
         "descr",
+        "body",
         "chunk_type_id",
         "role_id",
         "status_id",
@@ -811,15 +824,47 @@ def _filters_sql(table: str, filters: Mapping[str, Any]) -> tuple[list[str], dic
         param = f"filter_{index}"
         if key.startswith("block_meta."):
             meta_key = key.split(".", 1)[1]
-            where.append(f"block_meta ->> :{param}_key = :{param}")
+            where.append(f"{_field_sql(table, 'block_meta')} ->> :{param}_key = :{param}")
             params[f"{param}_key"] = meta_key
             params[param] = str(value)
         elif key in allowed:
-            where.append(f"{key} = :{param}")
+            where.append(f"{_field_sql(table, key)} = :{param}")
             params[param] = value
         else:
             raise ValueError(f"unsupported filter for {table}: {key}")
     return where, params
+
+
+def _from_sql(table: str) -> str:
+    if table == "semantic_chunks":
+        return "semantic_chunks AS sc JOIN semantic_chunk_texts AS sct ON sct.chunk_uuid = sc.id"
+    return table
+
+
+def _select_sql(table: str, fields: Sequence[str]) -> str:
+    return ", ".join(_select_field_sql(table, field) for field in fields)
+
+
+def _select_field_sql(table: str, field: str) -> str:
+    if table == "semantic_chunks" and field == "text":
+        return "sct.text AS text"
+    if table == "semantic_chunks" and field == "body":
+        return "sct.text AS body"
+    return _field_sql(table, field)
+
+
+def _field_sql(table: str, field: str) -> str:
+    if table == "semantic_chunks":
+        if field in {"text", "body"}:
+            return "sct.text"
+        return f"sc.{field}"
+    return field
+
+
+def _order_by_sql(table: str) -> str:
+    if table == "semantic_chunks":
+        return "sc.order_index ASC NULLS LAST, sc.id ASC"
+    return ORDER_BY[table]
 
 
 def _limit(value: int) -> int:
@@ -962,11 +1007,14 @@ def _entity_preview_row(
     *,
     include_deleted: bool,
 ) -> Mapping[str, Any] | None:
-    where = ["id = :entity_id"]
+    where = [f"{_field_sql(table, 'id')} = :entity_id"]
     if not include_deleted:
-        where.append("is_deleted IS FALSE")
+        where.append(f"{_field_sql(table, 'is_deleted')} IS FALSE")
     return connection.execute(
-        text(f"SELECT {', '.join(DEFAULT_FIELDS[table])} FROM {table} WHERE {' AND '.join(where)}"),
+        text(
+            f"SELECT {_select_sql(table, DEFAULT_FIELDS[table])} "
+            f"FROM {_from_sql(table)} WHERE {' AND '.join(where)}"
+        ),
         {"entity_id": entity_id},
     ).mappings().one_or_none()
 

@@ -160,8 +160,10 @@ class SemanticChunkMetadataService:
     ) -> dict[str, Any]:
         row = connection.execute(
             text(
-                "SELECT id, text, block_meta, is_deleted FROM semantic_chunks "
-                "WHERE id = CAST(:chunk_id AS uuid)"
+                "SELECT sc.id, sct.text, sc.block_meta, sc.is_deleted "
+                "FROM semantic_chunks AS sc "
+                "JOIN semantic_chunk_texts AS sct ON sct.chunk_uuid = sc.id "
+                "WHERE sc.id = CAST(:chunk_id AS uuid)"
             ),
             {"chunk_id": chunk_id},
         ).mappings().one_or_none()
