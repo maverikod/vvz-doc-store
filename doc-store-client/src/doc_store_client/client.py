@@ -10,6 +10,7 @@ from chunk_metadata_adapter import ChunkQuery
 from .models import (
     ChapterGetRequest,
     ChapterGetResult,
+    ChapterTextGetRequest,
     DocumentChunkRequest,
     DocumentChunkResult,
     DocumentCreateRequest,
@@ -42,6 +43,8 @@ from .models import (
     ServerError,
     SemanticChunkMetadataUpdateRequest,
     SemanticChunkMetadataUpdateResult,
+    SourceFileReconstructRequest,
+    TextReconstructionResult,
 )
 
 DOC_STORE_COMMANDS: tuple[str, ...] = (
@@ -67,6 +70,8 @@ DOC_STORE_COMMANDS: tuple[str, ...] = (
     "document_update",
     "document_chunk",
     "document_export",
+    "chapter_text_get",
+    "source_file_reconstruct",
     "document_rebind",
     "processing_status",
     "document_delete",
@@ -253,6 +258,16 @@ class DocStoreClient:
         self, params: Mapping[str, Any] | None = None, **kwargs: Any
     ) -> Any:
         return await self.call("document_export", params, **kwargs)
+
+    async def chapter_text_get(
+        self, params: Mapping[str, Any] | None = None, **kwargs: Any
+    ) -> Any:
+        return await self.call("chapter_text_get", params, **kwargs)
+
+    async def source_file_reconstruct(
+        self, params: Mapping[str, Any] | None = None, **kwargs: Any
+    ) -> Any:
+        return await self.call("source_file_reconstruct", params, **kwargs)
 
     async def document_rebind(
         self, params: Mapping[str, Any] | None = None, **kwargs: Any
@@ -462,6 +477,26 @@ class DocStoreClient:
 
     async def get_chapter(self, request: ChapterGetRequest) -> ChapterGetResult:
         return await self._execute("chapter_get", request.to_params(), ChapterGetResult)
+
+    async def get_chapter_text(
+        self,
+        request: ChapterTextGetRequest,
+    ) -> TextReconstructionResult:
+        return await self._execute(
+            "chapter_text_get",
+            request.to_params(),
+            TextReconstructionResult,
+        )
+
+    async def reconstruct_source_file(
+        self,
+        request: SourceFileReconstructRequest,
+    ) -> TextReconstructionResult:
+        return await self._execute(
+            "source_file_reconstruct",
+            request.to_params(),
+            TextReconstructionResult,
+        )
 
     async def get_paragraph(self, request: ParagraphGetRequest) -> ParagraphGetResult:
         return await self._execute("paragraph_get", request.to_params(), ParagraphGetResult)

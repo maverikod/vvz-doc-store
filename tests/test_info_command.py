@@ -193,6 +193,9 @@ def test_info_text_documents_bm25_and_owner_tree_commands(registry: RegistryFixt
     assert "entity_owner_tree" in serialized
     assert "entity_rebind_owner" in serialized
     assert "semantic_chunk_metadata_update" in serialized
+    assert "chapter_text_get" in serialized
+    assert "source_file_reconstruct" in serialized
+    assert "range_map" in serialized
     assert "classification.provider" in serialized
     assert "review_status='machine'" in serialized
 

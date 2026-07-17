@@ -46,6 +46,10 @@ from doc_store_server.commands.semantic_relations_command import SemanticRelatio
 from doc_store_server.commands.semantic_chunk_metadata_command import (
     SemanticChunkMetadataUpdateCommand,
 )
+from doc_store_server.commands.text_reconstruction_commands import (
+    ChapterTextGetCommand,
+    SourceFileReconstructCommand,
+)
 from doc_store_server.commands.uuid4_command import Uuid4Command
 from doc_store_server.commands.vectorization_command import EmbeddingsRebuildCommand
 
@@ -189,6 +193,22 @@ def test_manifest_has_exact_command_identity_and_registration_shape() -> None:
             "sync",
             "DocumentExportCommand.metadata",
             "DocumentExportCommand.get_schema",
+        ),
+        (
+            "chapter_text_get",
+            ChapterTextGetCommand,
+            "doc_store_server.commands.text_reconstruction_commands",
+            "sync",
+            "ChapterTextGetCommand.metadata",
+            "ChapterTextGetCommand.get_schema",
+        ),
+        (
+            "source_file_reconstruct",
+            SourceFileReconstructCommand,
+            "doc_store_server.commands.text_reconstruction_commands",
+            "sync",
+            "SourceFileReconstructCommand.metadata",
+            "SourceFileReconstructCommand.get_schema",
         ),
         (
             "document_rebind",

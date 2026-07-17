@@ -44,6 +44,10 @@ from doc_store_server.commands.retrieval_commands import (
     ParagraphGetByNumberCommand,
     ParagraphGetCommand,
 )
+from doc_store_server.commands.text_reconstruction_commands import (
+    ChapterTextGetCommand,
+    SourceFileReconstructCommand,
+)
 from doc_store_server.commands.vectorization_command import EmbeddingsRebuildCommand
 from doc_store_server.db.health import check_database_health, database_url_from_config
 from doc_store_server.ingestion.runtime_boundary import (
@@ -70,6 +74,7 @@ from doc_store_server.runtime.embedding_config import (
     DEFAULT_EMBEDDING_WAIT_TIMEOUT,
 )
 from doc_store_server.runtime.search_config import default_search_config, normalize_search_config
+from doc_store_server.runtime.text_reconstruction import installed_text_reconstruction_service
 from doc_store_server.runtime.vectorization import installed_vectorization_service
 from doc_store_server.config_cli import validate_config_data, validation_errors
 
@@ -209,7 +214,7 @@ def create_server_application(config: ServerConfig | None = None) -> Any:
     return create_app(
         title="doc-store",
         description="doc-store adapter server",
-        version="0.1.58",
+        version="0.1.59",
         app_config=dict(config or {}),
     )
 
@@ -227,12 +232,15 @@ def configure_runtime_boundaries(config: ServerConfig) -> None:
     retrieval = installed_retrieval_boundary(config)
     lifecycle = installed_entity_lifecycle_service(config)
     exporter = installed_document_export_service(dict(config))
+    text_reconstruction = installed_text_reconstruction_service(dict(config))
     document_service = installed_document_service(dict(config))
     vectorization = installed_vectorization_service(config)
     DocumentCreateCommand.ingestion_boundary = ingestion
     DocumentUpdateCommand.ingestion_boundary = ingestion
     DocumentChunkCommand.ingestion_boundary = ingestion
     DocumentExportCommand.export_boundary = exporter
+    ChapterTextGetCommand.reconstruction_boundary = text_reconstruction
+    SourceFileReconstructCommand.reconstruction_boundary = text_reconstruction
     DocumentDeleteCommand.document_service = document_service
     DocumentGetCommand.retrieval_boundary = retrieval
     ChapterGetCommand.retrieval_boundary = retrieval

@@ -9,6 +9,7 @@ from .client import DOC_STORE_COMMANDS, DocStoreClient, DocStoreClientError
 from .models import (
     ChapterGetRequest,
     ChapterGetResult,
+    ChapterTextGetRequest,
     DocumentChunkRequest,
     DocumentChunkResult,
     DocumentCreateRequest,
@@ -47,6 +48,9 @@ from .models import (
     ServerError,
     SemanticChunkMetadataUpdateRequest,
     SemanticChunkMetadataUpdateResult,
+    SourceFileReconstructRequest,
+    TextReconstructionRequest,
+    TextReconstructionResult,
 )
 
 try:
@@ -59,6 +63,7 @@ except _PackageNotFoundError:
 __all__ = [
     "ChapterGetRequest",
     "ChapterGetResult",
+    "ChapterTextGetRequest",
     "DOC_STORE_COMMANDS",
     "DocStoreClient",
     "DocStoreClientError",
@@ -100,4 +105,7 @@ __all__ = [
     "ServerError",
     "SemanticChunkMetadataUpdateRequest",
     "SemanticChunkMetadataUpdateResult",
+    "SourceFileReconstructRequest",
+    "TextReconstructionRequest",
+    "TextReconstructionResult",
 ]

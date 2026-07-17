@@ -828,6 +828,15 @@ async def _verify_strategy(
     except Exception as exc:
         _add_check(checks, f"{strategy}: document_chunk reuses stored strategy", False, repr(exc))
 
+    checks.extend(
+        await _verify_text_reconstruction(
+            client,
+            document_id=document_id,
+            marker=marker,
+            strategy=strategy,
+        )
+    )
+
     try:
         await client.rebind_document(
             DocumentRebindRequest(
@@ -918,6 +927,94 @@ async def _verify_paragraph_by_number(
         detail=str(text)[:160],
         data={"document_id": result.document_id, "paragraph_number": result.paragraph_number},
     )
+
+
+async def _verify_text_reconstruction(
+    client: DocStoreClient,
+    *,
+    document_id: str,
+    marker: str,
+    strategy: str,
+) -> list[Check]:
+    checks: list[Check] = []
+    chapter_id: str | None = None
+    try:
+        chunks = await client.list_entities(
+            EntityListRequest(
+                entity_type="semantic_chunks",
+                fields=("id", "chapter_id", "document_id"),
+                filters={"document_id": document_id},
+                limit=1,
+            )
+        )
+        if chunks.items:
+            chapter_id = str(chunks.items[0].get("chapter_id") or "")
+        _add_check(
+            checks,
+            f"{strategy}: locate chapter for text reconstruction",
+            bool(chapter_id),
+            chapter_id or "no chapter_id",
+        )
+    except Exception as exc:
+        _add_check(checks, f"{strategy}: locate chapter for text reconstruction", False, repr(exc))
+
+    if chapter_id:
+        try:
+            chapter_text = await client.call(
+                "chapter_text_get",
+                {"chapter_id": chapter_id, "max_chars": 20_000},
+            )
+            _add_check(
+                checks,
+                f"{strategy}: chapter_text_get",
+                isinstance(chapter_text, Mapping)
+                and marker in str(chapter_text.get("text") or "")
+                and bool(chapter_text.get("range_map")),
+                json.dumps(
+                    {
+                        "chapter_id": chapter_id,
+                        "char_count": chapter_text.get("char_count")
+                        if isinstance(chapter_text, Mapping)
+                        else None,
+                        "chunk_count": chapter_text.get("chunk_count")
+                        if isinstance(chapter_text, Mapping)
+                        else None,
+                    },
+                    ensure_ascii=False,
+                    default=str,
+                ),
+            )
+        except Exception as exc:
+            _add_check(checks, f"{strategy}: chapter_text_get", False, repr(exc))
+
+    try:
+        source_text = await client.call(
+            "source_file_reconstruct",
+            {"document_id": document_id, "max_chars": 20_000},
+        )
+        _add_check(
+            checks,
+            f"{strategy}: source_file_reconstruct",
+            isinstance(source_text, Mapping)
+            and marker in str(source_text.get("text") or "")
+            and bool(source_text.get("range_map")),
+            json.dumps(
+                {
+                    "document_id": document_id,
+                    "char_count": source_text.get("char_count")
+                    if isinstance(source_text, Mapping)
+                    else None,
+                    "chunk_count": source_text.get("chunk_count")
+                    if isinstance(source_text, Mapping)
+                    else None,
+                },
+                ensure_ascii=False,
+                default=str,
+            ),
+        )
+    except Exception as exc:
+        _add_check(checks, f"{strategy}: source_file_reconstruct", False, repr(exc))
+    return checks
 
 
 async def _verify_lifecycle(
@@ -1136,6 +1233,8 @@ async def _run(args: argparse.Namespace) -> int:
         "document_create",
         "document_chunk",
         "document_rebind",
+        "chapter_text_get",
+        "source_file_reconstruct",
         "paragraph_get_by_number",
         "entity_list",
         "entity_get",

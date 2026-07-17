@@ -46,6 +46,10 @@ from doc_store_server.commands.semantic_relations_command import SemanticRelatio
 from doc_store_server.commands.semantic_chunk_metadata_command import (
     SemanticChunkMetadataUpdateCommand,
 )
+from doc_store_server.commands.text_reconstruction_commands import (
+    ChapterTextGetCommand,
+    SourceFileReconstructCommand,
+)
 from doc_store_server.commands.uuid4_command import Uuid4Command
 from doc_store_server.commands.vectorization_command import EmbeddingsRebuildCommand
 
@@ -63,6 +67,8 @@ EXPECTED_COMMANDS = {
     "document_update": (DocumentUpdateCommand, "queue"),
     "document_chunk": (DocumentChunkCommand, "queue"),
     "document_export": (DocumentExportCommand, "sync"),
+    "chapter_text_get": (ChapterTextGetCommand, "sync"),
+    "source_file_reconstruct": (SourceFileReconstructCommand, "sync"),
     "document_rebind": (DocumentRebindCommand, "sync"),
     "processing_status": (ProcessingStatusCommand, "sync"),
     "document_delete": (DocumentDeleteCommand, "sync"),
@@ -312,6 +318,26 @@ class FakeExport:
         return {"outcome": "exported", "document_id": kwargs["document_id"], "file_id": "550e8400-e29b-41d4-a716-446655440009"}
 
 
+class FakeTextReconstruction:
+    def assemble_chapter_text(self, **kwargs: Any) -> dict[str, Any]:
+        return {
+            "entity": "chapter",
+            "selector": kwargs,
+            "text": "chapter text",
+            "body_sha256": "a" * 64,
+            "range_map": [{"chunk_id": "550e8400-e29b-41d4-a716-446655440005"}],
+        }
+
+    def reconstruct_source_file(self, **kwargs: Any) -> dict[str, Any]:
+        return {
+            "entity": "source_file",
+            "selector": kwargs,
+            "text": "source text",
+            "body_sha256": "b" * 64,
+            "range_map": [{"chunk_id": "550e8400-e29b-41d4-a716-446655440005"}],
+        }
+
+
 class FakeLifecycle:
     def create_entity(self, **kwargs: Any) -> dict[str, Any]:
         return {"entity_type": kwargs["entity_type"], "outcome": "created", "value": kwargs["values"]}
@@ -352,6 +378,8 @@ class FakeLifecycle:
         (DocumentUpdateCommand, {"document_id": "550e8400-e29b-41d4-a716-446655440001", "source_version_id": "v2", "raw_text": "hello"}, {"ingestion_boundary": lambda **_: {"status": "committed"}}),
         (DocumentChunkCommand, {"document_id": "550e8400-e29b-41d4-a716-446655440001"}, {"ingestion_boundary": lambda **_: {"status": "committed", "source_version_id": "v2"}}),
         (DocumentExportCommand, {"document_id": "550e8400-e29b-41d4-a716-446655440001", "path": "/tmp/doc.txt"}, {"document_export_boundary": FakeExport()}),
+        (ChapterTextGetCommand, {"chapter_id": "550e8400-e29b-41d4-a716-446655440003"}, {"text_reconstruction_boundary": FakeTextReconstruction()}),
+        (SourceFileReconstructCommand, {"document_id": "550e8400-e29b-41d4-a716-446655440001"}, {"text_reconstruction_boundary": FakeTextReconstruction()}),
         (
             DocumentRebindCommand,
             {
@@ -417,6 +445,8 @@ def test_runtime_configuration_installs_retrieval_boundary(monkeypatch: pytest.M
     monkeypatch.setattr(DocumentCreateCommand, "ingestion_boundary", None)
     monkeypatch.setattr(DocumentUpdateCommand, "ingestion_boundary", None)
     monkeypatch.setattr(DocumentExportCommand, "export_boundary", None)
+    monkeypatch.setattr(ChapterTextGetCommand, "reconstruction_boundary", None)
+    monkeypatch.setattr(SourceFileReconstructCommand, "reconstruction_boundary", None)
     monkeypatch.setattr(DocumentDeleteCommand, "document_service", None)
     monkeypatch.setattr(DocumentGetCommand, "retrieval_boundary", None)
     monkeypatch.setattr(ChapterGetCommand, "retrieval_boundary", None)
@@ -442,6 +472,7 @@ def test_runtime_configuration_installs_retrieval_boundary(monkeypatch: pytest.M
     monkeypatch.setattr(main, "installed_retrieval_boundary", lambda _config: boundary)
     monkeypatch.setattr(main, "installed_entity_lifecycle_service", lambda _config: boundary)
     monkeypatch.setattr(main, "installed_document_export_service", lambda _config: boundary)
+    monkeypatch.setattr(main, "installed_text_reconstruction_service", lambda _config: boundary)
     monkeypatch.setattr(main, "installed_document_service", lambda _config: boundary)
     monkeypatch.setattr(main, "installed_vectorization_service", lambda _config: boundary)
 
@@ -452,6 +483,8 @@ def test_runtime_configuration_installs_retrieval_boundary(monkeypatch: pytest.M
     assert ParagraphGetCommand.retrieval_boundary is boundary
     assert ParagraphGetByNumberCommand.retrieval_boundary is boundary
     assert DocumentExportCommand.export_boundary is boundary
+    assert ChapterTextGetCommand.reconstruction_boundary is boundary
+    assert SourceFileReconstructCommand.reconstruction_boundary is boundary
     assert DocumentDeleteCommand.document_service is boundary
     assert EntityCreateCommand.lifecycle_boundary is boundary
     assert EntityListCommand.lifecycle_boundary is boundary

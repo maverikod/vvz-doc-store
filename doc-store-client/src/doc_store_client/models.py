@@ -298,6 +298,101 @@ class EntityReferencesResult(PublicModel):
 
 
 @dataclass(frozen=True, kw_only=True)
+class TextReconstructionRequest(PublicModel):
+    document_id: str | None = None
+    file_id: str | None = None
+    source_name: str | None = None
+    source_path: str | None = None
+    project_id: str | None = None
+    metadata_filters: Mapping[str, Any] | None = None
+    max_chars: int = 200_000
+    limit: int = 10_000
+    offset: int = 0
+
+    def __post_init__(self) -> None:
+        _validate_reconstruction_text_selectors(
+            document_id=self.document_id,
+            file_id=self.file_id,
+            source_name=self.source_name,
+            source_path=self.source_path,
+            project_id=self.project_id,
+        )
+        if not any(
+            (
+                self.document_id,
+                self.file_id,
+                self.source_name,
+                self.source_path,
+                self.project_id,
+                self.metadata_filters,
+            )
+        ):
+            raise ValueError("at least one selector is required")
+        if self.max_chars < 0:
+            raise ValueError("max_chars must be non-negative")
+        if self.limit < 1:
+            raise ValueError("limit must be positive")
+        if self.offset < 0:
+            raise ValueError("offset must be non-negative")
+
+
+@dataclass(frozen=True, kw_only=True)
+class ChapterTextGetRequest(TextReconstructionRequest):
+    chapter_id: str | None = None
+    include_context: bool = False
+
+    def __post_init__(self) -> None:
+        _validate_reconstruction_text_selectors(
+            document_id=self.document_id,
+            file_id=self.file_id,
+            source_name=self.source_name,
+            source_path=self.source_path,
+            project_id=self.project_id,
+        )
+        if self.chapter_id is not None and not self.chapter_id.strip():
+            raise ValueError("chapter_id must be non-empty when supplied")
+        if self.chapter_id is not None:
+            _validate_reconstruction_bounds(self.max_chars, self.limit, self.offset)
+            return
+        super().__post_init__()
+
+
+@dataclass(frozen=True, kw_only=True)
+class SourceFileReconstructRequest(TextReconstructionRequest):
+    """Request payload for reconstructing stored source text from chunks."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class TextReconstructionResult(PublicModel):
+    entity: str
+    selector: Mapping[str, Any] = field(default_factory=dict)
+    text: str = ""
+    preview: str = ""
+    body_sha256: str = ""
+    char_count: int = 0
+    chunk_count: int = 0
+    paragraph_count: int = 0
+    document_ids: tuple[str, ...] = ()
+    chapter_ids: tuple[str, ...] = ()
+    source_names: tuple[str, ...] = ()
+    source_paths: tuple[str, ...] = ()
+    range_map: tuple[Mapping[str, Any], ...] = ()
+    truncated: bool = False
+    limit: int = 10_000
+    offset: int = 0
+    max_chars: int = 200_000
+    versioning: Mapping[str, Any] | None = None
+    context: Mapping[str, Any] | None = None
+
+    @classmethod
+    def from_payload(cls, payload: Payload) -> Self:
+        values = dict(payload)
+        for name in ("document_ids", "chapter_ids", "source_names", "source_paths", "range_map"):
+            values[name] = tuple(values.get(name, ()))
+        return _read(cls, values)
+
+
+@dataclass(frozen=True, kw_only=True)
 class EntityOwnerTreeRequest(PublicModel):
     entity_id: str
     entity_type: str | None = None
@@ -434,6 +529,35 @@ class ProcessingStatusResult(PublicModel):
         if isinstance(failure, Mapping):
             values["failure"] = ServerError.from_payload(failure)
         return _read(cls, values)
+
+
+def _validate_reconstruction_bounds(max_chars: int, limit: int, offset: int) -> None:
+    if max_chars < 0:
+        raise ValueError("max_chars must be non-negative")
+    if limit < 1:
+        raise ValueError("limit must be positive")
+    if offset < 0:
+        raise ValueError("offset must be non-negative")
+
+
+def _validate_reconstruction_text_selectors(
+    *,
+    document_id: str | None,
+    file_id: str | None,
+    source_name: str | None,
+    source_path: str | None,
+    project_id: str | None,
+) -> None:
+    values = {
+        "document_id": document_id,
+        "file_id": file_id,
+        "source_name": source_name,
+        "source_path": source_path,
+        "project_id": project_id,
+    }
+    for field_name, value in values.items():
+        if value is not None and not value.strip():
+            raise ValueError(f"{field_name} must be non-empty when supplied")
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -576,7 +700,8 @@ class OperationState(PublicModel):
 
 
 __all__ = [
-    "ChapterGetRequest", "ChapterGetResult", "ChunkQuery", "DocumentCreateRequest",
+    "ChapterGetRequest", "ChapterGetResult", "ChapterTextGetRequest", "ChunkQuery",
+    "DocumentCreateRequest",
     "DocumentCreateResult", "DocumentChunkRequest", "DocumentChunkResult",
     "DocumentDeleteRequest", "DocumentDeleteResult", "DocumentGetRequest", "DocumentGetResult",
     "DocumentRebindRequest", "DocumentRebindResult", "DocumentUpdateRequest", "DocumentUpdateResult",
@@ -588,4 +713,5 @@ __all__ = [
     "ParagraphGetResult", "ProcessingStatusRequest", "ProcessingStatusResult", "RankedSearchHit",
     "RetrievalRequest", "RetrievalResult", "SearchResult", "ServerError",
     "SemanticChunkMetadataUpdateRequest", "SemanticChunkMetadataUpdateResult",
+    "SourceFileReconstructRequest", "TextReconstructionRequest", "TextReconstructionResult",
 ]

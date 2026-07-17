@@ -46,6 +46,10 @@ from doc_store_server.commands.semantic_relations_command import SemanticRelatio
 from doc_store_server.commands.semantic_chunk_metadata_command import (
     SemanticChunkMetadataUpdateCommand,
 )
+from doc_store_server.commands.text_reconstruction_commands import (
+    ChapterTextGetCommand,
+    SourceFileReconstructCommand,
+)
 from doc_store_server.commands.uuid4_command import Uuid4Command
 from doc_store_server.commands.vectorization_command import EmbeddingsRebuildCommand
 
@@ -161,6 +165,22 @@ DOC_STORE_COMMAND_MANIFEST: Final[tuple[CommandManifestEntry, ...]] = (
         "sync",
         "DocumentExportCommand.metadata",
         "DocumentExportCommand.get_schema",
+    ),
+    CommandManifestEntry(
+        "chapter_text_get",
+        ChapterTextGetCommand,
+        "doc_store_server.commands.text_reconstruction_commands",
+        "sync",
+        "ChapterTextGetCommand.metadata",
+        "ChapterTextGetCommand.get_schema",
+    ),
+    CommandManifestEntry(
+        "source_file_reconstruct",
+        SourceFileReconstructCommand,
+        "doc_store_server.commands.text_reconstruction_commands",
+        "sync",
+        "SourceFileReconstructCommand.metadata",
+        "SourceFileReconstructCommand.get_schema",
     ),
     CommandManifestEntry(
         "document_rebind",
@@ -315,6 +335,7 @@ DOC_STORE_COMMAND_MODULE_MANIFEST: Final[tuple[str, ...]] = (
     "doc_store_server.commands.retrieval_commands",
     "doc_store_server.commands.ingestion_commands",
     "doc_store_server.commands.document_export_command",
+    "doc_store_server.commands.text_reconstruction_commands",
     "doc_store_server.commands.document_rebind_command",
     "doc_store_server.commands.processing_status_command",
     "doc_store_server.commands.document_delete_command",
@@ -377,11 +398,13 @@ __all__ = [
     "EntityUndeleteCommand",
     "InfoCommand",
     "ChapterGetCommand",
+    "ChapterTextGetCommand",
     "ParagraphGetByNumberCommand",
     "ParagraphGetCommand",
     "ProcessingStatusCommand",
     "SemanticChunkMetadataUpdateCommand",
     "SemanticRelationsCommand",
+    "SourceFileReconstructCommand",
     "Uuid4Command",
     "register_doc_store_commands",
 ]
