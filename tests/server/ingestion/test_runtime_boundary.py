@@ -6,6 +6,7 @@ import json
 from doc_store_server.ingestion.runtime_boundary import (
     InMemoryRuntimeStatus,
     RuntimeIngestionBoundary,
+    SEMANTIC_CLASSIFIER_DEFAULTS,
     _chunk_features,
     _clear_reprocessing_flags,
     _insert_semantic_chunk_default_metrics,
@@ -81,6 +82,10 @@ def test_runtime_chunk_features_use_per_classifier_default_category_when_missing
     assert plain["category"] == "uncategorized"
     assert "category:uncategorized" in plain["tags"]
     assert heading["category"] == "heading"
+
+
+def test_runtime_default_chunk_status_marks_processing_required() -> None:
+    assert SEMANTIC_CLASSIFIER_DEFAULTS["status"] == "needs_review"
 
 
 def test_runtime_default_metrics_preserve_quality_for_later_worker() -> None:

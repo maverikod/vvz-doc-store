@@ -1189,7 +1189,7 @@ DICTIONARY_TABLES = {
 SEMANTIC_CLASSIFIER_DEFAULTS = {
     "type": "DocBlock",
     "role": "system",
-    "status": "new",
+    "status": "needs_review",
     "block_type": "paragraph",
     "language": "UNKNOWN",
     "category": "uncategorized",

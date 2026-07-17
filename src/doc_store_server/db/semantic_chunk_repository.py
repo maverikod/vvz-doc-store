@@ -19,6 +19,8 @@ from .link_embedding_metadata_schema import (
 )
 from .metrics_schema import SemanticChunkFeedback, SemanticChunkMetrics
 from .schema import SemanticChunk as SemanticChunkRow
+from .schema import CategoryDictionary, ChunkStatusDictionary
+from .schema import SemanticChunkCategoryAssignment, SemanticChunkStatusAssignment
 from .schema import SemanticChunkText
 from .semantic_chunk_mapper import (
     EmbeddingRow,
@@ -36,6 +38,20 @@ from .token_tag_schema import SemanticChunkTag, SemanticChunkToken
 
 if TYPE_CHECKING:
     from chunk_metadata_adapter import SemanticChunk
+
+
+_RESET_BLOCK_META_FIELDS = frozenset(
+    {
+        "category",
+        "tags",
+        "tags_flat",
+        "summary",
+        "title",
+        "classification",
+    }
+)
+_RESET_STATUS = "needs_review"
+_RESET_CATEGORY = "uncategorized"
 
 
 class SemanticChunkNotFoundError(LookupError):
@@ -66,14 +82,26 @@ class SemanticChunkRepository:
             embedding_active=embedding_active,
         )
         async with self._session.begin():
+            existing_root = await self._lock_root(rows.root["id"])
+            text_changed = (
+                existing_root is not None
+                and await self._stored_text(existing_root) != rows.root["text"]
+            )
+            if text_changed:
+                rows = _reset_machine_metadata(rows)
+
             await self._upsert_root(rows.root)
             root = await self._lock_root(rows.root["id"])
             if root is None:
                 raise SemanticChunkNotFoundError(f"semantic chunk not found after upsert: {rows.root['id']}")
 
             await self._upsert_text_payload(rows.root)
+            if text_changed:
+                await self._set_processing_required(rows.root["id"])
             await self._replace_metrics(rows.root["id"], rows.metrics, rows.feedback)
             await self._replace_ordered_children(rows)
+            if text_changed:
+                await self._delete_embeddings(rows.root["id"])
             await self._upsert_embeddings(rows.embeddings)
             await self._session.flush()
             stored = await self._read_rows(root)
@@ -125,6 +153,14 @@ class SemanticChunkRepository:
             )
         ).scalar_one_or_none()
 
+    async def _stored_text(self, root: SemanticChunkRow) -> str:
+        text_payload = (
+            await self._session.execute(
+                select(SemanticChunkText).where(SemanticChunkText.chunk_uuid == root.id)
+            )
+        ).scalar_one_or_none()
+        return text_payload.text if text_payload is not None else root.text
+
     async def _upsert_root(self, row: RootRow) -> None:
         values = dict(row)
         values["text"] = ""
@@ -162,6 +198,56 @@ class SemanticChunkRepository:
         else:
             for key, value in values.items():
                 setattr(existing, key, value)
+
+    async def _set_processing_required(self, chunk_uuid: UUID) -> None:
+        status_id = await self._dictionary_id(ChunkStatusDictionary, _RESET_STATUS)
+        category_id = await self._dictionary_id(CategoryDictionary, _RESET_CATEGORY)
+        await self._session.execute(
+            update(SemanticChunkRow)
+            .where(SemanticChunkRow.id == chunk_uuid)
+            .values(status_id=status_id, category_id=category_id)
+        )
+        await self._upsert_assignment(
+            SemanticChunkStatusAssignment,
+            "status_id",
+            chunk_uuid,
+            status_id,
+        )
+        await self._upsert_assignment(
+            SemanticChunkCategoryAssignment,
+            "category_id",
+            chunk_uuid,
+            category_id,
+        )
+
+    async def _dictionary_id(self, model: type[Any], descr: str) -> UUID:
+        dictionary_id = (
+            await self._session.execute(select(model.id).where(model.descr == descr))
+        ).scalar_one_or_none()
+        if dictionary_id is not None:
+            return dictionary_id
+        row = model(descr=descr)
+        self._session.add(row)
+        await self._session.flush()
+        return row.id
+
+    async def _upsert_assignment(
+        self,
+        model: type[Any],
+        column: str,
+        chunk_uuid: UUID,
+        dictionary_id: UUID,
+    ) -> None:
+        values = {"chunk_uuid": chunk_uuid, column: dictionary_id}
+        statement = (
+            pg_insert(model)
+            .values(**values)
+            .on_conflict_do_update(
+                index_elements=[model.chunk_uuid],
+                set_={column: dictionary_id},
+            )
+        )
+        await self._session.execute(statement)
 
     async def _replace_metrics(
         self,
@@ -277,6 +363,13 @@ class SemanticChunkRepository:
                 for key, value in values.items():
                     setattr(existing, key, value)
 
+    async def _delete_embeddings(self, chunk_uuid: UUID) -> None:
+        await self._session.execute(
+            delete(SemanticChunkEmbedding).where(
+                SemanticChunkEmbedding.chunk_uuid == chunk_uuid
+            )
+        )
+
     async def _read_rows(self, root: SemanticChunkRow) -> SemanticChunkRows:
         chunk_uuid = root.id
         metrics = (
@@ -379,3 +472,23 @@ class SemanticChunkRepository:
 
 
 __all__ = ["SemanticChunkNotFoundError", "SemanticChunkRepository"]
+
+
+def _reset_machine_metadata(rows: SemanticChunkRows) -> SemanticChunkRows:
+    root = dict(rows.root)
+    block_meta = dict(root.get("block_meta") or {})
+    for field in _RESET_BLOCK_META_FIELDS:
+        block_meta.pop(field, None)
+    block_meta["status"] = _RESET_STATUS
+    block_meta["category"] = _RESET_CATEGORY
+    root["block_meta"] = block_meta
+    return SemanticChunkRows(
+        root=root,
+        metrics=None,
+        feedback=None,
+        tokens=(),
+        tags=(),
+        links=rows.links,
+        embeddings=(),
+        block_meta=rows.block_meta,
+    )

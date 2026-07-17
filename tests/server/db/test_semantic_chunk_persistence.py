@@ -245,7 +245,25 @@ async def _seed_parent(session: AsyncSession, chunk: SemanticChunk) -> None:
 def test_repository_upsert_read_update_not_found_and_history(db) -> None:
     async def scenario() -> None:
         factory, _ = db
-        chunk = _chunk(metrics=_rich_metrics(), embedding=[1.0, 2.0], embedding_model="m")
+        chunk = _chunk(
+            metrics=_rich_metrics(),
+            embedding=[1.0, 2.0],
+            embedding_model="m",
+            tags=["stale-tag"],
+            category="theory",
+            summary="stale summary",
+            title="stale title",
+            block_meta={
+                "chapter_id": str(uuid4()),
+                "parent_id": str(uuid4()),
+                "category": "theory",
+                "tags": ["stale-tag"],
+                "tags_flat": "stale-tag",
+                "summary": "stale summary",
+                "title": "stale title",
+                "classification": {"provider": "fixture", "confidence": 0.99},
+            },
+        )
         async with factory() as session:
             await _seed_parent(session, chunk)
             await session.commit()
@@ -253,17 +271,32 @@ def test_repository_upsert_read_update_not_found_and_history(db) -> None:
             first = await repository.upsert(chunk, embedding_provider="p", embedding_model_version="1", embedding_created_at=datetime(2024, 1, 1, tzinfo=timezone.utc))
             updated = chunk.model_copy(update={"body": "updated body", "text": "updated body", "end": 12})
             await repository.upsert(updated, embedding_provider="p", embedding_model_version="2", embedding_created_at=datetime(2024, 2, 1, tzinfo=timezone.utc))
-            restored = await repository.get_by_uuid(UUID(str(chunk.uuid)), requested_model="m", requested_dimension=2)
+            restored = await repository.get_by_uuid(UUID(str(chunk.uuid)))
             assert first.uuid == restored.uuid == chunk.uuid
             assert restored.body == "updated body"
-            assert restored.embedding == [1.0, 2.0]
+            assert restored.metrics is None
+            assert restored.embedding is None
+            assert not restored.tags
+            assert restored.status.value == "needs_review"
+            assert restored.category == "uncategorized"
+            assert restored.summary is None
+            assert restored.title is None
             stored = (
                 await session.execute(
                     text(
                         "SELECT sc.text AS hot_text, sct.text AS payload_text, "
-                        "sct.text_sha256, sct.char_count "
+                        "sct.text_sha256, sct.char_count, sc.block_meta, "
+                        "cs.descr AS status_descr, cat.descr AS category_descr, "
+                        "(SELECT count(*) FROM semantic_chunk_metrics WHERE chunk_uuid = sc.id) AS metric_count, "
+                        "(SELECT count(*) FROM semantic_chunk_tokens WHERE chunk_uuid = sc.id) AS token_count, "
+                        "(SELECT count(*) FROM semantic_chunk_tags WHERE chunk_uuid = sc.id) AS tag_count, "
+                        "(SELECT count(*) FROM semantic_chunk_embeddings WHERE chunk_uuid = sc.id) AS embedding_count "
                         "FROM semantic_chunks AS sc "
                         "JOIN semantic_chunk_texts AS sct ON sct.chunk_uuid = sc.id "
+                        "LEFT JOIN semantic_chunk_status_assignments AS scsa ON scsa.chunk_uuid = sc.id "
+                        "LEFT JOIN chunk_statuses AS cs ON cs.id = COALESCE(scsa.status_id, sc.status_id) "
+                        "LEFT JOIN semantic_chunk_category_assignments AS scca ON scca.chunk_uuid = sc.id "
+                        "LEFT JOIN categories AS cat ON cat.id = COALESCE(scca.category_id, sc.category_id) "
                         "WHERE sc.id = :id"
                     ),
                     {"id": chunk.uuid},
@@ -273,6 +306,16 @@ def test_repository_upsert_read_update_not_found_and_history(db) -> None:
             assert stored["payload_text"] == "updated body"
             assert len(stored["text_sha256"]) == 64
             assert stored["char_count"] == len("updated body")
+            assert stored["status_descr"] == "needs_review"
+            assert stored["category_descr"] == "uncategorized"
+            assert stored["metric_count"] == 0
+            assert stored["token_count"] == 0
+            assert stored["tag_count"] == 0
+            assert stored["embedding_count"] == 0
+            assert stored["block_meta"]["status"] == "needs_review"
+            assert stored["block_meta"]["category"] == "uncategorized"
+            for stale_field in ("tags", "tags_flat", "summary", "title", "classification"):
+                assert stale_field not in stored["block_meta"]
             with pytest.raises(SemanticChunkNotFoundError):
                 await repository.get_by_uuid(uuid4())
 
