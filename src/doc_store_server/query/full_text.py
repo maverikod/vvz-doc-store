@@ -56,6 +56,12 @@ _PREDICATE_COLUMNS = {
     "text": CHUNK_TEXT_COLUMN_SQL,
     "summary": "sc.block_meta ->> 'summary'",
     "title": "d.title",
+    "type": "COALESCE(ct.descr, sc.chunk_type, 'DocBlock')",
+    "role": "cr.descr",
+    "status": "cs.descr",
+    "block_type": "bt.descr",
+    "language": "lang.descr",
+    "category": "cat.descr",
 }
 
 _METADATA_FIELDS = {

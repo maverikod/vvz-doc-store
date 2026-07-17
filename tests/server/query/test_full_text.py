@@ -86,7 +86,12 @@ def _row(
 
 def test_full_text_binds_allowlisted_metadata_and_searches_all_canonical_fields() -> None:
     session = FakeAsyncSession([])
-    plan = _plan(project="doc-store", tags=["docs", "search"], block_meta={"scope": "client"})
+    plan = _plan(
+        project="doc-store",
+        tags=["docs", "search"],
+        block_meta={"scope": "client"},
+        block_type="sentence",
+    )
 
     import asyncio
 
@@ -96,12 +101,14 @@ def test_full_text_binds_allowlisted_metadata_and_searches_all_canonical_fields(
     sql = str(statement)
     assert params["query_text"] == "needle"
     assert json.loads(params["p0"]) == {"scope": "client"}
-    assert params["p1"] == "doc-store"
-    assert json.loads(params["p2"]) == ["docs", "search"]
+    assert params["p1"] == "sentence"
+    assert params["p2"] == "doc-store"
+    assert json.loads(params["p3"]) == ["docs", "search"]
     assert params["limit"] == 100
     assert "sc.block_meta @> CAST(:p0 AS jsonb)" in sql
-    assert "sc.block_meta ->> 'project' = :p1" in sql
-    assert "sc.block_meta -> 'tags' @> CAST(:p2 AS jsonb)" in sql
+    assert "bt.descr = :p1" in sql
+    assert "sc.block_meta ->> 'project' = :p2" in sql
+    assert "sc.block_meta -> 'tags' @> CAST(:p3 AS jsonb)" in sql
     assert "JOIN semantic_chunk_texts AS sct ON sct.chunk_uuid = sc.id" in sql
     assert "coalesce(sct.text, '')" in sql
     assert "coalesce(sc.block_meta ->> 'summary', '')" in sql

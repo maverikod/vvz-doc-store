@@ -351,12 +351,22 @@ class RuntimeIngestionBoundary:
         if isinstance(prepared, Mapping):
             return dict(prepared)
         chunker = self._chunker or installed_svo_runtime_chunker()
-        chunks = await chunker.chunk(
+        paragraph_chunks = await chunker.chunk(
             text=prepared.text_value,
-            strategy=prepared.chunking_strategy,
+            strategy="paragraph",
             source_id=str(prepared.document_id),
         )
-        return await asyncio.to_thread(self._persist_prepared_chunks, prepared, chunks)
+        sentence_chunks = await chunker.chunk(
+            text=prepared.text_value,
+            strategy="sentence",
+            source_id=str(prepared.document_id),
+        )
+        return await asyncio.to_thread(
+            self._persist_prepared_chunks,
+            prepared,
+            paragraph_chunks,
+            sentence_chunks,
+        )
 
     def _prepare_persistence(
         self,
@@ -482,10 +492,13 @@ class RuntimeIngestionBoundary:
     def _persist_prepared_chunks(
         self,
         prepared: _PersistencePlan,
-        chunks: Sequence[RuntimeChunk],
+        paragraph_chunks: Sequence[RuntimeChunk],
+        sentence_chunks: Sequence[RuntimeChunk],
     ) -> dict[str, Any]:
-        if not chunks:
-            raise ValueError("chunker returned no chunks")
+        if not paragraph_chunks:
+            raise ValueError("chunker returned no paragraph chunks")
+        if not sentence_chunks:
+            raise ValueError("chunker returned no sentence chunks")
         document_id = prepared.document_id
         engine = create_engine(self._database_url, pool_pre_ping=True)
         try:
@@ -598,35 +611,24 @@ class RuntimeIngestionBoundary:
                         "block_meta": json.dumps(dict(prepared.doc_meta)),
                     },
                 )
-                for order_index, chunk in enumerate(chunks):
-                    paragraph_text = chunk.text
-                    source_start = chunk.start
-                    source_end = chunk.end
+                for order_index, paragraph_chunk in enumerate(paragraph_chunks):
+                    paragraph_text = paragraph_chunk.text
+                    source_start = paragraph_chunk.start
+                    source_end = paragraph_chunk.end
                     paragraph_id = uuid4()
-                    chunk_id = chunk.uuid
                     chunk_features = _chunk_features(
                         paragraph_text,
                         source_name=prepared.source_name,
-                        chunking_strategy=prepared.chunking_strategy,
+                        chunking_strategy="paragraph",
                     )
-                    chunk_features.update(_chunk_metadata_features(chunk.metadata))
-                    classifier_values = _semantic_classifier_values(chunk_features)
-                    dictionary_ids = _semantic_dictionary_ids(connection, classifier_values)
+                    chunk_features.update(_chunk_metadata_features(paragraph_chunk.metadata))
                     paragraph_ids.append(str(paragraph_id))
-                    chunk_ids.append(str(chunk_id))
                     paragraph_meta = {
                         **dict(prepared.doc_meta),
                         **_source_properties(paragraph_text),
                         **chunk_features,
                         "paragraph_number": order_index + 1,
                         "chunker": "svo",
-                    }
-                    chunk_meta = {
-                        **paragraph_meta,
-                        "chapter_id": str(chapter_id),
-                        "source_name": prepared.source_name,
-                        "svo_chunk": dict(chunk.metadata),
-                        **classifier_values,
                     }
                     connection.execute(
                         text(
@@ -647,84 +649,109 @@ class RuntimeIngestionBoundary:
                             "block_meta": json.dumps(paragraph_meta),
                         },
                     )
-                    connection.execute(
-                        text(
-                            "INSERT INTO semantic_chunks "
-                            "(id, owner_id, document_id, paragraph_id, chapter_id, order_index, text, "
-                            "source_start, source_end, char_count, chunk_type, chunk_type_id, "
-                            "role_id, status_id, block_type_id, language_id, category_id, "
-                            "search_weight, block_meta) "
-                            "VALUES (:id, :paragraph_id, :document_id, :paragraph_id, :chapter_id, "
-                            ":order_index, '', :source_start, :source_end, :char_count, "
-                            ":chunk_type, :chunk_type_id, :role_id, :status_id, "
-                            ":block_type_id, :language_id, :category_id, 1, "
-                            "CAST(:block_meta AS jsonb))"
-                        ),
-                        {
-                            "id": chunk_id,
-                            "document_id": document_id,
-                            "paragraph_id": paragraph_id,
-                            "chapter_id": chapter_id,
-                            "order_index": order_index,
-                            "body": paragraph_text,
-                            "source_start": source_start,
-                            "source_end": source_end,
-                            "char_count": len(paragraph_text),
-                            "chunk_type": classifier_values["type"],
-                            "chunk_type_id": dictionary_ids["chunk_type_id"],
-                            "role_id": dictionary_ids["role_id"],
-                            "status_id": dictionary_ids["status_id"],
-                            "block_type_id": dictionary_ids["block_type_id"],
-                            "language_id": dictionary_ids["language_id"],
-                            "category_id": dictionary_ids["category_id"],
-                            "block_meta": json.dumps(chunk_meta),
-                        },
-                    )
-                    connection.execute(
-                        text(
-                            "INSERT INTO semantic_chunk_texts "
-                            "(chunk_uuid, text, text_sha256, char_count, block_meta) "
-                            "VALUES (:chunk_uuid, :body, :text_sha256, :char_count, "
-                            "CAST(:block_meta AS jsonb))"
-                        ),
-                        {
-                            "chunk_uuid": chunk_id,
-                            "body": paragraph_text,
-                            "text_sha256": hashlib.sha256(paragraph_text.encode("utf-8")).hexdigest(),
-                            "char_count": len(paragraph_text),
-                            "block_meta": json.dumps(chunk_meta),
-                        },
-                    )
-                    _upsert_semantic_chunk_classifier_assignments(
-                        connection,
-                        chunk_id,
-                        dictionary_ids,
-                    )
-                    _insert_semantic_chunk_default_metrics(connection, chunk_id)
-                    for token_kind in ("tokens", "bm25_tokens"):
-                        for token_ordinal, token_value in enumerate(chunk_features[token_kind]):
-                            connection.execute(
-                                text(
-                                    "INSERT INTO semantic_chunk_tokens "
-                                    "(chunk_uuid, token_kind, ordinal, token_value) "
-                                    "VALUES (:chunk_uuid, :token_kind, :ordinal, :token_value)"
-                                ),
-                                {
-                                    "chunk_uuid": chunk_id,
-                                    "token_kind": token_kind,
-                                    "ordinal": token_ordinal,
-                                    "token_value": token_value,
-                                },
-                            )
-                    for tag_ordinal, tag_value in enumerate(chunk_features["tags"]):
+                    for sentence_chunk in _sentence_chunks_for_paragraph(
+                        paragraph_chunk,
+                        sentence_chunks,
+                    ):
+                        sentence_text = sentence_chunk.text
+                        chunk_id = sentence_chunk.uuid
+                        sentence_features = _chunk_features(
+                            sentence_text,
+                            source_name=prepared.source_name,
+                            chunking_strategy="sentence",
+                        )
+                        sentence_features.update(_chunk_metadata_features(sentence_chunk.metadata))
+                        sentence_features["block_type"] = "sentence"
+                        classifier_values = _semantic_classifier_values(sentence_features)
+                        dictionary_ids = _semantic_dictionary_ids(connection, classifier_values)
+                        chunk_ids.append(str(chunk_id))
+                        chunk_meta = {
+                            **paragraph_meta,
+                            **sentence_features,
+                            "unit_type": "sentence",
+                            "chapter_id": str(chapter_id),
+                            "paragraph_id": str(paragraph_id),
+                            "source_name": prepared.source_name,
+                            "svo_chunk": dict(sentence_chunk.metadata),
+                            **classifier_values,
+                        }
                         connection.execute(
                             text(
-                                "INSERT INTO semantic_chunk_tags "
-                                "(chunk_uuid, ordinal, tag_value) "
-                                "VALUES (:chunk_uuid, :ordinal, :tag_value)"
+                                "INSERT INTO semantic_chunks "
+                                "(id, owner_id, document_id, paragraph_id, chapter_id, order_index, text, "
+                                "source_start, source_end, char_count, chunk_type, chunk_type_id, "
+                                "role_id, status_id, block_type_id, language_id, category_id, "
+                                "search_weight, block_meta) "
+                                "VALUES (:id, :paragraph_id, :document_id, :paragraph_id, :chapter_id, "
+                                ":order_index, '', :source_start, :source_end, :char_count, "
+                                ":chunk_type, :chunk_type_id, :role_id, :status_id, "
+                                ":block_type_id, :language_id, :category_id, 1, "
+                                "CAST(:block_meta AS jsonb))"
                             ),
-                            {"chunk_uuid": chunk_id, "ordinal": tag_ordinal, "tag_value": tag_value},
+                            {
+                                "id": chunk_id,
+                                "document_id": document_id,
+                                "paragraph_id": paragraph_id,
+                                "chapter_id": chapter_id,
+                                "order_index": sentence_chunk.ordinal,
+                                "source_start": sentence_chunk.start,
+                                "source_end": sentence_chunk.end,
+                                "char_count": len(sentence_text),
+                                "chunk_type": classifier_values["type"],
+                                "chunk_type_id": dictionary_ids["chunk_type_id"],
+                                "role_id": dictionary_ids["role_id"],
+                                "status_id": dictionary_ids["status_id"],
+                                "block_type_id": dictionary_ids["block_type_id"],
+                                "language_id": dictionary_ids["language_id"],
+                                "category_id": dictionary_ids["category_id"],
+                                "block_meta": json.dumps(chunk_meta),
+                            },
                         )
+                        connection.execute(
+                            text(
+                                "INSERT INTO semantic_chunk_texts "
+                                "(chunk_uuid, text, text_sha256, char_count, block_meta) "
+                                "VALUES (:chunk_uuid, :body, :text_sha256, :char_count, "
+                                "CAST(:block_meta AS jsonb))"
+                            ),
+                            {
+                                "chunk_uuid": chunk_id,
+                                "body": sentence_text,
+                                "text_sha256": hashlib.sha256(sentence_text.encode("utf-8")).hexdigest(),
+                                "char_count": len(sentence_text),
+                                "block_meta": json.dumps(chunk_meta),
+                            },
+                        )
+                        _upsert_semantic_chunk_classifier_assignments(
+                            connection,
+                            chunk_id,
+                            dictionary_ids,
+                        )
+                        _insert_semantic_chunk_default_metrics(connection, chunk_id)
+                        for token_kind in ("tokens", "bm25_tokens"):
+                            for token_ordinal, token_value in enumerate(sentence_features[token_kind]):
+                                connection.execute(
+                                    text(
+                                        "INSERT INTO semantic_chunk_tokens "
+                                        "(chunk_uuid, token_kind, ordinal, token_value) "
+                                        "VALUES (:chunk_uuid, :token_kind, :ordinal, :token_value)"
+                                    ),
+                                    {
+                                        "chunk_uuid": chunk_id,
+                                        "token_kind": token_kind,
+                                        "ordinal": token_ordinal,
+                                        "token_value": token_value,
+                                    },
+                                )
+                        for tag_ordinal, tag_value in enumerate(sentence_features["tags"]):
+                            connection.execute(
+                                text(
+                                    "INSERT INTO semantic_chunk_tags "
+                                    "(chunk_uuid, ordinal, tag_value) "
+                                    "VALUES (:chunk_uuid, :ordinal, :tag_value)"
+                                ),
+                                {"chunk_uuid": chunk_id, "ordinal": tag_ordinal, "tag_value": tag_value},
+                            )
             return {
                 "idempotent": False,
                 "document_id": str(document_id),
@@ -1004,6 +1031,29 @@ def _load_document_file_state(connection: Any, document_id: UUID) -> dict[str, A
         "file_needs_revectorize": bool(row["file_needs_revectorize"]),
         "file_needs_rechunk": bool(row["file_needs_rechunk"]),
     }
+
+
+def _sentence_chunks_for_paragraph(
+    paragraph_chunk: RuntimeChunk,
+    sentence_chunks: Sequence[RuntimeChunk],
+) -> tuple[RuntimeChunk, ...]:
+    matches = [
+        chunk
+        for chunk in sentence_chunks
+        if chunk.start >= paragraph_chunk.start and chunk.start < paragraph_chunk.end
+    ]
+    if not matches:
+        matches = [
+            chunk
+            for chunk in sentence_chunks
+            if chunk.end > paragraph_chunk.start and chunk.start < paragraph_chunk.end
+        ]
+    if not matches:
+        raise ValueError(
+            "sentence chunker returned no sentence chunks inside paragraph range "
+            f"{paragraph_chunk.start}:{paragraph_chunk.end}"
+        )
+    return tuple(sorted(matches, key=lambda chunk: (chunk.start, chunk.end, chunk.ordinal)))
 
 
 def _existing_references(

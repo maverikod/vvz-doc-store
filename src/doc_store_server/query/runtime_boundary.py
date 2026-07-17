@@ -49,7 +49,26 @@ _PREDICATE_COLUMNS = {
     "text": CHUNK_TEXT_COLUMN_SQL,
     "summary": "sc.block_meta ->> 'summary'",
     "title": "d.title",
+    "type": "COALESCE(ct.descr, sc.chunk_type, 'DocBlock')",
+    "role": "cr.descr",
+    "status": "cs.descr",
+    "block_type": "bt.descr",
+    "language": "lang.descr",
+    "category": "cat.descr",
 }
+
+_METADATA_FIELDS = {
+    "block_id", "block_index", "block_meta", "boundary_next",
+    "boundary_prev", "chunking_version", "cohesion", "coverage", "created_at",
+    "embedding_model", "end", "feedback_accepted", "feedback_modifications",
+    "feedback_rejected", "is_code_chunk", "is_public", "link_parent",
+    "link_related", "metrics", "sha256", "source_lines_end",
+    "source_lines_start", "source_path", "start", "subtask_id", "tags_flat",
+    "task_id", "unit_id", "used_in_generation", "year", "quality_score",
+}
+
+for _field in _METADATA_FIELDS:
+    _PREDICATE_COLUMNS.setdefault(_field, f"sc.block_meta ->> '{_field}'")
 
 
 class RuntimeSearchBoundary:

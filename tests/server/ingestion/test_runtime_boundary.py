@@ -2,15 +2,22 @@ from __future__ import annotations
 
 import asyncio
 import json
+from uuid import uuid4
+
+from chunk_metadata_adapter import BlockType, SemanticChunk
 
 from doc_store_server.ingestion.runtime_boundary import (
     InMemoryRuntimeStatus,
     RuntimeIngestionBoundary,
+    RuntimeChunk,
     SEMANTIC_CLASSIFIER_DEFAULTS,
+    _PersistencePlan,
     _chunk_features,
     _clear_reprocessing_flags,
     _insert_semantic_chunk_default_metrics,
     _mark_existing_hierarchy_deleted,
+    _sentence_chunks_for_paragraph,
+    _semantic_classifier_values,
 )
 
 
@@ -86,6 +93,108 @@ def test_runtime_chunk_features_use_per_classifier_default_category_when_missing
 
 def test_runtime_default_chunk_status_marks_processing_required() -> None:
     assert SEMANTIC_CLASSIFIER_DEFAULTS["status"] == "needs_review"
+
+
+def test_chunk_metadata_adapter_accepts_sentence_block_type() -> None:
+    chunk = SemanticChunk.from_dict_with_autofill_and_validation(
+        {"type": "DocBlock", "body": "Single sentence.", "block_type": "sentence"}
+    )
+
+    assert BlockType.from_string("sentence") == BlockType.SENTENCE
+    assert chunk.block_type == BlockType.SENTENCE
+
+
+def test_sentence_classifier_values_use_sentence_block_type() -> None:
+    values = _semantic_classifier_values({"block_type": "sentence"})
+
+    assert values["block_type"] == "sentence"
+
+
+def test_runtime_ingestion_requests_paragraph_and_sentence_chunks(monkeypatch) -> None:
+    document_id = uuid4()
+    operation_id = uuid4()
+    paragraph = RuntimeChunk(
+        uuid=uuid4(),
+        text="First sentence. Second sentence.",
+        start=0,
+        end=32,
+        ordinal=0,
+        metadata={},
+    )
+    sentences = (
+        RuntimeChunk(uuid=uuid4(), text="First sentence.", start=0, end=15, ordinal=0, metadata={}),
+        RuntimeChunk(uuid=uuid4(), text="Second sentence.", start=16, end=32, ordinal=1, metadata={}),
+    )
+
+    class FakeChunker:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        async def chunk(self, *, text: str, strategy: str, source_id: str) -> tuple[RuntimeChunk, ...]:
+            assert text == "First sentence. Second sentence."
+            assert source_id == str(document_id)
+            self.calls.append(strategy)
+            return (paragraph,) if strategy == "paragraph" else sentences
+
+    fake = FakeChunker()
+    boundary = RuntimeIngestionBoundary("postgresql://unused", InMemoryRuntimeStatus(), fake)
+
+    def fake_prepare(**_: object) -> _PersistencePlan:
+        return _PersistencePlan(
+            document_id=document_id,
+            source_version_id="source-v1",
+            normalized_source_version_id="source-v1",
+            operation_id=str(operation_id),
+            command="document_create",
+            text_value="First sentence. Second sentence.",
+            filename=None,
+            content_sha256="0" * 64,
+            chunking_strategy="paragraph",
+            source_version=1,
+            title="First sentence.",
+            source_name=None,
+            length=32,
+            body_sha256="1" * 64,
+            file_id=uuid4(),
+            doc_meta={},
+        )
+
+    def fake_persist(
+        prepared: _PersistencePlan,
+        paragraph_chunks: tuple[RuntimeChunk, ...],
+        sentence_chunks: tuple[RuntimeChunk, ...],
+    ) -> dict[str, object]:
+        assert prepared.document_id == document_id
+        assert paragraph_chunks == (paragraph,)
+        assert sentence_chunks == sentences
+        return {"document_id": str(document_id), "chunk_ids": tuple(str(item.uuid) for item in sentence_chunks)}
+
+    monkeypatch.setattr(boundary, "_prepare_persistence", fake_prepare)
+    monkeypatch.setattr(boundary, "_persist_prepared_chunks", fake_persist)
+
+    result = _run(boundary._persist_source(
+        requested_document_id=document_id,
+        source_version_id="source-v1",
+        normalized_source_version_id="source-v1",
+        operation_id=str(operation_id),
+        command="document_create",
+        text_value="First sentence. Second sentence.",
+        filename=None,
+        content_sha256="0" * 64,
+        chunking_strategy="paragraph",
+    ))
+
+    assert fake.calls == ["paragraph", "sentence"]
+    assert result["chunk_ids"] == tuple(str(item.uuid) for item in sentences)
+
+
+def test_sentence_chunks_are_selected_by_paragraph_ranges() -> None:
+    paragraph = RuntimeChunk(uuid=uuid4(), text="Paragraph", start=10, end=40, ordinal=0, metadata={})
+    before = RuntimeChunk(uuid=uuid4(), text="before", start=0, end=8, ordinal=0, metadata={})
+    first = RuntimeChunk(uuid=uuid4(), text="first", start=10, end=20, ordinal=1, metadata={})
+    second = RuntimeChunk(uuid=uuid4(), text="second", start=25, end=39, ordinal=2, metadata={})
+
+    assert _sentence_chunks_for_paragraph(paragraph, (second, before, first)) == (first, second)
 
 
 def test_runtime_default_metrics_preserve_quality_for_later_worker() -> None:

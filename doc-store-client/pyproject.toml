@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "doc-store-client"
-version = "0.1.48"
+version = "0.1.52"
 description = "Client library for the doc-store documentation service."
 requires-python = ">=3.11"
 authors = [{ name = "Vasiliy Zdanovskiy" }]
@@ -23,7 +23,7 @@ classifiers = [
   "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
-  "chunk-metadata-adapter>=1.0",
+  "chunk-metadata-adapter>=3.4.1",
   "mcp-proxy-adapter>=8.10.19",
 ]
 

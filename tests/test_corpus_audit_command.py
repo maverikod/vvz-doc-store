@@ -87,8 +87,12 @@ def test_unit_title_capabilities_state_current_public_write_support() -> None:
     assert capabilities["documents"]["editable_via"] == "entity_update"
     assert capabilities["chapters"]["direct_field"] == "heading"
     assert capabilities["chapters"]["supported"] is False
-    assert capabilities["paragraphs"]["metadata_field"] == "block_meta.title"
-    assert capabilities["semantic_chunks"]["metadata_field"] == "block_meta.title"
+    assert capabilities["paragraphs"]["direct_field"] == "text"
+    assert capabilities["paragraphs"]["editable_via"] == "entity_update"
+    assert capabilities["paragraphs"]["supported"] is True
+    assert capabilities["semantic_chunks"]["direct_field"] == "text"
+    assert capabilities["semantic_chunks"]["editable_via"] == "entity_update"
+    assert capabilities["semantic_chunks"]["supported"] is True
 
 
 def test_execute_reports_boundary_unavailable_and_invalid_params(monkeypatch: Any) -> None:

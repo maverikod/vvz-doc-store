@@ -46,6 +46,7 @@ ENTITY_TYPES = (
     "semantic_chunks",
 )
 ROOT_CRUD_ENTITY_TYPES = (*DICTIONARY_ENTITY_TYPES, "projects", "files", "documents")
+UPDATE_ENTITY_TYPES = (*ROOT_CRUD_ENTITY_TYPES, "paragraphs", "semantic_chunks")
 UUID4_VALUE_FIELDS = frozenset(
     {
         "id",
@@ -221,7 +222,7 @@ class EntityCreateCommand(_EntityCommand):
 
 class EntityUpdateCommand(_EntityCommand):
     name = "entity_update"
-    descr = "Update one root addressable entity or dictionary row."
+    descr = "Update one root/dictionary row, paragraph, or semantic chunk sentence."
     _description = descr
 
     @classmethod
@@ -229,9 +230,9 @@ class EntityUpdateCommand(_EntityCommand):
         return {
             "type": "object",
             "properties": {
-                "entity_type": {"type": "string", "enum": list(ROOT_CRUD_ENTITY_TYPES), "description": "Root entity or dictionary table/scope."},
+                "entity_type": {"type": "string", "enum": list(UPDATE_ENTITY_TYPES), "description": "Root, dictionary, paragraph, or semantic chunk scope."},
                 "entity_id": {"type": "string", "description": "UUID4 entity identifier."},
-                "values": {"type": "object", "description": "Entity fields to update, including owner_id."},
+                "values": {"type": "object", "description": "Entity fields to update, including owner_id and text for paragraphs/semantic_chunks."},
             },
             "required": ["entity_type", "entity_id", "values"],
             "additionalProperties": False,
@@ -239,7 +240,11 @@ class EntityUpdateCommand(_EntityCommand):
 
     @classmethod
     def usage_examples(cls) -> list[dict[str, Any]]:
-        return [{"entity_type": "files", "entity_id": "550e8400-e29b-41d4-a716-446655440000", "values": {"owner_id": "550e8400-e29b-41d4-a716-446655440001"}}]
+        return [
+            {"entity_type": "files", "entity_id": "550e8400-e29b-41d4-a716-446655440000", "values": {"owner_id": "550e8400-e29b-41d4-a716-446655440001"}},
+            {"entity_type": "paragraphs", "entity_id": "550e8400-e29b-41d4-a716-446655440000", "values": {"text": "Updated paragraph text."}},
+            {"entity_type": "semantic_chunks", "entity_id": "550e8400-e29b-41d4-a716-446655440000", "values": {"text": "Updated sentence text."}},
+        ]
 
     async def execute(
         self,

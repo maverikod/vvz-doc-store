@@ -220,7 +220,7 @@ def installed_semantic_relation_service(config: Mapping[str, Any] | None = None)
 
 
 def unit_title_edit_capabilities() -> dict[str, Any]:
-    """Return the current public ability to edit unit titles."""
+    """Return the current public ability to edit addressable unit text/title fields."""
 
     return {
         "documents": {
@@ -235,18 +235,18 @@ def unit_title_edit_capabilities() -> dict[str, Any]:
             "reason": "chapter rows are readable/listable but not root CRUD update targets",
         },
         "paragraphs": {
-            "direct_field": None,
+            "direct_field": "text",
             "metadata_field": "block_meta.title",
-            "editable_via": None,
-            "supported": False,
-            "reason": "paragraph text/title changes require an ingestion/rechunking contract",
+            "editable_via": "entity_update",
+            "supported": True,
+            "note": "paragraph title is metadata-only; paragraph text is editable",
         },
         "semantic_chunks": {
-            "direct_field": None,
+            "direct_field": "text",
             "metadata_field": "block_meta.title",
-            "editable_via": None,
-            "supported": False,
-            "reason": "chunk metadata changes require a chunk update contract to preserve indexes and embeddings",
+            "editable_via": "entity_update",
+            "supported": True,
+            "note": "semantic chunk text is sentence text stored in semantic_chunk_texts; writes invalidate stale machine metadata",
         },
     }
 

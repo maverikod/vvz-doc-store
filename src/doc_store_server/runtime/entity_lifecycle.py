@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Iterable, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 import json
 import os
 from typing import Any, Iterator
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Connection
@@ -65,6 +66,15 @@ DICTIONARY_REFERENCE_COLUMNS: dict[str, str] = {
     "languages": "language_id",
     "categories": "category_id",
 }
+RESET_BLOCK_META_FIELDS = frozenset(
+    {"category", "tags", "tags_flat", "summary", "title", "classification"}
+)
+RESET_STATUS = "needs_review"
+RESET_CATEGORY = "uncategorized"
+SEMANTIC_CHUNK_ASSIGNMENT_TABLES = (
+    ("semantic_chunk_status_assignments", "status_id"),
+    ("semantic_chunk_category_assignments", "category_id"),
+)
 
 OWNER_TABLES = frozenset(ENTITY_TABLES.values())
 UPDATED_AT_TABLES = frozenset(
@@ -220,7 +230,7 @@ class EntityLifecycleService:
 
     def create_entity(self, *, entity_type: str, values: Mapping[str, Any]) -> dict[str, Any]:
         table = _entity_table(entity_type)
-        if table not in _crud_tables():
+        if table not in _create_tables():
             raise ValueError(f"create is unsupported for {table}")
         payload = _validated_values(table, values, require_id=True)
         with self._transaction() as connection:
@@ -245,7 +255,7 @@ class EntityLifecycleService:
         values: Mapping[str, Any],
     ) -> dict[str, Any]:
         table = _entity_table(entity_type)
-        if table not in _crud_tables():
+        if table not in _update_tables():
             raise ValueError(f"update is unsupported for {table}")
         payload = _validated_values(table, values, require_id=False)
         if not payload:
@@ -253,15 +263,10 @@ class EntityLifecycleService:
         entity_uuid = UUID(entity_id)
         with self._transaction() as connection:
             _validate_owner(connection, payload.get("owner_id"))
-            assignments = ", ".join(_assignment_expr(column) for column in payload)
-            row = connection.execute(
-                text(
-                    f"UPDATE {table} SET {assignments}, updated_at = now() "
-                    "WHERE id = :entity_id "
-                    f"RETURNING {', '.join(DEFAULT_FIELDS[table])}"
-                ),
-                {**payload, "entity_id": entity_uuid},
-            ).mappings().one_or_none()
+            if table == "semantic_chunks":
+                row = _update_semantic_chunk(connection, entity_uuid, payload)
+            else:
+                row = _update_plain_entity(connection, table, entity_uuid, payload)
         if row is None:
             raise LookupError(entity_id)
         return {"entity_type": table, "outcome": "updated", "value": _json_row(row)}
@@ -681,8 +686,12 @@ def _allowed_fields(table: str) -> set[str]:
     }
 
 
-def _crud_tables() -> set[str]:
+def _create_tables() -> set[str]:
     return {"projects", "files", "documents"} | set(DICTIONARY_TABLES)
+
+
+def _update_tables() -> set[str]:
+    return _create_tables() | {"paragraphs", "semantic_chunks"}
 
 
 def _writable_fields(table: str) -> set[str]:
@@ -725,6 +734,26 @@ def _writable_fields(table: str) -> set[str]:
             "processing_trace_id",
             "processing_started_at",
             "processing_completed_at",
+            "is_deleted",
+            "deleted_at",
+            "block_meta",
+        },
+        "paragraphs": {
+            "owner_id",
+            "text",
+            "language",
+            "quality_score",
+            "search_weight",
+            "is_deleted",
+            "deleted_at",
+            "block_meta",
+        },
+        "semantic_chunks": {
+            "owner_id",
+            "text",
+            "body",
+            "score",
+            "search_weight",
             "is_deleted",
             "deleted_at",
             "block_meta",
@@ -796,6 +825,190 @@ def _validated_values(table: str, values: Mapping[str, Any], *, require_id: bool
     if "block_meta" in payload:
         payload["block_meta"] = json.dumps(payload["block_meta"], ensure_ascii=False)
     return payload
+
+
+def _update_plain_entity(
+    connection: Connection,
+    table: str,
+    entity_uuid: UUID,
+    payload: Mapping[str, Any],
+) -> Mapping[str, Any] | None:
+    assignments = ", ".join(_assignment_expr(column) for column in payload)
+    updated_at = ", updated_at = now()" if table in UPDATED_AT_TABLES else ""
+    return connection.execute(
+        text(
+            f"UPDATE {table} SET {assignments}{updated_at} "
+            "WHERE id = :entity_id "
+            f"RETURNING {', '.join(DEFAULT_FIELDS[table])}"
+        ),
+        {**payload, "entity_id": entity_uuid},
+    ).mappings().one_or_none()
+
+
+def _update_semantic_chunk(
+    connection: Connection,
+    entity_uuid: UUID,
+    payload: Mapping[str, Any],
+) -> Mapping[str, Any] | None:
+    values = dict(payload)
+    text_value = values.pop("text", None)
+    if text_value is None:
+        text_value = values.pop("body", None)
+    elif "body" in values and values.pop("body") != text_value:
+        raise ValueError("semantic_chunks text and body must match when both are supplied")
+    if values:
+        assignments = ", ".join(_assignment_expr(column) for column in values)
+        updated = connection.execute(
+            text(
+                f"UPDATE semantic_chunks SET {assignments} "
+                "WHERE id = :entity_id RETURNING id"
+            ),
+            {**values, "entity_id": entity_uuid},
+        ).scalar_one_or_none()
+        if updated is None:
+            return None
+    else:
+        exists = connection.execute(
+            text("SELECT id FROM semantic_chunks WHERE id = :entity_id"),
+            {"entity_id": entity_uuid},
+        ).scalar_one_or_none()
+        if exists is None:
+            return None
+
+    if text_value is not None:
+        _replace_semantic_chunk_text(connection, entity_uuid, str(text_value))
+
+    return connection.execute(
+        text(
+            f"SELECT {_select_sql('semantic_chunks', DEFAULT_FIELDS['semantic_chunks'])} "
+            f"FROM {_from_sql('semantic_chunks')} "
+            "WHERE sc.id = :entity_id"
+        ),
+        {"entity_id": entity_uuid},
+    ).mappings().one_or_none()
+
+
+def _replace_semantic_chunk_text(
+    connection: Connection,
+    chunk_uuid: UUID,
+    text_value: str,
+) -> None:
+    existing = connection.execute(
+        text(
+            "SELECT sc.block_meta AS chunk_meta, sct.text AS text, sct.block_meta AS text_meta "
+            "FROM semantic_chunks AS sc "
+            "LEFT JOIN semantic_chunk_texts AS sct ON sct.chunk_uuid = sc.id "
+            "WHERE sc.id = :chunk_uuid FOR UPDATE OF sc"
+        ),
+        {"chunk_uuid": chunk_uuid},
+    ).mappings().one_or_none()
+    if existing is None:
+        raise LookupError(str(chunk_uuid))
+    previous = existing.get("text")
+    if previous == text_value:
+        return
+
+    block_meta = _reset_semantic_chunk_block_meta(existing.get("chunk_meta"))
+    text_meta = _reset_semantic_chunk_block_meta(existing.get("text_meta") or block_meta)
+    text_sha256 = hashlib.sha256(text_value.encode("utf-8")).hexdigest()
+    status_id = _dictionary_id(connection, "chunk_statuses", RESET_STATUS)
+    category_id = _dictionary_id(connection, "categories", RESET_CATEGORY)
+    connection.execute(
+        text(
+            "UPDATE semantic_chunks SET text = '', char_count = :char_count, "
+            "status_id = :status_id, category_id = :category_id, block_meta = CAST(:block_meta AS jsonb) "
+            "WHERE id = :chunk_uuid"
+        ),
+        {
+            "chunk_uuid": chunk_uuid,
+            "char_count": len(text_value),
+            "status_id": status_id,
+            "category_id": category_id,
+            "block_meta": json.dumps(block_meta, ensure_ascii=False),
+        },
+    )
+    connection.execute(
+        text(
+            "INSERT INTO semantic_chunk_texts (chunk_uuid, text, text_sha256, char_count, block_meta) "
+            "VALUES (:chunk_uuid, :text, :text_sha256, :char_count, CAST(:block_meta AS jsonb)) "
+            "ON CONFLICT (chunk_uuid) DO UPDATE SET "
+            "text = EXCLUDED.text, text_sha256 = EXCLUDED.text_sha256, "
+            "char_count = EXCLUDED.char_count, block_meta = EXCLUDED.block_meta, updated_at = now()"
+        ),
+        {
+            "chunk_uuid": chunk_uuid,
+            "text": text_value,
+            "text_sha256": text_sha256,
+            "char_count": len(text_value),
+            "block_meta": json.dumps(text_meta, ensure_ascii=False),
+        },
+    )
+    for table, column in SEMANTIC_CHUNK_ASSIGNMENT_TABLES:
+        dictionary_id = status_id if column == "status_id" else category_id
+        connection.execute(
+            text(
+                f"INSERT INTO {table} (chunk_uuid, {column}) "
+                f"VALUES (:chunk_uuid, :dictionary_id) "
+                "ON CONFLICT (chunk_uuid) DO UPDATE SET "
+                f"{column} = EXCLUDED.{column}, updated_at = now()"
+            ),
+            {"chunk_uuid": chunk_uuid, "dictionary_id": dictionary_id},
+        )
+    connection.execute(
+        text("DELETE FROM semantic_chunk_feedback WHERE chunk_uuid = :chunk_uuid"),
+        {"chunk_uuid": chunk_uuid},
+    )
+    connection.execute(
+        text("DELETE FROM semantic_chunk_metrics WHERE chunk_uuid = :chunk_uuid"),
+        {"chunk_uuid": chunk_uuid},
+    )
+    connection.execute(
+        text("DELETE FROM semantic_chunk_tokens WHERE chunk_uuid = :chunk_uuid"),
+        {"chunk_uuid": chunk_uuid},
+    )
+    connection.execute(
+        text("DELETE FROM semantic_chunk_tags WHERE chunk_uuid = :chunk_uuid"),
+        {"chunk_uuid": chunk_uuid},
+    )
+    connection.execute(
+        text("DELETE FROM semantic_chunk_embeddings WHERE chunk_uuid = :chunk_uuid"),
+        {"chunk_uuid": chunk_uuid},
+    )
+
+
+def _reset_semantic_chunk_block_meta(value: Any) -> dict[str, Any]:
+    meta = dict(value) if isinstance(value, Mapping) else {}
+    for key in RESET_BLOCK_META_FIELDS:
+        meta.pop(key, None)
+    meta["status"] = RESET_STATUS
+    meta["category"] = RESET_CATEGORY
+    return meta
+
+
+def _dictionary_id(connection: Connection, table: str, descr: str) -> UUID:
+    if table not in DICTIONARY_TABLES:
+        raise ValueError(f"unsupported dictionary table: {table}")
+    value = str(descr).strip()
+    if not value:
+        raise ValueError("dictionary descr must be a non-empty string")
+    if len(value) > 100:
+        raise ValueError("dictionary descr must be at most 100 characters")
+    row = connection.execute(
+        text(f"SELECT id FROM {table} WHERE descr = :descr"),
+        {"descr": value},
+    ).scalar_one_or_none()
+    if row is not None:
+        return row
+    return connection.execute(
+        text(
+            f"INSERT INTO {table} (id, descr, is_deleted, deleted_at) "
+            "VALUES (:id, :descr, FALSE, NULL) "
+            "ON CONFLICT (descr) DO UPDATE SET "
+            "is_deleted = FALSE, deleted_at = NULL, updated_at = now() "
+            "RETURNING id"
+        ),
+        {"id": uuid4(), "descr": value},
+    ).scalar_one()
 
 
 def _insert_value_expr(column: str) -> str:

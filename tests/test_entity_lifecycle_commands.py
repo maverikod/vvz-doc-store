@@ -162,6 +162,49 @@ def test_dictionary_create_and_update_use_generic_entity_boundary() -> None:
     assert [name for name, _ in boundary.calls] == ["create", "update"]
 
 
+def test_entity_update_accepts_paragraph_and_sentence_text_targets() -> None:
+    boundary = Boundary()
+    paragraph_result = asyncio.run(
+        EntityUpdateCommand().execute(
+            entity_type="paragraphs",
+            entity_id="550e8400-e29b-41d4-a716-446655440001",
+            values={"text": "Updated paragraph."},
+            context={"entity_lifecycle_boundary": boundary},
+        )
+    )
+    sentence_result = asyncio.run(
+        EntityUpdateCommand().execute(
+            entity_type="semantic_chunks",
+            entity_id="550e8400-e29b-41d4-a716-446655440002",
+            values={"text": "Updated sentence."},
+            context={"entity_lifecycle_boundary": boundary},
+        )
+    )
+
+    assert paragraph_result.success is True
+    assert sentence_result.success is True
+    assert boundary.calls[-2:] == [
+        (
+            "update",
+            {
+                "entity_type": "paragraphs",
+                "entity_id": "550e8400-e29b-41d4-a716-446655440001",
+                "values": {"text": "Updated paragraph."},
+            },
+        ),
+        (
+            "update",
+            {
+                "entity_type": "semantic_chunks",
+                "entity_id": "550e8400-e29b-41d4-a716-446655440002",
+                "values": {"text": "Updated sentence."},
+            },
+        ),
+    ]
+    assert "paragraphs" in EntityUpdateCommand.get_schema()["properties"]["entity_type"]["enum"]
+    assert "semantic_chunks" in EntityUpdateCommand.get_schema()["properties"]["entity_type"]["enum"]
+
+
 def test_rebind_owner_delegates_uuid4_checked_batch() -> None:
     boundary = Boundary()
     result = asyncio.run(

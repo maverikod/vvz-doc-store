@@ -132,6 +132,7 @@ def test_semantic_sql_selects_only_active_compatible_vectors_and_binds_typed_pre
         _plan(
             project="doc-store",
             tags=["semantic"],
+            block_type="sentence",
             quality_score="0.8",
             block_meta={"scope": "client"},
         ),
@@ -146,12 +147,14 @@ def test_semantic_sql_selects_only_active_compatible_vectors_and_binds_typed_pre
     assert "sce.dimension = :embedding_dimension" in sql
     assert "sc.deleted_at IS NULL" in sql
     assert "sc.block_meta @> CAST(:p0 AS jsonb)" in sql
-    assert "sc.block_meta ->> 'project' = :p1" in sql
-    assert "sc.block_meta ->> 'quality_score' = :p2" in sql
-    assert "sc.block_meta -> 'tags' @> CAST(:p3 AS jsonb)" in sql
+    assert "bt.descr = :p1" in sql
+    assert "sc.block_meta ->> 'project' = :p2" in sql
+    assert "sc.block_meta ->> 'quality_score' = :p3" in sql
+    assert "sc.block_meta -> 'tags' @> CAST(:p4 AS jsonb)" in sql
     assert json.loads(params["p0"]) == {"scope": "client"}
-    assert params["p1"] == "doc-store"
-    assert params["p2"] == "0.8"
+    assert params["p1"] == "sentence"
+    assert params["p2"] == "doc-store"
+    assert params["p3"] == "0.8"
 
 
 def test_pgvector_ranking_pagination_and_tie_order_are_deterministic() -> None:

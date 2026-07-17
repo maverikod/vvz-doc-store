@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "doc-store"
-version = "0.1.48"
+version = "0.1.52"
 description = "Documentation storage server."
 requires-python = ">=3.11"
 authors = [{ name = "Vasiliy Zdanovskiy" }]
@@ -17,7 +17,7 @@ dependencies = [
   "mcp-proxy-adapter>=8.10.19",
   "svo-client",
   "embed-client",
-  "chunk-metadata-adapter",
+  "chunk-metadata-adapter>=3.4.1",
 ]
 
 [project.optional-dependencies]

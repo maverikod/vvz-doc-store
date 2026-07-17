@@ -162,3 +162,33 @@ def test_runtime_structured_search_uses_compiled_limit_and_offset() -> None:
     assert params["offset"] == 40
     assert "LIMIT :limit" in sql
     assert "OFFSET :offset" in sql
+
+
+def test_runtime_structured_search_filters_classifier_fields() -> None:
+    boundary = RuntimeSearchBoundary("postgresql://unused", embedding_config=_config())
+    session = _Session()
+    plan = compile_query(
+        {
+            "block_type": "sentence",
+            "status": "needs_review",
+            "language": "en",
+            "category": "uncategorized",
+            "limit": 5,
+        }
+    )
+
+    results = asyncio.run(boundary._execute_structured(session, plan))
+
+    assert results == ()
+    statement, params = session.calls[0]
+    sql = str(statement)
+    assert "bt.descr = :p0" in sql
+    assert "cat.descr = :p1" in sql
+    assert "lang.descr = :p2" in sql
+    assert "cs.descr = :p3" in sql
+    assert [params[f"p{index}"] for index in range(4)] == [
+        "sentence",
+        "uncategorized",
+        "en",
+        "needs_review",
+    ]
