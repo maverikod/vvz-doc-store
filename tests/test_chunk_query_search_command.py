@@ -11,6 +11,7 @@ import pytest
 from chunk_metadata_adapter import ChunkQuery, ChunkQueryResponse, SearchResult, SemanticChunk
 
 from doc_store_server.commands.chunk_query_search_command import ChunkQuerySearchCommand
+from doc_store_server.runtime.search_config import SEMANTIC_REFINEMENT_DEFAULTS
 
 
 COMMAND_SOURCE = Path(__file__).parents[1] / "src/doc_store_server/commands/chunk_query_search_command.py"
@@ -216,6 +217,11 @@ def test_schema_and_metadata_are_complete_live_contracts() -> None:
     assert schema["additionalProperties"] is False
     assert schema["properties"]["query"]["additionalProperties"] is False
     assert schema["properties"]["semantic_refinement"]["additionalProperties"] is False
+    refinement_properties = schema["properties"]["semantic_refinement"]["properties"]
+    assert {
+        name: refinement_properties[name]["default"]
+        for name in SEMANTIC_REFINEMENT_DEFAULTS
+    } == SEMANTIC_REFINEMENT_DEFAULTS
     assert set(schema["properties"]["query"]["properties"]) == set(ChunkQuery.model_fields) | {"limit", "offset"}
     assert "offset" in metadata["parameters"]["query"]["properties"]
     assert "semantic_refinement" in metadata["parameters"]

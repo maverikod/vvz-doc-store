@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import json
 from pathlib import Path
 from typing import Any
 
@@ -219,6 +220,50 @@ def test_application_modules_are_importable_without_competing_infrastructure() -
     ) == 1
     assert not (ROOT / "src/doc_store_server/query/grammar.lark").exists()
     assert not any("QuerySpec" in path.read_text(encoding="utf-8") for path in source_files)
+
+
+def test_load_config_generates_and_validates_search_defaults(tmp_path: Path) -> None:
+    from doc_store_server.main import load_config
+
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps({"search": {"semantic_refinement": {"threshold": 0.37}}}),
+        encoding="utf-8",
+    )
+
+    config = load_config(str(config_path))
+
+    assert config["search"]["semantic_refinement"] == {
+        "enabled": False,
+        "threshold": 0.37,
+        "candidate_limit": 50,
+        "result_limit": 10,
+        "diagnostics": False,
+    }
+
+    config_path.write_text(
+        json.dumps({"search": {"semantic_refinement": {"result_limit": 0}}}),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="result_limit"):
+        load_config(str(config_path))
+
+
+def test_startup_config_validation_logs_and_exits_on_invalid_config(caplog: pytest.LogCaptureFixture) -> None:
+    from doc_store_server.main import _validate_config_before_start
+
+    with pytest.raises(SystemExit) as exc:
+        _validate_config_before_start(
+            {
+                "server": {"host": "0.0.0.0", "port": 8000, "protocol": "http"},
+                "queue_manager": {"enabled": True, "in_memory": True},
+                "search": {"semantic_refinement": {"result_limit": 0}},
+            }
+        )
+
+    assert exc.value.code == 1
+    assert "Invalid doc-store config" in caplog.text
+    assert "result_limit" in caplog.text
 
 
 class FakeRetrieval:

@@ -6,8 +6,9 @@ from typing import Any
 from chunk_metadata_adapter import ChunkQuery
 
 from doc_store_server.query.compiler import ExecutionMode, compile_query
-from doc_store_server.query.runtime_boundary import RuntimeSearchBoundary
+from doc_store_server.query.runtime_boundary import RuntimeSearchBoundary, _semantic_refinement_options
 from doc_store_server.runtime.embedding_config import RuntimeEmbeddingConfig
+from doc_store_server.runtime.search_config import runtime_search_config
 
 
 class _EmbeddingClient:
@@ -141,6 +142,46 @@ def test_runtime_search_embeds_explicit_semantic_weight_text_query() -> None:
     assert plan.embedding == (0.1, 0.2, 0.3)
     assert plan.search_query is None
     assert client.calls[0][0] == ["semantic weighted query"]
+
+
+def test_semantic_refinement_options_use_config_defaults_for_missing_request_fields() -> None:
+    defaults = runtime_search_config(
+        {
+            "search": {
+                "semantic_refinement": {
+                    "enabled": True,
+                    "threshold": 0.33,
+                    "candidate_limit": 44,
+                    "result_limit": 6,
+                    "diagnostics": True,
+                }
+            }
+        }
+    ).semantic_refinement
+
+    options = _semantic_refinement_options({"result_limit": 3}, defaults)
+
+    assert options == {
+        "enabled": True,
+        "threshold": 0.33,
+        "candidate_limit": 44,
+        "result_limit": 3,
+        "diagnostics": True,
+    }
+
+
+def test_semantic_refinement_options_use_constant_defaults_without_request_or_config() -> None:
+    defaults = runtime_search_config({}).semantic_refinement
+
+    options = _semantic_refinement_options(None, defaults)
+
+    assert options == {
+        "enabled": False,
+        "threshold": 0.0,
+        "candidate_limit": 50,
+        "result_limit": 10,
+        "diagnostics": False,
+    }
 
 
 def test_runtime_structured_search_uses_compiled_limit_and_offset() -> None:

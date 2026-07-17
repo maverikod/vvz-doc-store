@@ -13,6 +13,11 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from doc_store_server.db.health import database_url_from_config
 from doc_store_server.runtime.embedding_config import RuntimeEmbeddingConfig, runtime_embedding_config
+from doc_store_server.runtime.search_config import (
+    RuntimeSearchConfig,
+    RuntimeSemanticRefinementConfig,
+    runtime_search_config,
+)
 
 from .chunk_payload import (
     CHUNK_TEXT_COLUMN_SQL,
@@ -78,16 +83,21 @@ class RuntimeSearchBoundary:
         self,
         database_url: str | None,
         embedding_config: RuntimeEmbeddingConfig | None = None,
+        search_config: RuntimeSearchConfig | None = None,
         embedding_client: Any | None = None,
     ) -> None:
         self._database_url = database_url
         self._embedding_config = embedding_config or runtime_embedding_config()
+        self._search_config = search_config or runtime_search_config()
         self._embedding_client = embedding_client
 
     async def __call__(self, query: ChunkQuery, **_context: Any) -> Any:
         if not self._database_url:
             raise RuntimeError("database URL is not configured")
-        refinement = _semantic_refinement_options(_context.get("semantic_refinement"))
+        refinement = _semantic_refinement_options(
+            _context.get("semantic_refinement"),
+            self._search_config.semantic_refinement,
+        )
         query = await self._query_with_runtime_embedding(query)
         plan = compile_query(query)
         engine = create_async_engine(_async_database_url(self._database_url), pool_pre_ping=True)
@@ -301,7 +311,11 @@ def installed_search_orchestrator(config: Mapping[str, Any] | None = None) -> Ru
         database_url = os.getenv("DOC_STORE_DATABASE_URL") or os.getenv("DATABASE_URL")
     if not database_url:
         return None
-    return RuntimeSearchBoundary(database_url, runtime_embedding_config(config))
+    return RuntimeSearchBoundary(
+        database_url,
+        runtime_embedding_config(config),
+        runtime_search_config(config),
+    )
 
 
 async def _hierarchical_primary_candidates(
@@ -597,26 +611,50 @@ def _merge_window(window: list[dict[str, Any]], additions: Sequence[dict[str, An
     window[:] = ordered[:limit]
 
 
-def _semantic_refinement_options(value: Any) -> dict[str, Any]:
+def _semantic_refinement_options(
+    value: Any,
+    defaults: RuntimeSemanticRefinementConfig,
+) -> dict[str, Any]:
+    base = defaults.as_dict()
+    if value is None:
+        value = {}
     if not isinstance(value, Mapping):
-        return {
-            "enabled": False,
-            "threshold": 0.0,
-            "candidate_limit": 50,
-            "result_limit": 10,
-            "diagnostics": False,
-        }
-    enabled = bool(value.get("enabled", False))
-    threshold = _bounded_float(value.get("threshold", 0.0), "semantic_refinement.threshold", 0.0, 1.0)
-    candidate_limit = _bounded_int_option(value.get("candidate_limit", 50), "semantic_refinement.candidate_limit", 1, 1000)
-    result_limit = _bounded_int_option(value.get("result_limit", 10), "semantic_refinement.result_limit", 1, 1000)
+        raise RuntimeError("semantic_refinement must be an object")
+    enabled = _bool_refinement_option(value.get("enabled", base["enabled"]), "semantic_refinement.enabled")
+    threshold = _bounded_float(
+        value.get("threshold", base["threshold"]),
+        "semantic_refinement.threshold",
+        0.0,
+        1.0,
+    )
+    candidate_limit = _bounded_int_option(
+        value.get("candidate_limit", base["candidate_limit"]),
+        "semantic_refinement.candidate_limit",
+        1,
+        1000,
+    )
+    result_limit = _bounded_int_option(
+        value.get("result_limit", base["result_limit"]),
+        "semantic_refinement.result_limit",
+        1,
+        1000,
+    )
     return {
         "enabled": enabled,
         "threshold": threshold,
         "candidate_limit": candidate_limit,
         "result_limit": result_limit,
-        "diagnostics": bool(value.get("diagnostics", False)),
+        "diagnostics": _bool_refinement_option(
+            value.get("diagnostics", base["diagnostics"]),
+            "semantic_refinement.diagnostics",
+        ),
     }
+
+
+def _bool_refinement_option(value: Any, name: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    raise RuntimeError(f"{name} must be a boolean")
 
 
 def _bounded_float(value: Any, name: str, minimum: float, maximum: float) -> float:

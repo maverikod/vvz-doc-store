@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "doc-store"
-version = "0.1.56"
+version = "0.1.58"
 description = "Documentation storage server."
 requires-python = ">=3.11"
 authors = [{ name = "Vasiliy Zdanovskiy" }]
@@ -19,6 +19,10 @@ dependencies = [
   "embed-client",
   "chunk-metadata-adapter>=3.4.1",
 ]
+
+[project.scripts]
+doc-store-config-generate = "doc_store_server.config_cli:generate_main"
+doc-store-config-validate = "doc_store_server.config_cli:validate_main"
 
 [project.optional-dependencies]
 dev = [

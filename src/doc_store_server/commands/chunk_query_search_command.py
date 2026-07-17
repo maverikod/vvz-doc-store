@@ -12,6 +12,8 @@ from mcp_proxy_adapter.core.errors import ValidationError as AdapterValidationEr
 from mcp_proxy_adapter.commands.result import ErrorResult
 from pydantic import ValidationError as PydanticValidationError
 
+from doc_store_server.runtime.search_config import SEMANTIC_REFINEMENT_DEFAULTS
+
 
 class SearchOrchestrator(Protocol):
     """G-007 execution boundary owned by the application search layer."""
@@ -91,13 +93,43 @@ class ChunkQuerySearchCommand(Command):
                 },
                 "semantic_refinement": {
                     "type": "object",
-                    "description": "Optional hierarchy-aware semantic controls outside ChunkQuery.",
+                    "description": (
+                        "Optional hierarchy-aware semantic controls outside ChunkQuery. "
+                        "Any omitted field is resolved from search.semantic_refinement "
+                        "config, then from server constants."
+                    ),
                     "properties": {
-                        "enabled": {"type": "boolean", "description": "Enable hierarchy-aware refinement."},
-                        "threshold": {"type": "number", "minimum": 0.0, "maximum": 1.0, "description": "Minimum cosine similarity."},
-                        "candidate_limit": {"type": "integer", "minimum": 1, "maximum": 1000, "description": "Primary cross-level candidate limit."},
-                        "result_limit": {"type": "integer", "minimum": 1, "maximum": 1000, "description": "Final result window size N."},
-                        "diagnostics": {"type": "boolean", "description": "Include refinement diagnostics."},
+                        "enabled": {
+                            "type": "boolean",
+                            "default": SEMANTIC_REFINEMENT_DEFAULTS["enabled"],
+                            "description": "Enable hierarchy-aware refinement.",
+                        },
+                        "threshold": {
+                            "type": "number",
+                            "minimum": 0.0,
+                            "maximum": 1.0,
+                            "default": SEMANTIC_REFINEMENT_DEFAULTS["threshold"],
+                            "description": "Minimum cosine similarity.",
+                        },
+                        "candidate_limit": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 1000,
+                            "default": SEMANTIC_REFINEMENT_DEFAULTS["candidate_limit"],
+                            "description": "Primary cross-level candidate limit.",
+                        },
+                        "result_limit": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 1000,
+                            "default": SEMANTIC_REFINEMENT_DEFAULTS["result_limit"],
+                            "description": "Final result window size N.",
+                        },
+                        "diagnostics": {
+                            "type": "boolean",
+                            "default": SEMANTIC_REFINEMENT_DEFAULTS["diagnostics"],
+                            "description": "Include refinement diagnostics.",
+                        },
                     },
                     "additionalProperties": False,
                 },
@@ -125,7 +157,9 @@ class ChunkQuerySearchCommand(Command):
                 "the server obtains the query embedding through embed-client before "
                 "executing the semantic branch. Hierarchy-aware semantic refinement "
                 "uses the separate semantic_refinement command parameter, not "
-                "extra ChunkQuery fields. For ordered corpus scans, send "
+                "extra ChunkQuery fields. Omitted semantic_refinement fields are "
+                "resolved from search.semantic_refinement config first, then from "
+                "server constants. For ordered corpus scans, send "
                 "block_meta filters with limit/max_results and offset."
             ),
             "parameters": cls.get_schema()["properties"],

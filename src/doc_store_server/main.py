@@ -56,7 +56,22 @@ from doc_store_server.query.runtime_boundary import installed_search_orchestrato
 from doc_store_server.runtime.document_export import installed_document_export_service
 from doc_store_server.runtime.document_service import installed_document_service
 from doc_store_server.runtime.entity_lifecycle import installed_entity_lifecycle_service
+from doc_store_server.runtime.embedding_config import (
+    DEFAULT_EMBEDDING_BATCH_SIZE,
+    DEFAULT_EMBEDDING_DIMENSION,
+    DEFAULT_EMBEDDING_DIRECT_TEXT_MAX_CHARS,
+    DEFAULT_EMBEDDING_MODEL,
+    DEFAULT_EMBEDDING_MODEL_VERSION,
+    DEFAULT_EMBEDDING_POLL_INTERVAL,
+    DEFAULT_EMBEDDING_PORT,
+    DEFAULT_EMBEDDING_PROTOCOL,
+    DEFAULT_EMBEDDING_PROVIDER,
+    DEFAULT_EMBEDDING_TIMEOUT,
+    DEFAULT_EMBEDDING_WAIT_TIMEOUT,
+)
+from doc_store_server.runtime.search_config import default_search_config, normalize_search_config
 from doc_store_server.runtime.vectorization import installed_vectorization_service
+from doc_store_server.config_cli import validate_config_data, validation_errors
 
 
 ServerConfig = Mapping[str, Any]
@@ -94,10 +109,12 @@ def default_config_from_env() -> dict[str, Any]:
             "enabled": _env_bool("DOC_STORE_QUEUE_ENABLED", True),
             "in_memory": _env_bool("DOC_STORE_QUEUE_IN_MEMORY", True),
         },
+        "embedding": _embedding_config_from_env({}),
+        "search": default_search_config(),
     }
     if database_url:
         config["database"] = {"url": database_url, "connect_timeout": database_connect_timeout}
-    return config
+    return normalize_search_config(config)
 
 
 def load_config(config_path: str | None = None) -> dict[str, Any]:
@@ -118,6 +135,49 @@ def load_config(config_path: str | None = None) -> dict[str, Any]:
             int(database.get("connect_timeout", 3) or 3),
         )
         config["database"] = database
+    config = _overlay_embedding_env(config)
+    return normalize_search_config(config)
+
+
+def _embedding_config_from_env(base: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "protocol": os.getenv("DOC_STORE_EMBEDDING_PROTOCOL", str(base.get("protocol", DEFAULT_EMBEDDING_PROTOCOL))),
+        "host": os.getenv("DOC_STORE_EMBEDDING_HOST", str(base.get("host", ""))),
+        "port": _env_int("DOC_STORE_EMBEDDING_PORT", int(base.get("port", DEFAULT_EMBEDDING_PORT))),
+        "provider": os.getenv("DOC_STORE_EMBEDDING_PROVIDER", str(base.get("provider", DEFAULT_EMBEDDING_PROVIDER))),
+        "model": os.getenv("DOC_STORE_EMBEDDING_MODEL", str(base.get("model", DEFAULT_EMBEDDING_MODEL))),
+        "model_version": os.getenv(
+            "DOC_STORE_EMBEDDING_MODEL_VERSION",
+            str(base.get("model_version", DEFAULT_EMBEDDING_MODEL_VERSION)),
+        ),
+        "dimension": _env_int("DOC_STORE_EMBEDDING_DIMENSION", int(base.get("dimension", DEFAULT_EMBEDDING_DIMENSION))),
+        "batch_size": _env_int(
+            "DOC_STORE_EMBEDDING_BATCH_SIZE",
+            int(base.get("batch_size", DEFAULT_EMBEDDING_BATCH_SIZE)),
+        ),
+        "timeout": float(os.getenv("DOC_STORE_EMBEDDING_TIMEOUT", str(base.get("timeout", DEFAULT_EMBEDDING_TIMEOUT)))),
+        "wait_timeout": _env_int(
+            "DOC_STORE_EMBEDDING_WAIT_TIMEOUT",
+            int(base.get("wait_timeout", DEFAULT_EMBEDDING_WAIT_TIMEOUT)),
+        ),
+        "poll_interval": float(
+            os.getenv("DOC_STORE_EMBEDDING_POLL_INTERVAL", str(base.get("poll_interval", DEFAULT_EMBEDDING_POLL_INTERVAL)))
+        ),
+        "direct_text_max_chars": _env_int(
+            "DOC_STORE_EMBEDDING_DIRECT_TEXT_MAX_CHARS",
+            int(base.get("direct_text_max_chars", DEFAULT_EMBEDDING_DIRECT_TEXT_MAX_CHARS)),
+        ),
+        "check_hostname": _env_bool("DOC_STORE_EMBEDDING_CHECK_HOSTNAME", bool(base.get("check_hostname", False))),
+    }
+
+
+def _overlay_embedding_env(config: dict[str, Any]) -> dict[str, Any]:
+    section = config.get("embedding")
+    if section is None:
+        section = config.get("embedding_client")
+    if not isinstance(section, Mapping):
+        section = {}
+    config["embedding"] = _embedding_config_from_env(section)
     return config
 
 
@@ -149,7 +209,7 @@ def create_server_application(config: ServerConfig | None = None) -> Any:
     return create_app(
         title="doc-store",
         description="doc-store adapter server",
-        version="0.1.56",
+        version="0.1.58",
         app_config=dict(config or {}),
     )
 
@@ -199,6 +259,7 @@ def run_server(config: ServerConfig | None = None) -> None:
     """Run the adapter server engine with adapter-owned transport handling."""
 
     runtime_config = dict(config or default_config_from_env())
+    _validate_config_before_start(runtime_config)
     _probe_database_without_startup_failure(runtime_config)
     server_config = dict(runtime_config.get("server", {}))
     application = create_server_application(runtime_config)
@@ -248,13 +309,34 @@ def _probe_database_without_startup_failure(config: ServerConfig) -> None:
         logger.info("Database URL is not configured; server starts without DB binding")
 
 
+def _validate_config_before_start(config: ServerConfig) -> None:
+    """Validate config before opening the server socket."""
+
+    issues = validate_config_data(dict(config))
+    errors = validation_errors(issues)
+    if not errors:
+        return
+    for issue in errors:
+        location = ""
+        if issue.section:
+            location = f" ({issue.section}{'.' + issue.key if issue.key else ''})"
+        logger.error("Invalid doc-store config: %s%s", issue.message, location)
+    raise SystemExit(1)
+
+
 def main() -> None:
     """Start doc-store through the installed adapter runtime."""
 
     parser = argparse.ArgumentParser(description="doc-store adapter server")
     parser.add_argument("--config", type=str, default=os.getenv("DOC_STORE_CONFIG"))
     args = parser.parse_args()
-    run_server(load_config(args.config))
+    try:
+        run_server(load_config(args.config))
+    except SystemExit:
+        raise
+    except Exception as exc:
+        logger.error("doc-store startup failed: %s", exc, exc_info=True)
+        raise SystemExit(1) from exc
 
 
 if __name__ == "__main__":
