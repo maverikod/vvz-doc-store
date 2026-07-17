@@ -220,7 +220,13 @@ def _upgrade_all(connection: Any) -> None:
 
     context = MigrationContext.configure(connection)
     with Operations.context(context):
-        for name in ("0001_hierarchy_chunk_root", "0002_chunk_metrics_feedback", "0003_chunk_tokens_tags", "0004_chunk_links_embeddings_metadata"):
+        for name in (
+            "0001_hierarchy_chunk_root",
+            "0002_chunk_metrics_feedback",
+            "0003_chunk_tokens_tags",
+            "0004_chunk_links_embeddings_metadata",
+            "0014_semantic_chunk_texts",
+        ):
             path = MIGRATIONS / f"{name}.py"
             spec = importlib.util.spec_from_file_location(name, path)
             assert spec and spec.loader
@@ -251,6 +257,22 @@ def test_repository_upsert_read_update_not_found_and_history(db) -> None:
             assert first.uuid == restored.uuid == chunk.uuid
             assert restored.body == "updated body"
             assert restored.embedding == [1.0, 2.0]
+            stored = (
+                await session.execute(
+                    text(
+                        "SELECT sc.text AS hot_text, sct.text AS payload_text, "
+                        "sct.text_sha256, sct.char_count "
+                        "FROM semantic_chunks AS sc "
+                        "JOIN semantic_chunk_texts AS sct ON sct.chunk_uuid = sc.id "
+                        "WHERE sc.id = :id"
+                    ),
+                    {"id": chunk.uuid},
+                )
+            ).mappings().one()
+            assert stored["hot_text"] == ""
+            assert stored["payload_text"] == "updated body"
+            assert len(stored["text_sha256"]) == 64
+            assert stored["char_count"] == len("updated body")
             with pytest.raises(SemanticChunkNotFoundError):
                 await repository.get_by_uuid(uuid4())
 
@@ -277,6 +299,7 @@ def test_repository_rolls_back_after_root_and_each_child_failure(db, monkeypatch
                     await repository.upsert(chunk)
                 await session.rollback()
                 assert (await session.execute(text("SELECT count(*) FROM semantic_chunks WHERE id = :id"), {"id": chunk.uuid})).scalar_one() == 0
+                assert (await session.execute(text("SELECT count(*) FROM semantic_chunk_texts WHERE chunk_uuid = :id"), {"id": chunk.uuid})).scalar_one() == 0
 
     asyncio.run(scenario())
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
@@ -18,6 +19,7 @@ from .link_embedding_metadata_schema import (
 )
 from .metrics_schema import SemanticChunkFeedback, SemanticChunkMetrics
 from .schema import SemanticChunk as SemanticChunkRow
+from .schema import SemanticChunkText
 from .semantic_chunk_mapper import (
     EmbeddingRow,
     FeedbackRow,
@@ -69,6 +71,7 @@ class SemanticChunkRepository:
             if root is None:
                 raise SemanticChunkNotFoundError(f"semantic chunk not found after upsert: {rows.root['id']}")
 
+            await self._upsert_text_payload(rows.root)
             await self._replace_metrics(rows.root["id"], rows.metrics, rows.feedback)
             await self._replace_ordered_children(rows)
             await self._upsert_embeddings(rows.embeddings)
@@ -124,6 +127,7 @@ class SemanticChunkRepository:
 
     async def _upsert_root(self, row: RootRow) -> None:
         values = dict(row)
+        values["text"] = ""
         update_values = {
             key: value for key, value in values.items() if key != "id"
         }
@@ -136,6 +140,28 @@ class SemanticChunkRepository:
             )
         )
         await self._session.execute(statement)
+
+    async def _upsert_text_payload(self, row: RootRow) -> None:
+        chunk_uuid = row["id"]
+        body = str(row["text"])
+        existing = (
+            await self._session.execute(
+                select(SemanticChunkText)
+                .where(SemanticChunkText.chunk_uuid == chunk_uuid)
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        values = {
+            "text": body,
+            "text_sha256": hashlib.sha256(body.encode("utf-8")).hexdigest(),
+            "char_count": len(body),
+            "block_meta": dict(row.get("block_meta") or {}),
+        }
+        if existing is None:
+            self._session.add(SemanticChunkText(chunk_uuid=chunk_uuid, **values))
+        else:
+            for key, value in values.items():
+                setattr(existing, key, value)
 
     async def _replace_metrics(
         self,
@@ -299,11 +325,18 @@ class SemanticChunkRepository:
                 .order_by(SemanticChunkEmbedding.created_at, SemanticChunkEmbedding.id)
             )
         ).scalars().all()
+        text_payload = (
+            await self._session.execute(
+                select(SemanticChunkText).where(SemanticChunkText.chunk_uuid == chunk_uuid)
+            )
+        ).scalar_one_or_none()
+        chunk_text = text_payload.text if text_payload is not None else root.text
         root_payload: RootRow = {key: getattr(root, key) for key in (
-            "id", "document_id", "paragraph_id", "chapter_id", "order_index", "text",
+            "id", "document_id", "paragraph_id", "chapter_id", "order_index",
             "source_start", "source_end", "char_count", "chunk_type", "score", "search_weight",
             "block_meta",
         )}
+        root_payload["text"] = chunk_text
         metrics_payload: MetricsRow | None = None
         if metrics is not None:
             metrics_payload = {key: getattr(metrics, key) for key in (
