@@ -6,7 +6,7 @@ from types import MappingProxyType
 from typing import Final, Mapping
 from uuid import UUID
 
-from sqlalchemy import Boolean, CheckConstraint, Float, ForeignKey, Integer
+from sqlalchemy import Boolean, CheckConstraint, Float, ForeignKey, Index, Integer
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .schema import Base, SemanticChunk, UUID4
@@ -68,12 +68,16 @@ class SemanticChunkMetrics(Base):
         CheckConstraint(
             "matches IS NULL OR matches >= 0", name="semantic_chunk_metrics_matches_nonnegative"
         ),
+        Index("ix_semantic_chunk_metrics_chunk_version_id", "chunk_version_id"),
     )
 
     chunk_uuid: Mapped[UUID] = mapped_column(
         UUID4,
         ForeignKey("semantic_chunks.id", ondelete="CASCADE"),
         primary_key=True,
+    )
+    chunk_version_id: Mapped[UUID | None] = mapped_column(
+        UUID4, ForeignKey("semantic_chunk_versions.id", ondelete="SET NULL")
     )
     quality_score: Mapped[float | None] = mapped_column(Float)
     coverage: Mapped[float | None] = mapped_column(Float)
@@ -108,12 +112,16 @@ class SemanticChunkFeedback(Base):
             "modifications IS NULL OR modifications >= 0",
             name="semantic_chunk_feedback_modifications_nonnegative",
         ),
+        Index("ix_semantic_chunk_feedback_chunk_version_id", "chunk_version_id"),
     )
 
     chunk_uuid: Mapped[UUID] = mapped_column(
         UUID4,
         ForeignKey("semantic_chunk_metrics.chunk_uuid", ondelete="CASCADE"),
         primary_key=True,
+    )
+    chunk_version_id: Mapped[UUID | None] = mapped_column(
+        UUID4, ForeignKey("semantic_chunk_versions.id", ondelete="SET NULL")
     )
     accepted: Mapped[int | None] = mapped_column(Integer)
     rejected: Mapped[int | None] = mapped_column(Integer)

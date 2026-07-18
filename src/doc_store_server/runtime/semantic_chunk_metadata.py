@@ -226,10 +226,13 @@ class SemanticChunkMetadataService:
             column, _dictionary, table, _metadata = CLASSIFIER_FIELDS[field]
             connection.execute(
                 text(
-                    f"INSERT INTO {table} (chunk_uuid, {column}) "
-                    "VALUES (CAST(:chunk_id AS uuid), :dictionary_id) "
+                    f"INSERT INTO {table} (chunk_uuid, chunk_version_id, {column}) "
+                    "VALUES (CAST(:chunk_id AS uuid), "
+                    "(SELECT version_id FROM semantic_chunk_current WHERE chunk_uuid = CAST(:chunk_id AS uuid)), "
+                    ":dictionary_id) "
                     "ON CONFLICT (chunk_uuid) DO UPDATE SET "
                     f"{column} = EXCLUDED.{column}, "
+                    "chunk_version_id = EXCLUDED.chunk_version_id, "
                     "updated_at = now()"
                 ),
                 {"chunk_id": str(row["id"]), "dictionary_id": dictionary_id},
@@ -244,8 +247,10 @@ class SemanticChunkMetadataService:
                 connection.execute(
                     text(
                         "INSERT INTO semantic_chunk_tags "
-                        "(chunk_uuid, ordinal, tag_value) "
-                        "VALUES (CAST(:chunk_id AS uuid), :ordinal, :tag_value)"
+                        "(chunk_uuid, chunk_version_id, ordinal, tag_value) "
+                        "VALUES (CAST(:chunk_id AS uuid), "
+                        "(SELECT version_id FROM semantic_chunk_current WHERE chunk_uuid = CAST(:chunk_id AS uuid)), "
+                        ":ordinal, :tag_value)"
                     ),
                     {
                         "chunk_id": str(row["id"]),

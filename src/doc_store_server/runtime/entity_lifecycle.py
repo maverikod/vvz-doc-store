@@ -916,12 +916,19 @@ def _replace_semantic_chunk_text(
     version_id = connection.execute(
         text(
             "INSERT INTO semantic_chunk_versions "
-            "(chunk_uuid, version_no, text, text_sha256, char_count, block_meta) "
+            "(chunk_uuid, logical_chunk_id, previous_version_id, version_no, text, text_sha256, "
+            "char_count, source_start, source_end, order_index, status, is_current, valid_from, "
+            "operation, block_meta) "
             "VALUES ("
-            ":chunk_uuid, "
+            ":chunk_uuid, :chunk_uuid, "
+            "(SELECT version_id FROM semantic_chunk_current WHERE chunk_uuid = :chunk_uuid), "
             "COALESCE((SELECT MAX(version_no) + 1 "
             "FROM semantic_chunk_versions WHERE chunk_uuid = :chunk_uuid), 1), "
-            ":text, :text_sha256, :char_count, CAST(:block_meta AS jsonb)) "
+            ":text, :text_sha256, :char_count, "
+            "(SELECT source_start FROM semantic_chunks WHERE id = :chunk_uuid), "
+            "(SELECT source_end FROM semantic_chunks WHERE id = :chunk_uuid), "
+            "(SELECT order_index FROM semantic_chunks WHERE id = :chunk_uuid), "
+            "'active', FALSE, now(), 'entity_update', CAST(:block_meta AS jsonb)) "
             "RETURNING id"
         ),
         {
@@ -932,6 +939,22 @@ def _replace_semantic_chunk_text(
             "block_meta": json.dumps(text_meta, ensure_ascii=False),
         },
     ).scalar_one()
+    connection.execute(
+        text(
+            "UPDATE semantic_chunk_versions AS v SET is_current = FALSE, status = 'retired', "
+            "valid_to = COALESCE(valid_to, now()), updated_at = now() "
+            "FROM semantic_chunk_current AS c "
+            "WHERE c.version_id = v.id AND c.chunk_uuid = :chunk_uuid"
+        ),
+        {"chunk_uuid": chunk_uuid},
+    )
+    connection.execute(
+        text(
+            "UPDATE semantic_chunk_versions SET is_current = TRUE, status = 'active', "
+            "valid_to = NULL, updated_at = now() WHERE id = :version_id"
+        ),
+        {"version_id": version_id},
+    )
     connection.execute(
         text(
             "INSERT INTO semantic_chunk_current (chunk_uuid, version_id) "
@@ -981,6 +1004,10 @@ def _replace_semantic_chunk_text(
                 f"{column} = EXCLUDED.{column}, updated_at = now()"
             ),
             {"chunk_uuid": chunk_uuid, "dictionary_id": dictionary_id},
+        )
+        connection.execute(
+            text(f"UPDATE {table} SET chunk_version_id = :version_id WHERE chunk_uuid = :chunk_uuid"),
+            {"chunk_uuid": chunk_uuid, "version_id": version_id},
         )
     connection.execute(
         text("DELETE FROM semantic_chunk_feedback WHERE chunk_uuid = :chunk_uuid"),

@@ -162,18 +162,34 @@ class ChunkVersionItem(PublicModel):
     """Public summary of one semantic chunk text version."""
 
     version_no: int
+    id: str | None = None
+    logical_chunk_id: str | None = None
     preview: str = ""
+    text: str | None = None
     created_at: str | None = None
     current: bool = False
+    status: str = "active"
+    valid_from: str | None = None
+    valid_to: str | None = None
     char_count: int = 0
     text_sha256: str | None = None
     checksum: str | None = None
     comment: str | None = None
+    actor: str | None = None
+    operation: str | None = None
+    previous_version_id: str | None = None
+    restored_from_version_id: str | None = None
 
     def __post_init__(self) -> None:
         _validate_version_no(self.version_no)
+        for field_name in ("id", "logical_chunk_id", "previous_version_id", "restored_from_version_id"):
+            value = getattr(self, field_name)
+            if value is not None:
+                _validate_uuid4(value, field_name)
         if self.char_count < 0:
             raise ValueError("char_count must be non-negative")
+        if self.status not in {"active", "retired", "deleted"}:
+            raise ValueError("status must be active, retired, or deleted")
 
     @classmethod
     def from_payload(cls, payload: Payload) -> Self:
@@ -189,11 +205,14 @@ class ChunkVersionItem(PublicModel):
 @dataclass(frozen=True, kw_only=True)
 class ChunkVersionListRequest(PublicModel):
     chunk_id: str
+    include_deleted: bool = False
     limit: int = 100
     offset: int = 0
 
     def __post_init__(self) -> None:
         _validate_uuid4(self.chunk_id, "chunk_id")
+        if not isinstance(self.include_deleted, bool):
+            raise ValueError("include_deleted must be a boolean")
         _validate_version_bounds(self.limit, self.offset)
 
 
@@ -230,6 +249,8 @@ class ChunkVersionListResult(PublicModel):
 class ChunkVersionSetCurrentRequest(PublicModel):
     chunk_id: str
     version_no: int
+    comment: str | None = None
+    actor: str | None = None
 
     def __post_init__(self) -> None:
         _validate_uuid4(self.chunk_id, "chunk_id")
@@ -257,6 +278,171 @@ class ChunkVersionSetCurrentResult(PublicModel):
         version = values.get("version")
         if isinstance(version, Mapping):
             values["version"] = ChunkVersionItem.from_payload(version)
+        return _read(cls, values)
+
+
+@dataclass(frozen=True, kw_only=True)
+class ChunkHistoryRequest(ChunkVersionListRequest):
+    """Request payload for ``chunk_history``."""
+
+
+ChunkHistoryResult = ChunkVersionListResult
+
+
+@dataclass(frozen=True, kw_only=True)
+class ChunkVersionGetRequest(PublicModel):
+    chunk_id: str
+    version_no: int | None = None
+    current: bool = False
+    include_text: bool = True
+
+    def __post_init__(self) -> None:
+        _validate_uuid4(self.chunk_id, "chunk_id")
+        if self.version_no is not None:
+            _validate_version_no(self.version_no)
+        if not isinstance(self.current, bool):
+            raise ValueError("current must be a boolean")
+        if not isinstance(self.include_text, bool):
+            raise ValueError("include_text must be a boolean")
+
+
+@dataclass(frozen=True, kw_only=True)
+class ChunkVersionGetResult(PublicModel):
+    chunk_id: str
+    version: ChunkVersionItem
+
+    def __post_init__(self) -> None:
+        _validate_uuid4(self.chunk_id, "chunk_id")
+
+    def to_params(self) -> dict[str, Any]:
+        result = _payload(self)
+        result["version"] = self.version.to_payload()
+        return result
+
+    @classmethod
+    def from_payload(cls, payload: Payload) -> Self:
+        values = dict(payload)
+        if isinstance(values.get("version"), Mapping):
+            values["version"] = ChunkVersionItem.from_payload(values["version"])
+        return _read(cls, values)
+
+
+@dataclass(frozen=True, kw_only=True)
+class ChunkVersionTextMutationRequest(PublicModel):
+    chunk_id: str
+    text: str
+    comment: str | None = None
+    actor: str | None = None
+    expected_current_version: int | None = None
+    operation_id: str | None = None
+
+    def __post_init__(self) -> None:
+        _validate_uuid4(self.chunk_id, "chunk_id")
+        if not isinstance(self.text, str):
+            raise ValueError("text must be a string")
+        if self.expected_current_version is not None:
+            _validate_version_no(self.expected_current_version)
+        if self.operation_id is not None:
+            _validate_uuid4(self.operation_id, "operation_id")
+
+
+ChunkVersionAddRequest = ChunkVersionTextMutationRequest
+ChunkVersionUpdateRequest = ChunkVersionTextMutationRequest
+ChunkVersionAddResult = ChunkVersionSetCurrentResult
+ChunkVersionUpdateResult = ChunkVersionSetCurrentResult
+
+
+@dataclass(frozen=True, kw_only=True)
+class ChunkVersionRestoreRequest(PublicModel):
+    chunk_id: str
+    version_no: int
+    comment: str | None = None
+    actor: str | None = None
+    expected_current_version: int | None = None
+    operation_id: str | None = None
+
+    def __post_init__(self) -> None:
+        _validate_uuid4(self.chunk_id, "chunk_id")
+        _validate_version_no(self.version_no)
+        if self.expected_current_version is not None:
+            _validate_version_no(self.expected_current_version)
+        if self.operation_id is not None:
+            _validate_uuid4(self.operation_id, "operation_id")
+
+
+ChunkVersionRestoreResult = ChunkVersionSetCurrentResult
+
+
+@dataclass(frozen=True, kw_only=True)
+class ChunkVersionRetireRequest(PublicModel):
+    chunk_id: str
+    version_no: int
+    replacement_version_no: int | None = None
+    comment: str | None = None
+    actor: str | None = None
+
+    def __post_init__(self) -> None:
+        _validate_uuid4(self.chunk_id, "chunk_id")
+        _validate_version_no(self.version_no)
+        if self.replacement_version_no is not None:
+            _validate_version_no(self.replacement_version_no)
+
+
+@dataclass(frozen=True, kw_only=True)
+class ChunkVersionRetireResult(PublicModel):
+    chunk_id: str
+    outcome: str
+    retired_version_no: int
+    current_version_no: int | None = None
+
+    def __post_init__(self) -> None:
+        _validate_uuid4(self.chunk_id, "chunk_id")
+        _validate_version_no(self.retired_version_no)
+        if self.current_version_no is not None:
+            _validate_version_no(self.current_version_no)
+
+
+@dataclass(frozen=True, kw_only=True)
+class ChunkVersionDiffRequest(PublicModel):
+    chunk_id: str
+    from_version_no: int
+    to_version_no: int
+    context_lines: int = 3
+
+    def __post_init__(self) -> None:
+        _validate_uuid4(self.chunk_id, "chunk_id")
+        _validate_version_no(self.from_version_no)
+        _validate_version_no(self.to_version_no)
+        if isinstance(self.context_lines, bool) or not isinstance(self.context_lines, int) or not 0 <= self.context_lines <= 20:
+            raise ValueError("context_lines must be an integer between 0 and 20")
+
+
+@dataclass(frozen=True, kw_only=True)
+class ChunkVersionDiffResult(PublicModel):
+    chunk_id: str
+    from_version: ChunkVersionItem
+    to_version: ChunkVersionItem
+    diff: tuple[str, ...] = ()
+    changed: bool = False
+
+    def __post_init__(self) -> None:
+        _validate_uuid4(self.chunk_id, "chunk_id")
+
+    def to_params(self) -> dict[str, Any]:
+        result = _payload(self)
+        result["from_version"] = self.from_version.to_payload()
+        result["to_version"] = self.to_version.to_payload()
+        result["diff"] = list(self.diff)
+        return result
+
+    @classmethod
+    def from_payload(cls, payload: Payload) -> Self:
+        values = dict(payload)
+        if isinstance(values.get("from_version"), Mapping):
+            values["from_version"] = ChunkVersionItem.from_payload(values["from_version"])
+        if isinstance(values.get("to_version"), Mapping):
+            values["to_version"] = ChunkVersionItem.from_payload(values["to_version"])
+        values["diff"] = tuple(values.get("diff", ()))
         return _read(cls, values)
 
 
@@ -852,9 +1038,14 @@ class OperationState(PublicModel):
 
 __all__ = [
     "ChapterGetRequest", "ChapterGetResult", "ChapterTextGetRequest", "ChunkQuery",
-    "ChunkVersionDeleteRequest", "ChunkVersionDeleteResult", "ChunkVersionItem",
-    "ChunkVersionListRequest", "ChunkVersionListResult", "ChunkVersionSetCurrentRequest",
-    "ChunkVersionSetCurrentResult",
+    "ChunkHistoryRequest", "ChunkHistoryResult", "ChunkVersionAddRequest",
+    "ChunkVersionAddResult", "ChunkVersionDeleteRequest", "ChunkVersionDeleteResult",
+    "ChunkVersionDiffRequest", "ChunkVersionDiffResult", "ChunkVersionGetRequest",
+    "ChunkVersionGetResult", "ChunkVersionItem", "ChunkVersionListRequest",
+    "ChunkVersionListResult", "ChunkVersionRestoreRequest", "ChunkVersionRestoreResult",
+    "ChunkVersionRetireRequest", "ChunkVersionRetireResult", "ChunkVersionSetCurrentRequest",
+    "ChunkVersionSetCurrentResult", "ChunkVersionTextMutationRequest",
+    "ChunkVersionUpdateRequest", "ChunkVersionUpdateResult",
     "DocumentCreateRequest",
     "DocumentCreateResult", "DocumentChunkRequest", "DocumentChunkResult",
     "DocumentDeleteRequest", "DocumentDeleteResult", "DocumentGetRequest", "DocumentGetResult",

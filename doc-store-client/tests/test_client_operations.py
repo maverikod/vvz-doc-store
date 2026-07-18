@@ -15,12 +15,26 @@ from doc_store_client.models import (
     ChapterGetRequest,
     ChapterGetResult,
     ChapterTextGetRequest,
+    ChunkHistoryRequest,
+    ChunkHistoryResult,
+    ChunkVersionAddRequest,
+    ChunkVersionAddResult,
     ChunkVersionDeleteRequest,
     ChunkVersionDeleteResult,
+    ChunkVersionDiffRequest,
+    ChunkVersionDiffResult,
+    ChunkVersionGetRequest,
+    ChunkVersionGetResult,
     ChunkVersionListRequest,
     ChunkVersionListResult,
+    ChunkVersionRestoreRequest,
+    ChunkVersionRestoreResult,
+    ChunkVersionRetireRequest,
+    ChunkVersionRetireResult,
     ChunkVersionSetCurrentRequest,
     ChunkVersionSetCurrentResult,
+    ChunkVersionUpdateRequest,
+    ChunkVersionUpdateResult,
     DocumentChunkRequest,
     DocumentChunkResult,
     DocumentCreateRequest,
@@ -271,12 +285,14 @@ def test_document_write_result_preserves_runtime_extra_fields_in_details() -> No
             "list_chunk_versions",
             ChunkVersionListRequest(
                 chunk_id="550e8400-e29b-41d4-a716-446655440000",
+                include_deleted=True,
                 limit=25,
                 offset=50,
             ),
             "chunk_version_list",
             {
                 "chunk_id": "550e8400-e29b-41d4-a716-446655440000",
+                "include_deleted": True,
                 "limit": 25,
                 "offset": 50,
             },
@@ -293,6 +309,78 @@ def test_document_write_result_preserves_runtime_extra_fields_in_details() -> No
                 "total": 1,
                 "limit": 25,
                 "offset": 50,
+            },
+        ),
+        (
+            "get_chunk_history",
+            ChunkHistoryRequest(chunk_id="550e8400-e29b-41d4-a716-446655440000"),
+            "chunk_history",
+            {
+                "chunk_id": "550e8400-e29b-41d4-a716-446655440000",
+                "include_deleted": False,
+                "limit": 100,
+                "offset": 0,
+            },
+            ChunkHistoryResult,
+            {
+                "chunk_id": "550e8400-e29b-41d4-a716-446655440000",
+                "items": [],
+                "total": 0,
+                "limit": 100,
+                "offset": 0,
+            },
+        ),
+        (
+            "get_chunk_version",
+            ChunkVersionGetRequest(chunk_id="550e8400-e29b-41d4-a716-446655440000", current=True),
+            "chunk_version_get",
+            {
+                "chunk_id": "550e8400-e29b-41d4-a716-446655440000",
+                "current": True,
+                "include_text": True,
+            },
+            ChunkVersionGetResult,
+            {
+                "chunk_id": "550e8400-e29b-41d4-a716-446655440000",
+                "version": {"version_no": 2, "preview": "body", "text": "body", "current": True},
+            },
+        ),
+        (
+            "add_chunk_version",
+            ChunkVersionAddRequest(
+                chunk_id="550e8400-e29b-41d4-a716-446655440000",
+                text="new body",
+                expected_current_version=1,
+            ),
+            "chunk_version_add",
+            {
+                "chunk_id": "550e8400-e29b-41d4-a716-446655440000",
+                "text": "new body",
+                "expected_current_version": 1,
+            },
+            ChunkVersionAddResult,
+            {
+                "chunk_id": "550e8400-e29b-41d4-a716-446655440000",
+                "outcome": "appended",
+                "version": {"version_no": 2, "preview": "new body", "current": True},
+            },
+        ),
+        (
+            "update_chunk_version",
+            ChunkVersionUpdateRequest(
+                chunk_id="550e8400-e29b-41d4-a716-446655440000",
+                text="updated body",
+            ),
+            "chunk_version_update",
+            {
+                "chunk_id": "550e8400-e29b-41d4-a716-446655440000",
+                "text": "updated body",
+            },
+            ChunkVersionUpdateResult,
+            {
+                "chunk_id": "550e8400-e29b-41d4-a716-446655440000",
+                "outcome": "appended",
+                "version": {"version_no": 3, "preview": "updated body", "current": True},
             },
         ),
         (
@@ -315,6 +403,68 @@ def test_document_write_result_preserves_runtime_extra_fields_in_details() -> No
                     "preview": "current version",
                     "is_current": True,
                 },
+            },
+        ),
+        (
+            "restore_chunk_version",
+            ChunkVersionRestoreRequest(
+                chunk_id="550e8400-e29b-41d4-a716-446655440000",
+                version_no=1,
+            ),
+            "chunk_version_restore",
+            {
+                "chunk_id": "550e8400-e29b-41d4-a716-446655440000",
+                "version_no": 1,
+            },
+            ChunkVersionRestoreResult,
+            {
+                "chunk_id": "550e8400-e29b-41d4-a716-446655440000",
+                "outcome": "restored",
+                "version": {"version_no": 3, "preview": "restored", "current": True},
+            },
+        ),
+        (
+            "retire_chunk_version",
+            ChunkVersionRetireRequest(
+                chunk_id="550e8400-e29b-41d4-a716-446655440000",
+                version_no=1,
+                replacement_version_no=2,
+            ),
+            "chunk_version_retire",
+            {
+                "chunk_id": "550e8400-e29b-41d4-a716-446655440000",
+                "version_no": 1,
+                "replacement_version_no": 2,
+            },
+            ChunkVersionRetireResult,
+            {
+                "chunk_id": "550e8400-e29b-41d4-a716-446655440000",
+                "outcome": "retired",
+                "retired_version_no": 1,
+                "current_version_no": 2,
+            },
+        ),
+        (
+            "diff_chunk_versions",
+            ChunkVersionDiffRequest(
+                chunk_id="550e8400-e29b-41d4-a716-446655440000",
+                from_version_no=1,
+                to_version_no=2,
+            ),
+            "chunk_version_diff",
+            {
+                "chunk_id": "550e8400-e29b-41d4-a716-446655440000",
+                "from_version_no": 1,
+                "to_version_no": 2,
+                "context_lines": 3,
+            },
+            ChunkVersionDiffResult,
+            {
+                "chunk_id": "550e8400-e29b-41d4-a716-446655440000",
+                "from_version": {"version_no": 1, "preview": "old"},
+                "to_version": {"version_no": 2, "preview": "new"},
+                "diff": ["--- v1", "+++ v2"],
+                "changed": True,
             },
         ),
         (
@@ -536,14 +686,28 @@ def test_chunk_version_raw_methods_use_exact_commands_and_payloads() -> None:
 async def _test_chunk_version_raw_methods_use_exact_commands_and_payloads() -> None:
     assert {
         "chunk_version_list",
+        "chunk_history",
+        "chunk_version_get",
+        "chunk_version_add",
+        "chunk_version_update",
         "chunk_version_set_current",
+        "chunk_version_restore",
+        "chunk_version_retire",
+        "chunk_version_diff",
         "chunk_version_delete",
     }.issubset(DOC_STORE_COMMANDS)
 
     adapter = FakeAdapter()
     for command in (
         "chunk_version_list",
+        "chunk_history",
+        "chunk_version_get",
+        "chunk_version_add",
+        "chunk_version_update",
         "chunk_version_set_current",
+        "chunk_version_restore",
+        "chunk_version_retire",
+        "chunk_version_diff",
         "chunk_version_delete",
     ):
         adapter.responses[command] = {"command": command, "ok": True}
@@ -552,8 +716,19 @@ async def _test_chunk_version_raw_methods_use_exact_commands_and_payloads() -> N
     await client.chunk_version_list(
         params={"chunk_id": "chunk-001", "limit": 10, "offset": 20}
     )
+    await client.chunk_history(params={"chunk_id": "chunk-001"})
+    await client.chunk_version_get(params={"chunk_id": "chunk-001", "current": True})
+    await client.chunk_version_add(params={"chunk_id": "chunk-001", "text": "new"})
+    await client.chunk_version_update(params={"chunk_id": "chunk-001", "text": "updated"})
     await client.chunk_version_set_current(
         params={"chunk_id": "chunk-001", "version_no": 2}
+    )
+    await client.chunk_version_restore(params={"chunk_id": "chunk-001", "version_no": 1})
+    await client.chunk_version_retire(
+        params={"chunk_id": "chunk-001", "version_no": 1, "replacement_version_no": 2}
+    )
+    await client.chunk_version_diff(
+        params={"chunk_id": "chunk-001", "from_version_no": 1, "to_version_no": 2}
     )
     await client.chunk_version_delete(
         params={"chunk_id": "chunk-001", "version_no": 1}
@@ -564,9 +739,22 @@ async def _test_chunk_version_raw_methods_use_exact_commands_and_payloads() -> N
             "chunk_version_list",
             {"chunk_id": "chunk-001", "limit": 10, "offset": 20},
         ),
+        ("chunk_history", {"chunk_id": "chunk-001"}),
+        ("chunk_version_get", {"chunk_id": "chunk-001", "current": True}),
+        ("chunk_version_add", {"chunk_id": "chunk-001", "text": "new"}),
+        ("chunk_version_update", {"chunk_id": "chunk-001", "text": "updated"}),
         (
             "chunk_version_set_current",
             {"chunk_id": "chunk-001", "version_no": 2},
+        ),
+        ("chunk_version_restore", {"chunk_id": "chunk-001", "version_no": 1}),
+        (
+            "chunk_version_retire",
+            {"chunk_id": "chunk-001", "version_no": 1, "replacement_version_no": 2},
+        ),
+        (
+            "chunk_version_diff",
+            {"chunk_id": "chunk-001", "from_version_no": 1, "to_version_no": 2},
         ),
         (
             "chunk_version_delete",
@@ -921,7 +1109,14 @@ def test_client_facade_has_no_transport_or_server_implementation() -> None:
         "get_chapter_text",
         "reconstruct_source_file",
         "list_chunk_versions",
+        "get_chunk_history",
+        "get_chunk_version",
+        "add_chunk_version",
+        "update_chunk_version",
         "set_current_chunk_version",
+        "restore_chunk_version",
+        "retire_chunk_version",
+        "diff_chunk_versions",
         "delete_chunk_version",
         "get_paragraph",
         "get_paragraph_by_number",

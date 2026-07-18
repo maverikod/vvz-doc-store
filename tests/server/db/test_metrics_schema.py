@@ -67,6 +67,7 @@ def test_metrics_metadata_has_exact_canonical_relations_and_types() -> None:
     feedback = metadata.tables[FEEDBACK_TABLE]
     assert set(metrics.c.keys()) == {
         "chunk_uuid",
+        "chunk_version_id",
         "quality_score",
         "coverage",
         "cohesion",
@@ -77,7 +78,13 @@ def test_metrics_metadata_has_exact_canonical_relations_and_types() -> None:
         "used_as_input",
         "used_as_context",
     }
-    assert set(feedback.c.keys()) == {"chunk_uuid", "accepted", "rejected", "modifications"}
+    assert set(feedback.c.keys()) == {
+        "chunk_uuid",
+        "chunk_version_id",
+        "accepted",
+        "rejected",
+        "modifications",
+    }
     assert all(isinstance(column.type, UUID) for column in (metrics.c.chunk_uuid, feedback.c.chunk_uuid))
     assert all(metrics.c[name].type.python_type is float for name in {
         "quality_score", "coverage", "cohesion", "boundary_prev", "boundary_next"
@@ -95,8 +102,14 @@ def test_metrics_and_feedback_are_one_to_one_cascading_children() -> None:
     assert {column.name for column in feedback.primary_key.columns} == {"chunk_uuid"}
 
     expected = {
-        METRICS_TABLE: {("chunk_uuid", "semantic_chunks", "id")},
-        FEEDBACK_TABLE: {("chunk_uuid", METRICS_TABLE, "chunk_uuid")},
+        METRICS_TABLE: {
+            ("chunk_uuid", "semantic_chunks", "id"),
+            ("chunk_version_id", "semantic_chunk_versions", "id"),
+        },
+        FEEDBACK_TABLE: {
+            ("chunk_uuid", METRICS_TABLE, "chunk_uuid"),
+            ("chunk_version_id", "semantic_chunk_versions", "id"),
+        },
     }
     for table in (metrics, feedback):
         actual = {
@@ -106,7 +119,11 @@ def test_metrics_and_feedback_are_one_to_one_cascading_children() -> None:
             for element in constraint.elements
         }
         assert actual == expected[table.name]
-        assert all(element.ondelete == "CASCADE" for element in table.foreign_keys)
+        expected_ondelete = {
+            "chunk_uuid": "CASCADE",
+            "chunk_version_id": "SET NULL",
+        }
+        assert {element.parent.name: element.ondelete for element in table.foreign_keys} == expected_ondelete
 
 
 def test_alias_contract_is_immutable_and_has_no_stored_duplicate_columns() -> None:
@@ -129,8 +146,16 @@ def test_alias_contract_is_immutable_and_has_no_stored_duplicate_columns() -> No
     }
     with pytest.raises(TypeError):
         METRICS_FIELD_ALIASES["quality_score"] = ("wrong",)  # type: ignore[index]
-    assert set(metadata.tables[METRICS_TABLE].c.keys()) == {"chunk_uuid", *METRICS_FIELD_ALIASES}
-    assert set(metadata.tables[FEEDBACK_TABLE].c.keys()) == {"chunk_uuid", *FEEDBACK_FIELD_ALIASES}
+    assert set(metadata.tables[METRICS_TABLE].c.keys()) == {
+        "chunk_uuid",
+        "chunk_version_id",
+        *METRICS_FIELD_ALIASES,
+    }
+    assert set(metadata.tables[FEEDBACK_TABLE].c.keys()) == {
+        "chunk_uuid",
+        "chunk_version_id",
+        *FEEDBACK_FIELD_ALIASES,
+    }
     assert SemanticChunkMetrics.__table__ is metadata.tables[METRICS_TABLE]
     assert SemanticChunkFeedback.__table__ is metadata.tables[FEEDBACK_TABLE]
 

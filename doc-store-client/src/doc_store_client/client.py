@@ -49,12 +49,26 @@ from .models import (
 
 if TYPE_CHECKING:
     from .models import (
+        ChunkHistoryRequest,
+        ChunkHistoryResult,
+        ChunkVersionAddRequest,
+        ChunkVersionAddResult,
         ChunkVersionDeleteRequest,
         ChunkVersionDeleteResult,
+        ChunkVersionDiffRequest,
+        ChunkVersionDiffResult,
+        ChunkVersionGetRequest,
+        ChunkVersionGetResult,
         ChunkVersionListRequest,
         ChunkVersionListResult,
+        ChunkVersionRestoreRequest,
+        ChunkVersionRestoreResult,
+        ChunkVersionRetireRequest,
+        ChunkVersionRetireResult,
         ChunkVersionSetCurrentRequest,
         ChunkVersionSetCurrentResult,
+        ChunkVersionUpdateRequest,
+        ChunkVersionUpdateResult,
     )
 
 DOC_STORE_COMMANDS: tuple[str, ...] = (
@@ -83,7 +97,14 @@ DOC_STORE_COMMANDS: tuple[str, ...] = (
     "chapter_text_get",
     "source_file_reconstruct",
     "chunk_version_list",
+    "chunk_history",
+    "chunk_version_get",
+    "chunk_version_add",
+    "chunk_version_update",
     "chunk_version_set_current",
+    "chunk_version_restore",
+    "chunk_version_retire",
+    "chunk_version_diff",
     "chunk_version_delete",
     "document_rebind",
     "processing_status",
@@ -287,10 +308,45 @@ class DocStoreClient:
     ) -> Any:
         return await self.call("chunk_version_list", params, **kwargs)
 
+    async def chunk_history(
+        self, params: Mapping[str, Any] | None = None, **kwargs: Any
+    ) -> Any:
+        return await self.call("chunk_history", params, **kwargs)
+
+    async def chunk_version_get(
+        self, params: Mapping[str, Any] | None = None, **kwargs: Any
+    ) -> Any:
+        return await self.call("chunk_version_get", params, **kwargs)
+
+    async def chunk_version_add(
+        self, params: Mapping[str, Any] | None = None, **kwargs: Any
+    ) -> Any:
+        return await self.call("chunk_version_add", params, **kwargs)
+
+    async def chunk_version_update(
+        self, params: Mapping[str, Any] | None = None, **kwargs: Any
+    ) -> Any:
+        return await self.call("chunk_version_update", params, **kwargs)
+
     async def chunk_version_set_current(
         self, params: Mapping[str, Any] | None = None, **kwargs: Any
     ) -> Any:
         return await self.call("chunk_version_set_current", params, **kwargs)
+
+    async def chunk_version_restore(
+        self, params: Mapping[str, Any] | None = None, **kwargs: Any
+    ) -> Any:
+        return await self.call("chunk_version_restore", params, **kwargs)
+
+    async def chunk_version_retire(
+        self, params: Mapping[str, Any] | None = None, **kwargs: Any
+    ) -> Any:
+        return await self.call("chunk_version_retire", params, **kwargs)
+
+    async def chunk_version_diff(
+        self, params: Mapping[str, Any] | None = None, **kwargs: Any
+    ) -> Any:
+        return await self.call("chunk_version_diff", params, **kwargs)
 
     async def chunk_version_delete(
         self, params: Mapping[str, Any] | None = None, **kwargs: Any
@@ -536,6 +592,46 @@ class DocStoreClient:
             _model_type("ChunkVersionListResult"),
         )
 
+    async def get_chunk_history(
+        self,
+        request: "ChunkHistoryRequest",
+    ) -> "ChunkHistoryResult":
+        return await self._execute(
+            "chunk_history",
+            request.to_params(),
+            _model_type("ChunkHistoryResult"),
+        )
+
+    async def get_chunk_version(
+        self,
+        request: "ChunkVersionGetRequest",
+    ) -> "ChunkVersionGetResult":
+        return await self._execute(
+            "chunk_version_get",
+            request.to_params(),
+            _model_type("ChunkVersionGetResult"),
+        )
+
+    async def add_chunk_version(
+        self,
+        request: "ChunkVersionAddRequest",
+    ) -> "ChunkVersionAddResult":
+        return await self._execute(
+            "chunk_version_add",
+            request.to_params(),
+            _model_type("ChunkVersionAddResult"),
+        )
+
+    async def update_chunk_version(
+        self,
+        request: "ChunkVersionUpdateRequest",
+    ) -> "ChunkVersionUpdateResult":
+        return await self._execute(
+            "chunk_version_update",
+            request.to_params(),
+            _model_type("ChunkVersionUpdateResult"),
+        )
+
     async def set_current_chunk_version(
         self,
         request: "ChunkVersionSetCurrentRequest",
@@ -544,6 +640,36 @@ class DocStoreClient:
             "chunk_version_set_current",
             request.to_params(),
             _model_type("ChunkVersionSetCurrentResult"),
+        )
+
+    async def restore_chunk_version(
+        self,
+        request: "ChunkVersionRestoreRequest",
+    ) -> "ChunkVersionRestoreResult":
+        return await self._execute(
+            "chunk_version_restore",
+            request.to_params(),
+            _model_type("ChunkVersionRestoreResult"),
+        )
+
+    async def retire_chunk_version(
+        self,
+        request: "ChunkVersionRetireRequest",
+    ) -> "ChunkVersionRetireResult":
+        return await self._execute(
+            "chunk_version_retire",
+            request.to_params(),
+            _model_type("ChunkVersionRetireResult"),
+        )
+
+    async def diff_chunk_versions(
+        self,
+        request: "ChunkVersionDiffRequest",
+    ) -> "ChunkVersionDiffResult":
+        return await self._execute(
+            "chunk_version_diff",
+            request.to_params(),
+            _model_type("ChunkVersionDiffResult"),
         )
 
     async def delete_chunk_version(

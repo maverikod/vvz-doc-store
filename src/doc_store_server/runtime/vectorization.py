@@ -29,6 +29,7 @@ class ChunkVectorInput:
     body: str
     entity_type: str = "semantic_chunk"
     entity_id: UUID | None = None
+    chunk_version_id: UUID | None = None
 
     @property
     def vector_entity_id(self) -> UUID:
@@ -43,6 +44,7 @@ class ChunkVectorRecord:
     entity_type: str = "semantic_chunk"
     entity_id: UUID | None = None
     document_id: UUID | None = None
+    chunk_version_id: UUID | None = None
 
     @property
     def vector_entity_id(self) -> UUID:
@@ -337,9 +339,10 @@ class RuntimeVectorizationService:
                 ).mappings().all()
                 chunk_rows = connection.execute(
                     text(
-                        "SELECT sc.id, sc.document_id, sct.text "
+                        "SELECT sc.id, sc.document_id, sct.text, scc.version_id AS chunk_version_id "
                         "FROM semantic_chunks AS sc "
                         "JOIN semantic_chunk_texts AS sct ON sct.chunk_uuid = sc.id "
+                        "LEFT JOIN semantic_chunk_current AS scc ON scc.chunk_uuid = sc.id "
                         "WHERE sc.deleted_at IS NULL "
                         "AND sc.document_id = ANY(CAST(:document_ids AS uuid[])) "
                         "ORDER BY sc.document_id, sc.order_index ASC, sc.id ASC"
@@ -418,6 +421,7 @@ class RuntimeVectorizationService:
                 entity_type="semantic_chunk",
                 document_id=row["document_id"],
                 body=str(row["text"]),
+                chunk_version_id=row["chunk_version_id"],
             )
             for row in chunk_rows
         )
@@ -477,6 +481,7 @@ class RuntimeVectorizationService:
                     document_id=item.document_id,
                     vector=vector,
                     bm25_tokens=tokens if item.entity_type == "semantic_chunk" else None,
+                    chunk_version_id=item.chunk_version_id,
                 )
                 for item, vector, tokens in zip(batch, vectors, bm25_tokens, strict=True)
             )
@@ -515,18 +520,21 @@ class RuntimeVectorizationService:
                     connection.execute(
                         text(
                             "INSERT INTO semantic_chunk_embeddings "
-                            "(entity_type, entity_id, chunk_uuid, vector, model, dimension, "
+                            "(entity_type, entity_id, chunk_uuid, chunk_version_id, vector, model, dimension, "
                             "provider, model_version, active) "
-                            "VALUES (:entity_type, :entity_id, :chunk_uuid, CAST(:vector AS vector), :model, :dimension, "
+                            "VALUES (:entity_type, :entity_id, :chunk_uuid, :chunk_version_id, CAST(:vector AS vector), :model, :dimension, "
                             ":provider, :model_version, TRUE) "
                             "ON CONFLICT ON CONSTRAINT uq_semantic_chunk_embeddings_entity_version "
-                            "DO UPDATE SET vector = EXCLUDED.vector, active = TRUE, "
+                            "DO UPDATE SET vector = EXCLUDED.vector, chunk_version_id = EXCLUDED.chunk_version_id, active = TRUE, "
                             "created_at = now()"
                         ),
                         {
                             "entity_type": record.entity_type,
                             "entity_id": record.vector_entity_id,
                             "chunk_uuid": record.vector_entity_id
+                            if record.entity_type == "semantic_chunk"
+                            else None,
+                            "chunk_version_id": record.chunk_version_id
                             if record.entity_type == "semantic_chunk"
                             else None,
                             "vector": _vector_literal(record.vector),
@@ -548,12 +556,13 @@ class RuntimeVectorizationService:
                             connection.execute(
                                 text(
                                     "INSERT INTO semantic_chunk_tokens "
-                                    "(chunk_uuid, token_kind, ordinal, token_value) "
-                                    "VALUES (:chunk_uuid, 'bm25_tokens', :ordinal, :token_value)"
+                                    "(chunk_uuid, chunk_version_id, token_kind, ordinal, token_value) "
+                                    "VALUES (:chunk_uuid, :chunk_version_id, 'bm25_tokens', :ordinal, :token_value)"
                                 ),
                                 [
                                     {
                                         "chunk_uuid": record.chunk_id,
+                                        "chunk_version_id": record.chunk_version_id,
                                         "ordinal": ordinal,
                                         "token_value": token_value,
                                     }

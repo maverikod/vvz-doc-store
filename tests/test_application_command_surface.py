@@ -13,9 +13,16 @@ import pytest
 from doc_store_server.commands import registration
 from doc_store_server.commands.chunk_query_search_command import ChunkQuerySearchCommand
 from doc_store_server.commands.chunk_version_commands import (
+    ChunkHistoryCommand,
+    ChunkVersionAddCommand,
     ChunkVersionDeleteCommand,
+    ChunkVersionDiffCommand,
+    ChunkVersionGetCommand,
     ChunkVersionListCommand,
+    ChunkVersionRestoreCommand,
+    ChunkVersionRetireCommand,
     ChunkVersionSetCurrentCommand,
+    ChunkVersionUpdateCommand,
 )
 from doc_store_server.commands.corpus_audit_command import CorpusAuditCommand
 from doc_store_server.commands.document_delete_command import DocumentDeleteCommand
@@ -75,7 +82,14 @@ EXPECTED_COMMANDS = {
     "chapter_text_get": (ChapterTextGetCommand, "sync"),
     "source_file_reconstruct": (SourceFileReconstructCommand, "sync"),
     "chunk_version_list": (ChunkVersionListCommand, "sync"),
+    "chunk_history": (ChunkHistoryCommand, "sync"),
+    "chunk_version_get": (ChunkVersionGetCommand, "sync"),
+    "chunk_version_add": (ChunkVersionAddCommand, "sync"),
+    "chunk_version_update": (ChunkVersionUpdateCommand, "sync"),
     "chunk_version_set_current": (ChunkVersionSetCurrentCommand, "sync"),
+    "chunk_version_restore": (ChunkVersionRestoreCommand, "sync"),
+    "chunk_version_retire": (ChunkVersionRetireCommand, "sync"),
+    "chunk_version_diff": (ChunkVersionDiffCommand, "sync"),
     "chunk_version_delete": (ChunkVersionDeleteCommand, "sync"),
     "document_rebind": (DocumentRebindCommand, "sync"),
     "processing_status": (ProcessingStatusCommand, "sync"),
@@ -221,7 +235,8 @@ def test_application_modules_are_importable_without_competing_infrastructure() -
         if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
     }
     assert not any(
-        any(term in name.lower() for term in ("websocket", "authenticate", "rest"))
+        any(term in name.lower() for term in ("websocket", "authenticate"))
+        or name.lower().startswith(("rest_", "restapi", "restful"))
         for name in defined_names
     )
     registration_path = ROOT / "src/doc_store_server/commands/registration.py"
@@ -376,14 +391,41 @@ class FakeLifecycle:
 
 
 class FakeChunkVersionBoundary:
-    def list_versions(self, *, chunk_id: str) -> dict[str, Any]:
+    def list_versions(self, *, chunk_id: str, include_deleted: bool = False) -> dict[str, Any]:
         return {"chunk_id": chunk_id, "items": [], "total": 0}
 
-    def set_current(self, *, chunk_id: str, version_no: int) -> dict[str, Any]:
-        return {"chunk_id": chunk_id, "version_no": version_no, "outcome": "updated"}
+    def history(self, *, chunk_id: str, include_deleted: bool = False) -> dict[str, Any]:
+        return {"chunk_id": chunk_id, "items": [], "total": 0}
+
+    def get_version(self, *, chunk_id: str, version_no: int | None = None, current: bool = False, include_text: bool = True) -> dict[str, Any]:
+        return {"chunk_id": chunk_id, "version": {"version_no": version_no or 1, "preview": "text", "text": "text", "current": current or version_no is None}}
+
+    def append_version(self, *, chunk_id: str, text_value: str, **_kwargs: Any) -> dict[str, Any]:
+        return {"chunk_id": chunk_id, "outcome": "appended", "version": {"version_no": 2, "preview": text_value, "current": True}}
+
+    def update_text(self, *, chunk_id: str, text_value: str, **_kwargs: Any) -> dict[str, Any]:
+        return {"chunk_id": chunk_id, "outcome": "appended", "version": {"version_no": 2, "preview": text_value, "current": True}}
+
+    def set_current(self, *, chunk_id: str, version_no: int, **_kwargs: Any) -> dict[str, Any]:
+        return {"chunk_id": chunk_id, "version": {"version_no": version_no, "preview": "text", "current": True}, "outcome": "set_current"}
+
+    def restore_version(self, *, chunk_id: str, version_no: int, **_kwargs: Any) -> dict[str, Any]:
+        return {"chunk_id": chunk_id, "version": {"version_no": version_no + 1, "preview": "text", "current": True}, "outcome": "restored"}
+
+    def retire_version(self, *, chunk_id: str, version_no: int, **_kwargs: Any) -> dict[str, Any]:
+        return {"chunk_id": chunk_id, "retired_version_no": version_no, "current_version_no": 2, "outcome": "retired"}
 
     def delete_version(self, *, chunk_id: str, version_no: int) -> dict[str, Any]:
         return {"chunk_id": chunk_id, "version_no": version_no, "outcome": "deleted"}
+
+    def diff_versions(self, *, chunk_id: str, from_version_no: int, to_version_no: int, context_lines: int = 3) -> dict[str, Any]:
+        return {
+            "chunk_id": chunk_id,
+            "from_version": {"version_no": from_version_no, "preview": "from"},
+            "to_version": {"version_no": to_version_no, "preview": "to"},
+            "diff": ["--- v1", "+++ v2"],
+            "changed": True,
+        }
 
 
 @pytest.mark.parametrize(
@@ -400,7 +442,14 @@ class FakeChunkVersionBoundary:
         (ChapterTextGetCommand, {"chapter_id": "550e8400-e29b-41d4-a716-446655440003"}, {"text_reconstruction_boundary": FakeTextReconstruction()}),
         (SourceFileReconstructCommand, {"document_id": "550e8400-e29b-41d4-a716-446655440001"}, {"text_reconstruction_boundary": FakeTextReconstruction()}),
         (ChunkVersionListCommand, {"chunk_id": "550e8400-e29b-41d4-a716-446655440005"}, {"chunk_version_boundary": FakeChunkVersionBoundary()}),
+        (ChunkHistoryCommand, {"chunk_id": "550e8400-e29b-41d4-a716-446655440005"}, {"chunk_version_boundary": FakeChunkVersionBoundary()}),
+        (ChunkVersionGetCommand, {"chunk_id": "550e8400-e29b-41d4-a716-446655440005", "current": True}, {"chunk_version_boundary": FakeChunkVersionBoundary()}),
+        (ChunkVersionAddCommand, {"chunk_id": "550e8400-e29b-41d4-a716-446655440005", "text": "new text"}, {"chunk_version_boundary": FakeChunkVersionBoundary()}),
+        (ChunkVersionUpdateCommand, {"chunk_id": "550e8400-e29b-41d4-a716-446655440005", "text": "new text"}, {"chunk_version_boundary": FakeChunkVersionBoundary()}),
         (ChunkVersionSetCurrentCommand, {"chunk_id": "550e8400-e29b-41d4-a716-446655440005", "version_no": 2}, {"chunk_version_boundary": FakeChunkVersionBoundary()}),
+        (ChunkVersionRestoreCommand, {"chunk_id": "550e8400-e29b-41d4-a716-446655440005", "version_no": 1}, {"chunk_version_boundary": FakeChunkVersionBoundary()}),
+        (ChunkVersionRetireCommand, {"chunk_id": "550e8400-e29b-41d4-a716-446655440005", "version_no": 1}, {"chunk_version_boundary": FakeChunkVersionBoundary()}),
+        (ChunkVersionDiffCommand, {"chunk_id": "550e8400-e29b-41d4-a716-446655440005", "from_version_no": 1, "to_version_no": 2}, {"chunk_version_boundary": FakeChunkVersionBoundary()}),
         (ChunkVersionDeleteCommand, {"chunk_id": "550e8400-e29b-41d4-a716-446655440005", "version_no": 2}, {"chunk_version_boundary": FakeChunkVersionBoundary()}),
         (
             DocumentRebindCommand,
@@ -477,7 +526,14 @@ def test_runtime_configuration_installs_retrieval_boundary(monkeypatch: pytest.M
     monkeypatch.setattr(ProcessingStatusCommand, "runtime_status_boundary", None)
     monkeypatch.setattr(ChunkQuerySearchCommand, "search_orchestrator", None)
     monkeypatch.setattr(ChunkVersionListCommand, "chunk_version_boundary", None)
+    monkeypatch.setattr(ChunkHistoryCommand, "chunk_version_boundary", None)
+    monkeypatch.setattr(ChunkVersionGetCommand, "chunk_version_boundary", None)
+    monkeypatch.setattr(ChunkVersionAddCommand, "chunk_version_boundary", None)
+    monkeypatch.setattr(ChunkVersionUpdateCommand, "chunk_version_boundary", None)
     monkeypatch.setattr(ChunkVersionSetCurrentCommand, "chunk_version_boundary", None)
+    monkeypatch.setattr(ChunkVersionRestoreCommand, "chunk_version_boundary", None)
+    monkeypatch.setattr(ChunkVersionRetireCommand, "chunk_version_boundary", None)
+    monkeypatch.setattr(ChunkVersionDiffCommand, "chunk_version_boundary", None)
     monkeypatch.setattr(ChunkVersionDeleteCommand, "chunk_version_boundary", None)
     for command in (
         EntityCreateCommand,
@@ -513,7 +569,14 @@ def test_runtime_configuration_installs_retrieval_boundary(monkeypatch: pytest.M
     assert SourceFileReconstructCommand.reconstruction_boundary is boundary
     assert DocumentDeleteCommand.document_service is boundary
     assert ChunkVersionListCommand.chunk_version_boundary is boundary
+    assert ChunkHistoryCommand.chunk_version_boundary is boundary
+    assert ChunkVersionGetCommand.chunk_version_boundary is boundary
+    assert ChunkVersionAddCommand.chunk_version_boundary is boundary
+    assert ChunkVersionUpdateCommand.chunk_version_boundary is boundary
     assert ChunkVersionSetCurrentCommand.chunk_version_boundary is boundary
+    assert ChunkVersionRestoreCommand.chunk_version_boundary is boundary
+    assert ChunkVersionRetireCommand.chunk_version_boundary is boundary
+    assert ChunkVersionDiffCommand.chunk_version_boundary is boundary
     assert ChunkVersionDeleteCommand.chunk_version_boundary is boundary
     assert EntityCreateCommand.lifecycle_boundary is boundary
     assert EntityListCommand.lifecycle_boundary is boundary

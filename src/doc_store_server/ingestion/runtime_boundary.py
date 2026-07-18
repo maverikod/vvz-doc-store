@@ -1437,9 +1437,13 @@ def _insert_semantic_chunk_initial_version(
         text(
             "WITH inserted AS ("
             "INSERT INTO semantic_chunk_versions "
-            "(chunk_uuid, version_no, text, text_sha256, char_count, block_meta) "
-            "VALUES (:chunk_uuid, 1, :body, :text_sha256, :char_count, "
-            "CAST(:block_meta AS jsonb)) "
+            "(chunk_uuid, logical_chunk_id, version_no, text, text_sha256, char_count, "
+            "source_start, source_end, order_index, status, is_current, valid_from, "
+            "operation, block_meta) "
+            "SELECT sc.id, sc.id, 1, :body, :text_sha256, :char_count, "
+            "sc.source_start, sc.source_end, sc.order_index, 'active', TRUE, now(), "
+            "'ingest', CAST(:block_meta AS jsonb) "
+            "FROM semantic_chunks AS sc WHERE sc.id = :chunk_uuid "
             "ON CONFLICT (chunk_uuid, version_no) DO NOTHING "
             "RETURNING id"
             "), existing AS ("
@@ -1465,6 +1469,25 @@ def _insert_semantic_chunk_initial_version(
         ),
         {"chunk_uuid": chunk_id, "version_id": version_id},
     )
+    for table_name in (
+        "semantic_chunk_metrics",
+        "semantic_chunk_feedback",
+        "semantic_chunk_tokens",
+        "semantic_chunk_tags",
+        "semantic_chunk_type_assignments",
+        "semantic_chunk_role_assignments",
+        "semantic_chunk_status_assignments",
+        "semantic_chunk_block_type_assignments",
+        "semantic_chunk_language_assignments",
+        "semantic_chunk_category_assignments",
+    ):
+        connection.execute(
+            text(
+                f"UPDATE {table_name} SET chunk_version_id = :version_id "
+                "WHERE chunk_uuid = :chunk_uuid AND chunk_version_id IS NULL"
+            ),
+            {"chunk_uuid": chunk_id, "version_id": version_id},
+        )
 
 
 def _stable_uuid4(value: str) -> UUID:

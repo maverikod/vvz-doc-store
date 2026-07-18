@@ -81,14 +81,26 @@ def _index(table: object, name: str) -> Index:
 def test_metadata_has_exact_token_and_tag_columns_and_cascading_ownership() -> None:
     tokens = metadata.tables[TOKEN_TABLE]
     tags = metadata.tables[TAG_TABLE]
-    assert set(tokens.c.keys()) == {"chunk_uuid", "token_kind", "ordinal", "token_value"}
-    assert set(tags.c.keys()) == {"chunk_uuid", "ordinal", "tag_value"}
+    assert set(tokens.c.keys()) == {
+        "chunk_uuid",
+        "chunk_version_id",
+        "token_kind",
+        "ordinal",
+        "token_value",
+    }
+    assert set(tags.c.keys()) == {"chunk_uuid", "chunk_version_id", "ordinal", "tag_value"}
     assert set(tokens.primary_key.columns) == {tokens.c.chunk_uuid, tokens.c.token_kind, tokens.c.ordinal}
     assert set(tags.primary_key.columns) == {tags.c.chunk_uuid, tags.c.ordinal}
 
     expected_foreign_keys = {
-        TOKEN_TABLE: {("chunk_uuid", "semantic_chunks", "id")},
-        TAG_TABLE: {("chunk_uuid", "semantic_chunks", "id")},
+        TOKEN_TABLE: {
+            ("chunk_uuid", "semantic_chunks", "id"),
+            ("chunk_version_id", "semantic_chunk_versions", "id"),
+        },
+        TAG_TABLE: {
+            ("chunk_uuid", "semantic_chunks", "id"),
+            ("chunk_version_id", "semantic_chunk_versions", "id"),
+        },
     }
     for table in (tokens, tags):
         actual = {
@@ -98,7 +110,10 @@ def test_metadata_has_exact_token_and_tag_columns_and_cascading_ownership() -> N
             for element in constraint.elements
         }
         assert actual == expected_foreign_keys[table.name]
-        assert all(element.ondelete == "CASCADE" for element in table.foreign_keys)
+        assert {element.parent.name: element.ondelete for element in table.foreign_keys} == {
+            "chunk_uuid": "CASCADE",
+            "chunk_version_id": "SET NULL",
+        }
 
 
 def test_metadata_enforces_independent_ordered_identity_and_supporting_indexes() -> None:
@@ -122,9 +137,15 @@ def test_metadata_enforces_independent_ordered_identity_and_supporting_indexes()
         tokens.c.token_kind,
         tokens.c.token_value,
     }
+    assert set(_index(tokens, "ix_semantic_chunk_tokens_chunk_version_id").columns) == {
+        tokens.c.chunk_version_id,
+    }
     assert set(_index(tags, "ix_semantic_chunk_tags_chunk_ordinal").columns) == {
         tags.c.chunk_uuid,
         tags.c.ordinal,
+    }
+    assert set(_index(tags, "ix_semantic_chunk_tags_chunk_version_id").columns) == {
+        tags.c.chunk_version_id,
     }
     assert set(_index(tags, "ix_semantic_chunk_tags_value").columns) == {tags.c.tag_value}
 
@@ -249,21 +270,21 @@ def test_0001_then_0003_round_trip_constraints_and_root_preservation(
             {"id": chunk, "doc": doc, "paragraph": paragraph, "chapter": chapter},
         )
         connection.execute(
-            text("INSERT INTO semantic_chunk_tokens VALUES (:id, 'tokens', 0, 'one')"),
+            text("INSERT INTO semantic_chunk_tokens (chunk_uuid, token_kind, ordinal, token_value) VALUES (:id, 'tokens', 0, 'one')"),
             {"id": chunk},
         )
         connection.execute(
-            text("INSERT INTO semantic_chunk_tokens VALUES (:id, 'bm25_tokens', 0, 'one')"),
+            text("INSERT INTO semantic_chunk_tokens (chunk_uuid, token_kind, ordinal, token_value) VALUES (:id, 'bm25_tokens', 0, 'one')"),
             {"id": chunk},
         )
         connection.execute(
-            text("INSERT INTO semantic_chunk_tags VALUES (:id, 0, 'tag')"), {"id": chunk}
+            text("INSERT INTO semantic_chunk_tags (chunk_uuid, ordinal, tag_value) VALUES (:id, 0, 'tag')"), {"id": chunk}
         )
         for statement in (
-            "INSERT INTO semantic_chunk_tokens VALUES (:id, 'tokens', -1, 'bad')",
-            "INSERT INTO semantic_chunk_tags VALUES (:id, -1, 'bad')",
-            "INSERT INTO semantic_chunk_tokens VALUES (:id, 'tokens', 0, 'duplicate')",
-            "INSERT INTO semantic_chunk_tags VALUES (:id, 0, 'duplicate')",
+            "INSERT INTO semantic_chunk_tokens (chunk_uuid, token_kind, ordinal, token_value) VALUES (:id, 'tokens', -1, 'bad')",
+            "INSERT INTO semantic_chunk_tags (chunk_uuid, ordinal, tag_value) VALUES (:id, -1, 'bad')",
+            "INSERT INTO semantic_chunk_tokens (chunk_uuid, token_kind, ordinal, token_value) VALUES (:id, 'tokens', 0, 'duplicate')",
+            "INSERT INTO semantic_chunk_tags (chunk_uuid, ordinal, tag_value) VALUES (:id, 0, 'duplicate')",
         ):
             with pytest.raises(SQLAlchemyError), connection.begin_nested():
                 connection.execute(text(statement), {"id": chunk})

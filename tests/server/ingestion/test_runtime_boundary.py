@@ -303,8 +303,9 @@ def test_runtime_ingestion_seeds_initial_semantic_chunk_version() -> None:
     version_sql, version_params = connection.calls[0]
     current_sql, current_params = connection.calls[1]
     assert "INSERT INTO semantic_chunk_versions" in version_sql
-    assert "version_no, text, text_sha256, char_count, block_meta" in version_sql
-    assert "VALUES (:chunk_uuid, 1, :body, :text_sha256, :char_count" in version_sql
+    assert "chunk_uuid, logical_chunk_id, version_no, text, text_sha256, char_count" in version_sql
+    assert "'active', TRUE, now()" in version_sql
+    assert "'ingest'" in version_sql
     assert "ON CONFLICT (chunk_uuid, version_no) DO NOTHING" in version_sql
     assert version_params == {
         "chunk_uuid": chunk_id,
@@ -316,6 +317,7 @@ def test_runtime_ingestion_seeds_initial_semantic_chunk_version() -> None:
     assert "INSERT INTO semantic_chunk_current" in current_sql
     assert "ON CONFLICT (chunk_uuid) DO UPDATE SET" in current_sql
     assert current_params == {"chunk_uuid": chunk_id, "version_id": version_id}
+    assert any("semantic_chunk_embeddings" not in sql and "chunk_version_id" in sql for sql, _params in connection.calls[2:])
 
 
 class _ScalarResult:

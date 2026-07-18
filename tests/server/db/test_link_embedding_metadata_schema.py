@@ -94,7 +94,7 @@ def test_metadata_has_canonical_link_and_versioned_embedding_relations() -> None
     assert metadata.tables[EMBEDDING_TABLE] is embeddings
     assert set(links.c.keys()) == {"source_chunk_uuid", "relation_type", "target_chunk_uuid", "ordinal", "relation_data"}
     assert set(embeddings.c.keys()) == {
-        "id", "entity_type", "entity_id", "chunk_uuid", "vector", "model", "dimension",
+        "id", "entity_type", "entity_id", "chunk_uuid", "chunk_version_id", "vector", "model", "dimension",
         "provider", "model_version", "created_at", "active",
     }
 
@@ -153,6 +153,9 @@ def test_versioned_embeddings_retain_history_and_select_one_compatible_active_ro
     }
     assert set(_index(embeddings, "ix_semantic_chunk_embeddings_chunk_model").columns) == {
         embeddings.c.chunk_uuid, embeddings.c.model, embeddings.c.dimension
+    }
+    assert set(_index(embeddings, "ix_semantic_chunk_embeddings_chunk_version_id").columns) == {
+        embeddings.c.chunk_version_id,
     }
     vector_index = _index(embeddings, "ix_semantic_chunk_embeddings_vector_cosine")
     assert vector_index.dialect_options["postgresql"]["using"] == "hnsw"

@@ -1130,6 +1130,124 @@ async def _verify_lifecycle(
                 json.dumps(listed, ensure_ascii=False, default=str)[:700],
             )
 
+            current_version = await client.call(
+                "chunk_version_get",
+                {"chunk_id": chunk_id, "current": True, "include_text": True},
+            )
+            current_payload = current_version.get("version", {}) if isinstance(current_version, Mapping) else {}
+            _add_check(
+                checks,
+                "chunk_version_get current",
+                isinstance(current_payload, Mapping)
+                and current_payload.get("version_no") == 2
+                and current_payload.get("text") == version_text,
+                json.dumps(current_version, ensure_ascii=False, default=str)[:700],
+            )
+
+            added = await client.call(
+                "chunk_version_add",
+                {
+                    "chunk_id": chunk_id,
+                    "text": f"{version_text} / appended",
+                    "comment": "runtime verifier append",
+                    "expected_current_version": 2,
+                },
+            )
+            added_version = added.get("version", {}) if isinstance(added, Mapping) else {}
+            _add_check(
+                checks,
+                "chunk_version_add",
+                isinstance(added_version, Mapping)
+                and added.get("outcome") == "appended"
+                and added_version.get("version_no") == 3
+                and added_version.get("current") is True,
+                json.dumps(added, ensure_ascii=False, default=str)[:700],
+            )
+
+            diffed = await client.call(
+                "chunk_version_diff",
+                {"chunk_id": chunk_id, "from_version_no": 1, "to_version_no": 3},
+            )
+            _add_check(
+                checks,
+                "chunk_version_diff",
+                isinstance(diffed, Mapping)
+                and diffed.get("changed") is True
+                and isinstance(diffed.get("diff"), list)
+                and diffed.get("diff"),
+                json.dumps(diffed, ensure_ascii=False, default=str)[:700],
+            )
+
+            restored = await client.call(
+                "chunk_version_restore",
+                {
+                    "chunk_id": chunk_id,
+                    "version_no": 1,
+                    "comment": "runtime verifier restore",
+                    "expected_current_version": 3,
+                },
+            )
+            restored_version = restored.get("version", {}) if isinstance(restored, Mapping) else {}
+            _add_check(
+                checks,
+                "chunk_version_restore",
+                isinstance(restored_version, Mapping)
+                and restored.get("outcome") == "restored"
+                and restored_version.get("version_no") == 4
+                and restored_version.get("current") is True,
+                json.dumps(restored, ensure_ascii=False, default=str)[:700],
+            )
+
+            retired = await client.call(
+                "chunk_version_retire",
+                {"chunk_id": chunk_id, "version_no": 3, "comment": "runtime verifier retire"},
+            )
+            _add_check(
+                checks,
+                "chunk_version_retire non-current",
+                isinstance(retired, Mapping)
+                and retired.get("outcome") == "retired"
+                and retired.get("retired_version_no") == 3,
+                json.dumps(retired, ensure_ascii=False, default=str)[:700],
+            )
+
+            history = await client.call(
+                "chunk_history",
+                {"chunk_id": chunk_id, "include_deleted": False, "limit": 10},
+            )
+            _add_check(
+                checks,
+                "chunk_history",
+                isinstance(history, Mapping)
+                and int(history.get("total") or 0) >= 4
+                and any(item.get("status") == "retired" for item in history.get("items", []) if isinstance(item, Mapping)),
+                json.dumps(history, ensure_ascii=False, default=str)[:700],
+            )
+
+            try:
+                await client.call(
+                    "chunk_version_retire",
+                    {"chunk_id": chunk_id, "version_no": 4},
+                )
+            except DocStoreClientError as exc:
+                error_code = getattr(getattr(exc, "error", None), "code", "")
+                _add_check(
+                    checks,
+                    "chunk_version_retire current requires replacement",
+                    error_code == "CURRENT_VERSION_RETIRE_REQUIRES_REPLACEMENT"
+                    or "CURRENT_VERSION_RETIRE_REQUIRES_REPLACEMENT" in str(exc),
+                    str(exc),
+                )
+            except Exception as exc:
+                _add_check(checks, "chunk_version_retire current requires replacement", False, repr(exc))
+            else:
+                _add_check(
+                    checks,
+                    "chunk_version_retire current requires replacement",
+                    False,
+                    "current version retirement unexpectedly succeeded",
+                )
+
             selected = await client.call(
                 "chunk_version_set_current",
                 {"chunk_id": chunk_id, "version_no": 1},
@@ -1171,39 +1289,14 @@ async def _verify_lifecycle(
                 and deleted.get("outcome") == "deleted"
                 and deleted.get("deleted_version_no") == 2
                 and isinstance(after_delete, Mapping)
-                and int(after_delete.get("total") or 0) == 1
-                and len(remaining_items) == 1
-                and remaining_items[0].get("version_no") == 1,
+                and int(after_delete.get("total") or 0) >= 3
+                and all(item.get("version_no") != 2 for item in remaining_items if isinstance(item, Mapping)),
                 json.dumps(
                     {"deleted": deleted, "remaining": after_delete},
                     ensure_ascii=False,
                     default=str,
                 )[:700],
             )
-
-            try:
-                await client.call(
-                    "chunk_version_delete",
-                    {"chunk_id": chunk_id, "version_no": 1},
-                )
-            except DocStoreClientError as exc:
-                error_code = getattr(getattr(exc, "error", None), "code", "")
-                _add_check(
-                    checks,
-                    "chunk_version_delete rejects last version",
-                    error_code == "LAST_VERSION_DELETE_FORBIDDEN"
-                    or "LAST_VERSION_DELETE_FORBIDDEN" in str(exc),
-                    str(exc),
-                )
-            except Exception as exc:
-                _add_check(checks, "chunk_version_delete rejects last version", False, repr(exc))
-            else:
-                _add_check(
-                    checks,
-                    "chunk_version_delete rejects last version",
-                    False,
-                    "last version deletion unexpectedly succeeded",
-                )
     except Exception as exc:
         _add_check(checks, "semantic chunk versioning", False, repr(exc))
 
@@ -1379,7 +1472,14 @@ async def _run(args: argparse.Namespace) -> int:
         "entity_owner_tree",
         "semantic_chunk_metadata_update",
         "chunk_version_list",
+        "chunk_history",
+        "chunk_version_get",
+        "chunk_version_add",
+        "chunk_version_update",
         "chunk_version_set_current",
+        "chunk_version_restore",
+        "chunk_version_retire",
+        "chunk_version_diff",
         "chunk_version_delete",
         "chunk_query_search",
         "semantic_relations",

@@ -376,7 +376,8 @@ def test_vectorizer_embedding_persistence_is_idempotent_for_same_model_version()
 
     assert "ON CONFLICT ON CONSTRAINT uq_semantic_chunk_embeddings_entity_version" in source
     assert "entity_type, entity_id, chunk_uuid" in source
-    assert "DO UPDATE SET vector = EXCLUDED.vector, active = TRUE" in source
+    assert "DO UPDATE SET vector = EXCLUDED.vector, chunk_version_id = EXCLUDED.chunk_version_id, active = TRUE" in source
+    assert "chunk_version_id" in source
     assert "DELETE FROM semantic_chunk_tokens" in source
     assert "INSERT INTO semantic_chunk_tokens" in source
     assert "bm25_tokens" in source

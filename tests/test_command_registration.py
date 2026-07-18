@@ -14,9 +14,16 @@ import pytest
 from doc_store_server.commands import registration
 from doc_store_server.commands.chunk_query_search_command import ChunkQuerySearchCommand
 from doc_store_server.commands.chunk_version_commands import (
+    ChunkHistoryCommand,
+    ChunkVersionAddCommand,
     ChunkVersionDeleteCommand,
+    ChunkVersionDiffCommand,
+    ChunkVersionGetCommand,
     ChunkVersionListCommand,
+    ChunkVersionRestoreCommand,
+    ChunkVersionRetireCommand,
     ChunkVersionSetCurrentCommand,
+    ChunkVersionUpdateCommand,
 )
 from doc_store_server.commands.corpus_audit_command import CorpusAuditCommand
 from doc_store_server.commands.document_delete_command import DocumentDeleteCommand
@@ -224,12 +231,68 @@ def test_manifest_has_exact_command_identity_and_registration_shape() -> None:
             "ChunkVersionListCommand.get_schema",
         ),
         (
+            "chunk_history",
+            ChunkHistoryCommand,
+            "doc_store_server.commands.chunk_version_commands",
+            "sync",
+            "ChunkHistoryCommand.metadata",
+            "ChunkHistoryCommand.get_schema",
+        ),
+        (
+            "chunk_version_get",
+            ChunkVersionGetCommand,
+            "doc_store_server.commands.chunk_version_commands",
+            "sync",
+            "ChunkVersionGetCommand.metadata",
+            "ChunkVersionGetCommand.get_schema",
+        ),
+        (
+            "chunk_version_add",
+            ChunkVersionAddCommand,
+            "doc_store_server.commands.chunk_version_commands",
+            "sync",
+            "ChunkVersionAddCommand.metadata",
+            "ChunkVersionAddCommand.get_schema",
+        ),
+        (
+            "chunk_version_update",
+            ChunkVersionUpdateCommand,
+            "doc_store_server.commands.chunk_version_commands",
+            "sync",
+            "ChunkVersionUpdateCommand.metadata",
+            "ChunkVersionUpdateCommand.get_schema",
+        ),
+        (
             "chunk_version_set_current",
             ChunkVersionSetCurrentCommand,
             "doc_store_server.commands.chunk_version_commands",
             "sync",
             "ChunkVersionSetCurrentCommand.metadata",
             "ChunkVersionSetCurrentCommand.get_schema",
+        ),
+        (
+            "chunk_version_restore",
+            ChunkVersionRestoreCommand,
+            "doc_store_server.commands.chunk_version_commands",
+            "sync",
+            "ChunkVersionRestoreCommand.metadata",
+            "ChunkVersionRestoreCommand.get_schema",
+        ),
+        (
+            "chunk_version_retire",
+            ChunkVersionRetireCommand,
+            "doc_store_server.commands.chunk_version_commands",
+            "sync",
+            "ChunkVersionRetireCommand.metadata",
+            "ChunkVersionRetireCommand.get_schema",
+        ),
+        (
+            "chunk_version_diff",
+            ChunkVersionDiffCommand,
+            "doc_store_server.commands.chunk_version_commands",
+            "sync",
+            "ChunkVersionDiffCommand.metadata",
+            "ChunkVersionDiffCommand.get_schema",
         ),
         (
             "chunk_version_delete",

@@ -215,6 +215,7 @@ class SemanticChunkEmbedding(Base):
         ),
         Index("ix_semantic_chunk_embeddings_entity_model", "entity_type", "entity_id", "model", "dimension"),
         Index("ix_semantic_chunk_embeddings_chunk_model", "chunk_uuid", "model", "dimension"),
+        Index("ix_semantic_chunk_embeddings_chunk_version_id", "chunk_version_id"),
         Index(
             "ix_semantic_chunk_embeddings_vector_cosine",
             "vector",
@@ -245,6 +246,9 @@ class SemanticChunkEmbedding(Base):
     entity_id: Mapped[UUID] = mapped_column(UUID4, nullable=False)
     chunk_uuid: Mapped[UUID] = mapped_column(
         UUID4, ForeignKey("semantic_chunks.id", ondelete="CASCADE"), nullable=True
+    )
+    chunk_version_id: Mapped[UUID | None] = mapped_column(
+        UUID4, ForeignKey("semantic_chunk_versions.id", ondelete="SET NULL")
     )
     vector: Mapped[list[float]] = mapped_column(VECTOR(384), nullable=False)
     model: Mapped[str] = mapped_column(String(256), nullable=False)

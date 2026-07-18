@@ -20,9 +20,16 @@ from doc_store_server.commands.registration import (
 )
 from doc_store_server.commands.chunk_query_search_command import ChunkQuerySearchCommand
 from doc_store_server.commands.chunk_version_commands import (
+    ChunkHistoryCommand,
+    ChunkVersionAddCommand,
     ChunkVersionDeleteCommand,
+    ChunkVersionDiffCommand,
+    ChunkVersionGetCommand,
     ChunkVersionListCommand,
+    ChunkVersionRestoreCommand,
+    ChunkVersionRetireCommand,
     ChunkVersionSetCurrentCommand,
+    ChunkVersionUpdateCommand,
 )
 from doc_store_server.commands.document_delete_command import DocumentDeleteCommand
 from doc_store_server.commands.health_command import DocStoreHealthCommand
@@ -220,7 +227,7 @@ def create_server_application(config: ServerConfig | None = None) -> Any:
     return create_app(
         title="doc-store",
         description="doc-store adapter server",
-        version="0.1.61",
+        version="0.1.64",
         app_config=dict(config or {}),
     )
 
@@ -256,9 +263,19 @@ def configure_runtime_boundaries(config: ServerConfig) -> None:
     ProcessingStatusCommand.runtime_status_boundary = status
     ChunkQuerySearchCommand.search_orchestrator = search
     EmbeddingsRebuildCommand.vectorization_boundary = vectorization
-    ChunkVersionListCommand.chunk_version_boundary = chunk_version
-    ChunkVersionSetCurrentCommand.chunk_version_boundary = chunk_version
-    ChunkVersionDeleteCommand.chunk_version_boundary = chunk_version
+    for command in (
+        ChunkVersionListCommand,
+        ChunkHistoryCommand,
+        ChunkVersionGetCommand,
+        ChunkVersionAddCommand,
+        ChunkVersionUpdateCommand,
+        ChunkVersionSetCurrentCommand,
+        ChunkVersionRestoreCommand,
+        ChunkVersionRetireCommand,
+        ChunkVersionDiffCommand,
+        ChunkVersionDeleteCommand,
+    ):
+        command.chunk_version_boundary = chunk_version
     for command in (
         EntityCreateCommand,
         EntityListCommand,

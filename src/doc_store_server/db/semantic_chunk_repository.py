@@ -21,6 +21,7 @@ from .metrics_schema import SemanticChunkFeedback, SemanticChunkMetrics
 from .schema import SemanticChunk as SemanticChunkRow
 from .schema import CategoryDictionary, ChunkStatusDictionary
 from .schema import SemanticChunkCategoryAssignment, SemanticChunkStatusAssignment
+from .schema import SemanticChunkCurrent
 from .schema import SemanticChunkText
 from .semantic_chunk_mapper import (
     EmbeddingRow,
@@ -238,13 +239,14 @@ class SemanticChunkRepository:
         chunk_uuid: UUID,
         dictionary_id: UUID,
     ) -> None:
-        values = {"chunk_uuid": chunk_uuid, column: dictionary_id}
+        chunk_version_id = await self._current_chunk_version_id(chunk_uuid)
+        values = {"chunk_uuid": chunk_uuid, "chunk_version_id": chunk_version_id, column: dictionary_id}
         statement = (
             pg_insert(model)
             .values(**values)
             .on_conflict_do_update(
                 index_elements=[model.chunk_uuid],
-                set_={column: dictionary_id},
+                set_={column: dictionary_id, "chunk_version_id": chunk_version_id},
             )
         )
         await self._session.execute(statement)
@@ -275,7 +277,9 @@ class SemanticChunkRepository:
                 .with_for_update()
             )
         ).scalar_one_or_none()
+        chunk_version_id = await self._current_chunk_version_id(chunk_uuid)
         values = {key: value for key, value in metrics.items() if key != "chunk_uuid"}
+        values["chunk_version_id"] = chunk_version_id
         if metrics_row is None:
             self._session.add(SemanticChunkMetrics(chunk_uuid=chunk_uuid, **values))
         else:
@@ -295,6 +299,7 @@ class SemanticChunkRepository:
                 await self._session.delete(feedback_row)
         else:
             values = {key: value for key, value in feedback.items() if key != "chunk_uuid"}
+            values["chunk_version_id"] = chunk_version_id
             if feedback_row is None:
                 self._session.add(SemanticChunkFeedback(chunk_uuid=chunk_uuid, **values))
             else:
@@ -312,9 +317,10 @@ class SemanticChunkRepository:
         await self._session.execute(
             delete(SemanticChunkLink).where(SemanticChunkLink.source_chunk_uuid == chunk_uuid)
         )
+        chunk_version_id = await self._current_chunk_version_id(chunk_uuid)
         self._session.add_all(
-            [SemanticChunkToken(**dict(row)) for row in rows.tokens]
-            + [SemanticChunkTag(**dict(row)) for row in rows.tags]
+            [SemanticChunkToken(**dict(row), chunk_version_id=chunk_version_id) for row in rows.tokens]
+            + [SemanticChunkTag(**dict(row), chunk_version_id=chunk_version_id) for row in rows.tags]
             + [SemanticChunkLink(**dict(row)) for row in rows.links]
         )
         await self._session.flush()
@@ -322,6 +328,7 @@ class SemanticChunkRepository:
     async def _upsert_embeddings(self, embeddings: Sequence[EmbeddingRow]) -> None:
         for payload in embeddings:
             chunk_uuid = payload["chunk_uuid"]
+            chunk_version_id = await self._current_chunk_version_id(chunk_uuid)
             model = payload["model"]
             dimension = payload["dimension"]
             if payload.get("active") is True:
@@ -352,16 +359,25 @@ class SemanticChunkRepository:
                 for key, value in payload.items()
                 if key not in {"id", "chunk_uuid"} and not (key == "created_at" and value is None)
             }
+            values.setdefault("chunk_version_id", chunk_version_id)
             if existing is None:
                 insert_values = {
                     key: value
                     for key, value in payload.items()
                     if not (key == "created_at" and value is None)
                 }
+                insert_values.setdefault("chunk_version_id", chunk_version_id)
                 self._session.add(SemanticChunkEmbedding(**insert_values))
             else:
                 for key, value in values.items():
                     setattr(existing, key, value)
+
+    async def _current_chunk_version_id(self, chunk_uuid: UUID) -> UUID | None:
+        return (
+            await self._session.execute(
+                select(SemanticChunkCurrent.version_id).where(SemanticChunkCurrent.chunk_uuid == chunk_uuid)
+            )
+        ).scalar_one_or_none()
 
     async def _delete_embeddings(self, chunk_uuid: UUID) -> None:
         await self._session.execute(

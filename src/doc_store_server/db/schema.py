@@ -427,20 +427,58 @@ class SemanticChunkVersion(Base):
     __tablename__ = "semantic_chunk_versions"
     __table_args__ = (
         UniqueConstraint("chunk_uuid", "version_no", name="uq_semantic_chunk_versions_chunk_version"),
+        UniqueConstraint("logical_chunk_id", "version_no", name="uq_semantic_chunk_versions_logical_version"),
         CheckConstraint("version_no > 0", name="semantic_chunk_versions_version_positive"),
         CheckConstraint("char_count >= 0", name="semantic_chunk_versions_char_count_nonnegative"),
+        CheckConstraint(
+            "status IN ('active', 'retired', 'deleted')",
+            name="semantic_chunk_versions_status_valid",
+        ),
         Index("ix_semantic_chunk_versions_chunk_version", "chunk_uuid", "version_no"),
+        Index("ix_semantic_chunk_versions_logical_status_version", "logical_chunk_id", "status", "version_no"),
         Index("ix_semantic_chunk_versions_text_sha256", "text_sha256"),
+        Index("ix_semantic_chunk_versions_status", "status"),
+        Index("ix_semantic_chunk_versions_previous", "previous_version_id"),
+        Index("ix_semantic_chunk_versions_operation", "operation_id"),
+        Index("ix_semantic_chunk_versions_source", "source_version_id"),
+        Index(
+            "uq_semantic_chunk_versions_current_logical",
+            "logical_chunk_id",
+            unique=True,
+            postgresql_where="is_current IS TRUE AND deleted_at IS NULL",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(UUID4, primary_key=True, default=uuid4)
     chunk_uuid: Mapped[UUID] = mapped_column(
         UUID4, ForeignKey("semantic_chunks.id", ondelete="CASCADE"), nullable=False
     )
+    logical_chunk_id: Mapped[UUID] = mapped_column(UUID4, nullable=False)
+    previous_version_id: Mapped[UUID | None] = mapped_column(
+        UUID4, ForeignKey("semantic_chunk_versions.id", ondelete="SET NULL")
+    )
+    restored_from_version_id: Mapped[UUID | None] = mapped_column(
+        UUID4, ForeignKey("semantic_chunk_versions.id", ondelete="SET NULL")
+    )
     version_no: Mapped[int] = mapped_column(Integer, nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)
     text_sha256: Mapped[str] = mapped_column(String(128), nullable=False)
     char_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_version_id: Mapped[str | None] = mapped_column(String(255))
+    source_start: Mapped[int | None] = mapped_column(BigInteger)
+    source_end: Mapped[int | None] = mapped_column(BigInteger)
+    order_index: Mapped[int | None] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active", server_default="active")
+    is_current: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    valid_from: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    valid_to: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    comment: Mapped[str | None] = mapped_column(Text)
+    actor: Mapped[str | None] = mapped_column(String(255))
+    operation: Mapped[str | None] = mapped_column(String(64))
+    operation_id: Mapped[UUID | None] = mapped_column(UUID4)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -470,6 +508,9 @@ class SemanticChunkCurrent(Base):
     version_id: Mapped[UUID] = mapped_column(
         UUID4, ForeignKey("semantic_chunk_versions.id", ondelete="CASCADE"), nullable=False
     )
+    comment: Mapped[str | None] = mapped_column(Text)
+    actor: Mapped[str | None] = mapped_column(String(255))
+    operation: Mapped[str | None] = mapped_column(String(64))
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
@@ -484,10 +525,16 @@ class SemanticChunkTypeAssignment(Base):
     """Chunk-owned normalized assignment for the adapter SemanticChunk.type value."""
 
     __tablename__ = "semantic_chunk_type_assignments"
-    __table_args__ = (Index("ix_semantic_chunk_type_assignments_chunk_type_id", "chunk_type_id"),)
+    __table_args__ = (
+        Index("ix_semantic_chunk_type_assignments_chunk_type_id", "chunk_type_id"),
+        Index("ix_semantic_chunk_type_assignments_chunk_version_id", "chunk_version_id"),
+    )
 
     chunk_uuid: Mapped[UUID] = mapped_column(
         UUID4, ForeignKey("semantic_chunks.id", name="fk_scta_chunk", ondelete="CASCADE"), primary_key=True
+    )
+    chunk_version_id: Mapped[UUID | None] = mapped_column(
+        UUID4, ForeignKey("semantic_chunk_versions.id", ondelete="SET NULL")
     )
     chunk_type_id: Mapped[UUID] = mapped_column(UUID4, ForeignKey("chunk_types.id", name="fk_scta_type"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
@@ -505,10 +552,16 @@ class SemanticChunkRoleAssignment(Base):
     """Chunk-owned normalized assignment for the adapter SemanticChunk.role value."""
 
     __tablename__ = "semantic_chunk_role_assignments"
-    __table_args__ = (Index("ix_semantic_chunk_role_assignments_role_id", "role_id"),)
+    __table_args__ = (
+        Index("ix_semantic_chunk_role_assignments_role_id", "role_id"),
+        Index("ix_semantic_chunk_role_assignments_chunk_version_id", "chunk_version_id"),
+    )
 
     chunk_uuid: Mapped[UUID] = mapped_column(
         UUID4, ForeignKey("semantic_chunks.id", name="fk_scra_chunk", ondelete="CASCADE"), primary_key=True
+    )
+    chunk_version_id: Mapped[UUID | None] = mapped_column(
+        UUID4, ForeignKey("semantic_chunk_versions.id", ondelete="SET NULL")
     )
     role_id: Mapped[UUID] = mapped_column(UUID4, ForeignKey("chunk_roles.id", name="fk_scra_role"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
@@ -526,10 +579,16 @@ class SemanticChunkStatusAssignment(Base):
     """Chunk-owned normalized assignment for the adapter SemanticChunk.status value."""
 
     __tablename__ = "semantic_chunk_status_assignments"
-    __table_args__ = (Index("ix_semantic_chunk_status_assignments_status_id", "status_id"),)
+    __table_args__ = (
+        Index("ix_semantic_chunk_status_assignments_status_id", "status_id"),
+        Index("ix_semantic_chunk_status_assignments_chunk_version_id", "chunk_version_id"),
+    )
 
     chunk_uuid: Mapped[UUID] = mapped_column(
         UUID4, ForeignKey("semantic_chunks.id", name="fk_scsa_chunk", ondelete="CASCADE"), primary_key=True
+    )
+    chunk_version_id: Mapped[UUID | None] = mapped_column(
+        UUID4, ForeignKey("semantic_chunk_versions.id", ondelete="SET NULL")
     )
     status_id: Mapped[UUID] = mapped_column(UUID4, ForeignKey("chunk_statuses.id", name="fk_scsa_status"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
@@ -547,10 +606,16 @@ class SemanticChunkBlockTypeAssignment(Base):
     """Chunk-owned normalized assignment for the adapter SemanticChunk.block_type value."""
 
     __tablename__ = "semantic_chunk_block_type_assignments"
-    __table_args__ = (Index("ix_semantic_chunk_block_type_assignments_block_type_id", "block_type_id"),)
+    __table_args__ = (
+        Index("ix_semantic_chunk_block_type_assignments_block_type_id", "block_type_id"),
+        Index("ix_semantic_chunk_block_type_assignments_chunk_version_id", "chunk_version_id"),
+    )
 
     chunk_uuid: Mapped[UUID] = mapped_column(
         UUID4, ForeignKey("semantic_chunks.id", name="fk_scbta_chunk", ondelete="CASCADE"), primary_key=True
+    )
+    chunk_version_id: Mapped[UUID | None] = mapped_column(
+        UUID4, ForeignKey("semantic_chunk_versions.id", ondelete="SET NULL")
     )
     block_type_id: Mapped[UUID] = mapped_column(
         UUID4, ForeignKey("block_types.id", name="fk_scbta_block_type"), nullable=False
@@ -570,10 +635,16 @@ class SemanticChunkLanguageAssignment(Base):
     """Chunk-owned normalized assignment for the adapter SemanticChunk.language value."""
 
     __tablename__ = "semantic_chunk_language_assignments"
-    __table_args__ = (Index("ix_semantic_chunk_language_assignments_language_id", "language_id"),)
+    __table_args__ = (
+        Index("ix_semantic_chunk_language_assignments_language_id", "language_id"),
+        Index("ix_semantic_chunk_language_assignments_chunk_version_id", "chunk_version_id"),
+    )
 
     chunk_uuid: Mapped[UUID] = mapped_column(
         UUID4, ForeignKey("semantic_chunks.id", name="fk_scla_chunk", ondelete="CASCADE"), primary_key=True
+    )
+    chunk_version_id: Mapped[UUID | None] = mapped_column(
+        UUID4, ForeignKey("semantic_chunk_versions.id", ondelete="SET NULL")
     )
     language_id: Mapped[UUID] = mapped_column(
         UUID4, ForeignKey("languages.id", name="fk_scla_language"), nullable=False
@@ -593,10 +664,16 @@ class SemanticChunkCategoryAssignment(Base):
     """Chunk-owned normalized assignment for the SemanticChunk.category value."""
 
     __tablename__ = "semantic_chunk_category_assignments"
-    __table_args__ = (Index("ix_semantic_chunk_category_assignments_category_id", "category_id"),)
+    __table_args__ = (
+        Index("ix_semantic_chunk_category_assignments_category_id", "category_id"),
+        Index("ix_semantic_chunk_category_assignments_chunk_version_id", "chunk_version_id"),
+    )
 
     chunk_uuid: Mapped[UUID] = mapped_column(
         UUID4, ForeignKey("semantic_chunks.id", name="fk_scca_chunk", ondelete="CASCADE"), primary_key=True
+    )
+    chunk_version_id: Mapped[UUID | None] = mapped_column(
+        UUID4, ForeignKey("semantic_chunk_versions.id", ondelete="SET NULL")
     )
     category_id: Mapped[UUID] = mapped_column(
         UUID4, ForeignKey("categories.id", name="fk_scca_category"), nullable=False

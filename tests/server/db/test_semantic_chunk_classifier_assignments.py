@@ -64,9 +64,16 @@ def test_metadata_has_chunk_owned_assignment_tables_with_dictionary_foreign_keys
     assert set(ASSIGNMENTS) <= set(metadata.tables)
     for table_name, (column, dictionary_table, _metadata_field, _default_value) in ASSIGNMENTS.items():
         table = metadata.tables[table_name]
-        assert set(table.c.keys()) == {"chunk_uuid", column, "created_at", "updated_at"}
+        assert set(table.c.keys()) == {
+            "chunk_uuid",
+            "chunk_version_id",
+            column,
+            "created_at",
+            "updated_at",
+        }
         assert set(table.primary_key.columns) == {table.c.chunk_uuid}
         assert table.c[column].nullable is False
+        assert table.c.chunk_version_id.nullable is True
         actual = {
             (element.parent.name, element.column.table.name, element.column.name)
             for constraint in table.constraints
@@ -75,10 +82,15 @@ def test_metadata_has_chunk_owned_assignment_tables_with_dictionary_foreign_keys
         }
         assert actual == {
             ("chunk_uuid", "semantic_chunks", "id"),
+            ("chunk_version_id", "semantic_chunk_versions", "id"),
             (column, dictionary_table, "id"),
         }
         assert any(element.ondelete == "CASCADE" for element in table.foreign_keys if element.parent.name == "chunk_uuid")
+        assert any(element.ondelete == "SET NULL" for element in table.foreign_keys if element.parent.name == "chunk_version_id")
         assert set(_index(table, f"ix_{table_name}_{column}").columns) == {table.c[column]}
+        assert set(_index(table, f"ix_{table_name}_chunk_version_id").columns) == {
+            table.c.chunk_version_id,
+        }
 
 
 def test_0009_creates_assignment_tables_and_backfills_from_semantic_chunk_columns() -> None:

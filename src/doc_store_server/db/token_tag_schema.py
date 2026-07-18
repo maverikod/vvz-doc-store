@@ -34,6 +34,7 @@ class SemanticChunkToken(Base):
             name="uq_semantic_chunk_tokens_identity",
         ),
         Index("ix_semantic_chunk_tokens_chunk_kind_ordinal", "chunk_uuid", "token_kind", "ordinal"),
+        Index("ix_semantic_chunk_tokens_chunk_version_id", "chunk_version_id"),
         Index("ix_semantic_chunk_tokens_kind_value", "token_kind", "token_value"),
     )
 
@@ -41,6 +42,9 @@ class SemanticChunkToken(Base):
         UUID4,
         ForeignKey("semantic_chunks.id", ondelete="CASCADE"),
         primary_key=True,
+    )
+    chunk_version_id: Mapped[UUID | None] = mapped_column(
+        UUID4, ForeignKey("semantic_chunk_versions.id", ondelete="SET NULL")
     )
     token_kind: Mapped[TokenKind] = mapped_column(Text, primary_key=True)
     ordinal: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -59,6 +63,7 @@ class SemanticChunkTag(Base):
             "chunk_uuid", "ordinal", name="uq_semantic_chunk_tags_identity"
         ),
         Index("ix_semantic_chunk_tags_chunk_ordinal", "chunk_uuid", "ordinal"),
+        Index("ix_semantic_chunk_tags_chunk_version_id", "chunk_version_id"),
         Index("ix_semantic_chunk_tags_value", "tag_value"),
     )
 
@@ -66,6 +71,9 @@ class SemanticChunkTag(Base):
         UUID4,
         ForeignKey("semantic_chunks.id", ondelete="CASCADE"),
         primary_key=True,
+    )
+    chunk_version_id: Mapped[UUID | None] = mapped_column(
+        UUID4, ForeignKey("semantic_chunk_versions.id", ondelete="SET NULL")
     )
     ordinal: Mapped[int] = mapped_column(Integer, primary_key=True)
     tag_value: Mapped[str] = mapped_column(Text, nullable=False)

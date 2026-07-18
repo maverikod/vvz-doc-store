@@ -13,9 +13,16 @@ from mcp_proxy_adapter.commands.hooks import (
 
 from doc_store_server.commands.chunk_query_search_command import ChunkQuerySearchCommand
 from doc_store_server.commands.chunk_version_commands import (
+    ChunkHistoryCommand,
+    ChunkVersionAddCommand,
     ChunkVersionDeleteCommand,
+    ChunkVersionDiffCommand,
+    ChunkVersionGetCommand,
     ChunkVersionListCommand,
+    ChunkVersionRestoreCommand,
+    ChunkVersionRetireCommand,
     ChunkVersionSetCurrentCommand,
+    ChunkVersionUpdateCommand,
 )
 from doc_store_server.commands.corpus_audit_command import CorpusAuditCommand
 from doc_store_server.commands.document_delete_command import DocumentDeleteCommand
@@ -196,12 +203,68 @@ DOC_STORE_COMMAND_MANIFEST: Final[tuple[CommandManifestEntry, ...]] = (
         "ChunkVersionListCommand.get_schema",
     ),
     CommandManifestEntry(
+        "chunk_history",
+        ChunkHistoryCommand,
+        "doc_store_server.commands.chunk_version_commands",
+        "sync",
+        "ChunkHistoryCommand.metadata",
+        "ChunkHistoryCommand.get_schema",
+    ),
+    CommandManifestEntry(
+        "chunk_version_get",
+        ChunkVersionGetCommand,
+        "doc_store_server.commands.chunk_version_commands",
+        "sync",
+        "ChunkVersionGetCommand.metadata",
+        "ChunkVersionGetCommand.get_schema",
+    ),
+    CommandManifestEntry(
+        "chunk_version_add",
+        ChunkVersionAddCommand,
+        "doc_store_server.commands.chunk_version_commands",
+        "sync",
+        "ChunkVersionAddCommand.metadata",
+        "ChunkVersionAddCommand.get_schema",
+    ),
+    CommandManifestEntry(
+        "chunk_version_update",
+        ChunkVersionUpdateCommand,
+        "doc_store_server.commands.chunk_version_commands",
+        "sync",
+        "ChunkVersionUpdateCommand.metadata",
+        "ChunkVersionUpdateCommand.get_schema",
+    ),
+    CommandManifestEntry(
         "chunk_version_set_current",
         ChunkVersionSetCurrentCommand,
         "doc_store_server.commands.chunk_version_commands",
         "sync",
         "ChunkVersionSetCurrentCommand.metadata",
         "ChunkVersionSetCurrentCommand.get_schema",
+    ),
+    CommandManifestEntry(
+        "chunk_version_restore",
+        ChunkVersionRestoreCommand,
+        "doc_store_server.commands.chunk_version_commands",
+        "sync",
+        "ChunkVersionRestoreCommand.metadata",
+        "ChunkVersionRestoreCommand.get_schema",
+    ),
+    CommandManifestEntry(
+        "chunk_version_retire",
+        ChunkVersionRetireCommand,
+        "doc_store_server.commands.chunk_version_commands",
+        "sync",
+        "ChunkVersionRetireCommand.metadata",
+        "ChunkVersionRetireCommand.get_schema",
+    ),
+    CommandManifestEntry(
+        "chunk_version_diff",
+        ChunkVersionDiffCommand,
+        "doc_store_server.commands.chunk_version_commands",
+        "sync",
+        "ChunkVersionDiffCommand.metadata",
+        "ChunkVersionDiffCommand.get_schema",
     ),
     CommandManifestEntry(
         "chunk_version_delete",
@@ -402,9 +465,16 @@ register_custom_commands_hook(register_doc_store_commands)
 
 __all__ = [
     "ChunkQuerySearchCommand",
+    "ChunkHistoryCommand",
+    "ChunkVersionAddCommand",
     "ChunkVersionDeleteCommand",
+    "ChunkVersionDiffCommand",
+    "ChunkVersionGetCommand",
     "ChunkVersionListCommand",
+    "ChunkVersionRestoreCommand",
+    "ChunkVersionRetireCommand",
     "ChunkVersionSetCurrentCommand",
+    "ChunkVersionUpdateCommand",
     "CommandManifestEntry",
     "CorpusAuditCommand",
     "DOC_STORE_COMMAND_MANIFEST",
