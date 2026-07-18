@@ -526,6 +526,23 @@ class ChunkTextVersionService:
             "DELETE FROM semantic_chunk_tokens WHERE chunk_uuid = :chunk_uuid",
             "DELETE FROM semantic_chunk_tags WHERE chunk_uuid = :chunk_uuid",
             "UPDATE semantic_chunk_embeddings SET active = FALSE WHERE entity_type = 'semantic_chunk' AND entity_id = :chunk_uuid",
+            "UPDATE semantic_chunk_embeddings SET active = FALSE "
+            "WHERE entity_type = 'paragraph' AND entity_id IN "
+            "(SELECT paragraph_id FROM semantic_chunks WHERE id = :chunk_uuid)",
+            "UPDATE semantic_chunk_embeddings SET active = FALSE "
+            "WHERE entity_type = 'document' AND entity_id IN "
+            "(SELECT document_id FROM semantic_chunks WHERE id = :chunk_uuid)",
+            "UPDATE semantic_chunk_embeddings SET active = FALSE "
+            "WHERE entity_type = 'file' AND entity_id IN "
+            "(SELECT d.owner_id FROM semantic_chunks AS sc "
+            "JOIN documents AS d ON d.id = sc.document_id "
+            "WHERE sc.id = :chunk_uuid AND d.owner_id IS NOT NULL)",
+            "UPDATE documents SET needs_revectorize = TRUE, updated_at = now() "
+            "WHERE id IN (SELECT document_id FROM semantic_chunks WHERE id = :chunk_uuid)",
+            "UPDATE files SET needs_revectorize = TRUE, updated_at = now() "
+            "WHERE id IN (SELECT d.owner_id FROM semantic_chunks AS sc "
+            "JOIN documents AS d ON d.id = sc.document_id "
+            "WHERE sc.id = :chunk_uuid AND d.owner_id IS NOT NULL)",
         ):
             connection.execute(text(statement), {"chunk_uuid": chunk_uuid})
 

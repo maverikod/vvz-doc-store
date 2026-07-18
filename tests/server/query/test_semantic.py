@@ -145,6 +145,8 @@ def test_semantic_sql_selects_only_active_compatible_vectors_and_binds_typed_pre
     assert "sce.active IS TRUE" in sql
     assert "sce.model = :embedding_model" in sql
     assert "sce.dimension = :embedding_dimension" in sql
+    assert "JOIN semantic_chunk_current AS scc ON scc.chunk_uuid = sc.id" in sql
+    assert "sce.chunk_version_id = scc.version_id" in sql
     assert "sc.deleted_at IS NULL" in sql
     assert "sc.block_meta @> CAST(:p0 AS jsonb)" in sql
     assert "bt.descr = :p1" in sql

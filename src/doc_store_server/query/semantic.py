@@ -182,7 +182,7 @@ def _statement(plan: ExecutionPlan, vector: tuple[float, ...], *, model: str, di
     predicates = _predicate_sql(plan, params)
     where = [
         "sc.deleted_at IS NULL", "sce.active IS TRUE", "sce.model = :embedding_model",
-        "sce.dimension = :embedding_dimension", *predicates,
+        "sce.dimension = :embedding_dimension", "sce.chunk_version_id = scc.version_id", *predicates,
     ]
     if plan.min_score is not None:
         params["min_score"] = plan.min_score
@@ -201,6 +201,7 @@ def _statement(plan: ExecutionPlan, vector: tuple[float, ...], *, model: str, di
                (1.0 - (sce.vector <=> CAST(:query_vector AS vector))) AS semantic_score
         FROM semantic_chunks AS sc
         {CHUNK_TEXT_JOIN_SQL}
+        JOIN semantic_chunk_current AS scc ON scc.chunk_uuid = sc.id
         JOIN semantic_chunk_embeddings AS sce ON sce.chunk_uuid = sc.id
         JOIN documents AS d ON d.id = sc.document_id
         {CLASSIFIER_JOIN_SQL}

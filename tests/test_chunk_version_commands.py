@@ -25,6 +25,7 @@ from doc_store_server.runtime.chunk_versions import (
     CURRENT_VERSION_RETIRE_CODE,
     LAST_VERSION_DELETE_CODE,
     ChunkTextVersionError,
+    ChunkTextVersionService,
 )
 
 
@@ -485,3 +486,24 @@ def test_chunk_version_internal_error_maps_stably(command: Any) -> None:
     result = asyncio.run(command.execute(**kwargs, context={"chunk_version_boundary": boundary}))
 
     assert _error_code(result) == "INTERNAL_ERROR"
+
+
+def test_chunk_version_activation_invalidates_derived_embeddings_and_marks_parent_entities() -> None:
+    class _Connection:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def execute(self, statement: Any, _params: dict[str, Any]) -> None:
+            self.calls.append(str(statement))
+
+    connection = _Connection()
+
+    ChunkTextVersionService._invalidate_derived_rows(connection, CHUNK_ID)
+
+    sql = "\n".join(connection.calls)
+    assert "UPDATE semantic_chunk_embeddings SET active = FALSE WHERE entity_type = 'semantic_chunk'" in sql
+    assert "WHERE entity_type = 'paragraph'" in sql
+    assert "WHERE entity_type = 'document'" in sql
+    assert "WHERE entity_type = 'file'" in sql
+    assert "UPDATE documents SET needs_revectorize = TRUE" in sql
+    assert "UPDATE files SET needs_revectorize = TRUE" in sql

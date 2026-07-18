@@ -334,10 +334,12 @@ async def _hierarchical_primary_candidates(
                    1.0 - (sce.vector <=> CAST(:query_vector AS vector)) AS score
             FROM semantic_chunk_embeddings AS sce
             JOIN semantic_chunks AS sc ON sc.id = sce.entity_id
+            JOIN semantic_chunk_current AS scc ON scc.chunk_uuid = sc.id
             JOIN semantic_chunk_texts AS sct ON sct.chunk_uuid = sc.id
             JOIN documents AS d ON d.id = sc.document_id
             WHERE sce.entity_type = 'semantic_chunk' AND sce.active IS TRUE
               AND sce.model = :model AND sce.dimension = :dimension
+              AND sce.chunk_version_id = scc.version_id
               AND sc.deleted_at IS NULL
             UNION ALL
             SELECT 'paragraph'::text AS level, p.id, p.document_id, d.owner_id AS file_id,
@@ -431,10 +433,12 @@ async def _hierarchical_children(
                    1.0 - (sce.vector <=> CAST(:query_vector AS vector)) AS score
             FROM semantic_chunk_embeddings AS sce
             JOIN semantic_chunks AS sc ON sc.id = sce.entity_id
+            JOIN semantic_chunk_current AS scc ON scc.chunk_uuid = sc.id
             JOIN semantic_chunk_texts AS sct ON sct.chunk_uuid = sc.id
             JOIN documents AS d ON d.id = sc.document_id
             WHERE sce.entity_type = 'semantic_chunk' AND sce.active IS TRUE
               AND sce.model = :model AND sce.dimension = :dimension
+              AND sce.chunk_version_id = scc.version_id
               AND sc.deleted_at IS NULL
             UNION ALL
             SELECT 'paragraph'::text AS level, p.id, p.document_id, d.owner_id AS file_id,

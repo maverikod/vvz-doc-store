@@ -6,7 +6,12 @@ from typing import Any
 from chunk_metadata_adapter import ChunkQuery
 
 from doc_store_server.query.compiler import ExecutionMode, compile_query
-from doc_store_server.query.runtime_boundary import RuntimeSearchBoundary, _semantic_refinement_options
+from doc_store_server.query.runtime_boundary import (
+    RuntimeSearchBoundary,
+    _hierarchical_children,
+    _hierarchical_primary_candidates,
+    _semantic_refinement_options,
+)
 from doc_store_server.runtime.embedding_config import RuntimeEmbeddingConfig
 from doc_store_server.runtime.search_config import runtime_search_config
 
@@ -234,3 +239,34 @@ def test_runtime_structured_search_filters_classifier_fields() -> None:
         "en",
         "needs_review",
     ]
+
+
+def test_hierarchical_semantic_search_uses_current_chunk_version_vectors() -> None:
+    session = _Session()
+
+    asyncio.run(
+        _hierarchical_primary_candidates(
+            session,
+            vector_value="[0.1,0.2,0.3]",
+            model="model-a",
+            dimension=3,
+            threshold=0.1,
+            limit=10,
+        )
+    )
+    asyncio.run(
+        _hierarchical_children(
+            session,
+            vector_value="[0.1,0.2,0.3]",
+            model="model-a",
+            dimension=3,
+            threshold=0.1,
+            limit=10,
+            paragraph_id="550e8400-e29b-41d4-a716-446655440000",
+        )
+    )
+
+    for statement, _params in session.calls:
+        sql = str(statement)
+        assert "JOIN semantic_chunk_current AS scc ON scc.chunk_uuid = sc.id" in sql
+        assert "sce.chunk_version_id = scc.version_id" in sql
