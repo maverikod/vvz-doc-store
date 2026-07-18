@@ -12,6 +12,11 @@ import pytest
 
 from doc_store_server.commands import registration
 from doc_store_server.commands.chunk_query_search_command import ChunkQuerySearchCommand
+from doc_store_server.commands.chunk_version_commands import (
+    ChunkVersionDeleteCommand,
+    ChunkVersionListCommand,
+    ChunkVersionSetCurrentCommand,
+)
 from doc_store_server.commands.corpus_audit_command import CorpusAuditCommand
 from doc_store_server.commands.document_delete_command import DocumentDeleteCommand
 from doc_store_server.commands.document_export_command import DocumentExportCommand
@@ -69,6 +74,9 @@ EXPECTED_COMMANDS = {
     "document_export": (DocumentExportCommand, "sync"),
     "chapter_text_get": (ChapterTextGetCommand, "sync"),
     "source_file_reconstruct": (SourceFileReconstructCommand, "sync"),
+    "chunk_version_list": (ChunkVersionListCommand, "sync"),
+    "chunk_version_set_current": (ChunkVersionSetCurrentCommand, "sync"),
+    "chunk_version_delete": (ChunkVersionDeleteCommand, "sync"),
     "document_rebind": (DocumentRebindCommand, "sync"),
     "processing_status": (ProcessingStatusCommand, "sync"),
     "document_delete": (DocumentDeleteCommand, "sync"),
@@ -367,6 +375,17 @@ class FakeLifecycle:
         return {"entity_type": "documents", "id": kwargs["entity_id"], "tree": {"id": kwargs["entity_id"], "preview": "", "children": []}}
 
 
+class FakeChunkVersionBoundary:
+    def list_versions(self, *, chunk_id: str) -> dict[str, Any]:
+        return {"chunk_id": chunk_id, "items": [], "total": 0}
+
+    def set_current(self, *, chunk_id: str, version_no: int) -> dict[str, Any]:
+        return {"chunk_id": chunk_id, "version_no": version_no, "outcome": "updated"}
+
+    def delete_version(self, *, chunk_id: str, version_no: int) -> dict[str, Any]:
+        return {"chunk_id": chunk_id, "version_no": version_no, "outcome": "deleted"}
+
+
 @pytest.mark.parametrize(
     ("command_class", "params", "context"),
     [
@@ -380,6 +399,9 @@ class FakeLifecycle:
         (DocumentExportCommand, {"document_id": "550e8400-e29b-41d4-a716-446655440001", "path": "/tmp/doc.txt"}, {"document_export_boundary": FakeExport()}),
         (ChapterTextGetCommand, {"chapter_id": "550e8400-e29b-41d4-a716-446655440003"}, {"text_reconstruction_boundary": FakeTextReconstruction()}),
         (SourceFileReconstructCommand, {"document_id": "550e8400-e29b-41d4-a716-446655440001"}, {"text_reconstruction_boundary": FakeTextReconstruction()}),
+        (ChunkVersionListCommand, {"chunk_id": "550e8400-e29b-41d4-a716-446655440005"}, {"chunk_version_boundary": FakeChunkVersionBoundary()}),
+        (ChunkVersionSetCurrentCommand, {"chunk_id": "550e8400-e29b-41d4-a716-446655440005", "version_no": 2}, {"chunk_version_boundary": FakeChunkVersionBoundary()}),
+        (ChunkVersionDeleteCommand, {"chunk_id": "550e8400-e29b-41d4-a716-446655440005", "version_no": 2}, {"chunk_version_boundary": FakeChunkVersionBoundary()}),
         (
             DocumentRebindCommand,
             {
@@ -454,6 +476,9 @@ def test_runtime_configuration_installs_retrieval_boundary(monkeypatch: pytest.M
     monkeypatch.setattr(ParagraphGetByNumberCommand, "retrieval_boundary", None)
     monkeypatch.setattr(ProcessingStatusCommand, "runtime_status_boundary", None)
     monkeypatch.setattr(ChunkQuerySearchCommand, "search_orchestrator", None)
+    monkeypatch.setattr(ChunkVersionListCommand, "chunk_version_boundary", None)
+    monkeypatch.setattr(ChunkVersionSetCurrentCommand, "chunk_version_boundary", None)
+    monkeypatch.setattr(ChunkVersionDeleteCommand, "chunk_version_boundary", None)
     for command in (
         EntityCreateCommand,
         EntityListCommand,
@@ -475,6 +500,7 @@ def test_runtime_configuration_installs_retrieval_boundary(monkeypatch: pytest.M
     monkeypatch.setattr(main, "installed_text_reconstruction_service", lambda _config: boundary)
     monkeypatch.setattr(main, "installed_document_service", lambda _config: boundary)
     monkeypatch.setattr(main, "installed_vectorization_service", lambda _config: boundary)
+    monkeypatch.setattr(main, "installed_chunk_text_version_service", lambda _config: boundary)
 
     main.configure_runtime_boundaries({"database": {"url": "postgresql://example/db"}})
 
@@ -486,6 +512,9 @@ def test_runtime_configuration_installs_retrieval_boundary(monkeypatch: pytest.M
     assert ChapterTextGetCommand.reconstruction_boundary is boundary
     assert SourceFileReconstructCommand.reconstruction_boundary is boundary
     assert DocumentDeleteCommand.document_service is boundary
+    assert ChunkVersionListCommand.chunk_version_boundary is boundary
+    assert ChunkVersionSetCurrentCommand.chunk_version_boundary is boundary
+    assert ChunkVersionDeleteCommand.chunk_version_boundary is boundary
     assert EntityCreateCommand.lifecycle_boundary is boundary
     assert EntityListCommand.lifecycle_boundary is boundary
     assert EntityUpdateCommand.lifecycle_boundary is boundary

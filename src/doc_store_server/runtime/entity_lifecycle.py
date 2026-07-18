@@ -913,6 +913,34 @@ def _replace_semantic_chunk_text(
     text_sha256 = hashlib.sha256(text_value.encode("utf-8")).hexdigest()
     status_id = _dictionary_id(connection, "chunk_statuses", RESET_STATUS)
     category_id = _dictionary_id(connection, "categories", RESET_CATEGORY)
+    version_id = connection.execute(
+        text(
+            "INSERT INTO semantic_chunk_versions "
+            "(chunk_uuid, version_no, text, text_sha256, char_count, block_meta) "
+            "VALUES ("
+            ":chunk_uuid, "
+            "COALESCE((SELECT MAX(version_no) + 1 "
+            "FROM semantic_chunk_versions WHERE chunk_uuid = :chunk_uuid), 1), "
+            ":text, :text_sha256, :char_count, CAST(:block_meta AS jsonb)) "
+            "RETURNING id"
+        ),
+        {
+            "chunk_uuid": chunk_uuid,
+            "text": text_value,
+            "text_sha256": text_sha256,
+            "char_count": len(text_value),
+            "block_meta": json.dumps(text_meta, ensure_ascii=False),
+        },
+    ).scalar_one()
+    connection.execute(
+        text(
+            "INSERT INTO semantic_chunk_current (chunk_uuid, version_id) "
+            "VALUES (:chunk_uuid, :version_id) "
+            "ON CONFLICT (chunk_uuid) DO UPDATE SET "
+            "version_id = EXCLUDED.version_id, updated_at = now()"
+        ),
+        {"chunk_uuid": chunk_uuid, "version_id": version_id},
+    )
     connection.execute(
         text(
             "UPDATE semantic_chunks SET text = '', char_count = :char_count, "

@@ -722,6 +722,14 @@ class RuntimeIngestionBoundary:
                                 "block_meta": json.dumps(chunk_meta),
                             },
                         )
+                        _insert_semantic_chunk_initial_version(
+                            connection,
+                            chunk_id,
+                            text_value=sentence_text,
+                            text_sha256=hashlib.sha256(sentence_text.encode("utf-8")).hexdigest(),
+                            char_count=len(sentence_text),
+                            block_meta=json.dumps(chunk_meta),
+                        )
                         _upsert_semantic_chunk_classifier_assignments(
                             connection,
                             chunk_id,
@@ -1411,6 +1419,51 @@ def _insert_semantic_chunk_default_metrics(connection: Any, chunk_id: UUID) -> N
             "VALUES (:chunk_uuid, 0, 0, 0)"
         ),
         {"chunk_uuid": chunk_id},
+    )
+
+
+def _insert_semantic_chunk_initial_version(
+    connection: Any,
+    chunk_id: UUID,
+    *,
+    text_value: str,
+    text_sha256: str,
+    char_count: int,
+    block_meta: str,
+) -> None:
+    """Seed immutable version 1 and the current pointer for a new chunk."""
+
+    version_id = connection.execute(
+        text(
+            "WITH inserted AS ("
+            "INSERT INTO semantic_chunk_versions "
+            "(chunk_uuid, version_no, text, text_sha256, char_count, block_meta) "
+            "VALUES (:chunk_uuid, 1, :body, :text_sha256, :char_count, "
+            "CAST(:block_meta AS jsonb)) "
+            "ON CONFLICT (chunk_uuid, version_no) DO NOTHING "
+            "RETURNING id"
+            "), existing AS ("
+            "SELECT id FROM semantic_chunk_versions "
+            "WHERE chunk_uuid = :chunk_uuid AND version_no = 1"
+            ") "
+            "SELECT id FROM inserted UNION ALL SELECT id FROM existing LIMIT 1"
+        ),
+        {
+            "chunk_uuid": chunk_id,
+            "body": text_value,
+            "text_sha256": text_sha256,
+            "char_count": char_count,
+            "block_meta": block_meta,
+        },
+    ).scalar_one()
+    connection.execute(
+        text(
+            "INSERT INTO semantic_chunk_current (chunk_uuid, version_id) "
+            "VALUES (:chunk_uuid, :version_id) "
+            "ON CONFLICT (chunk_uuid) DO UPDATE SET "
+            "version_id = EXCLUDED.version_id, updated_at = now()"
+        ),
+        {"chunk_uuid": chunk_id, "version_id": version_id},
     )
 
 

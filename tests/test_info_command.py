@@ -200,6 +200,55 @@ def test_info_text_documents_bm25_and_owner_tree_commands(registry: RegistryFixt
     assert "review_status='machine'" in serialized
 
 
+def test_info_documents_release_verification_discipline_for_chunk_versions(
+    registry: RegistryFixture,
+) -> None:
+    """Keep release verification documentation aligned with the versioning API."""
+
+    serialized = str(build_info_document(registry).as_data()).lower()
+
+    required_terms = (
+        "releaseverificationdiscipline",
+        "chunk_version_list",
+        "chunk_version_set_current",
+        "chunk_version_delete",
+        "semantic_chunk_versions",
+        "semantic_chunk_current",
+        "semantic_chunk_texts",
+        "current projection",
+        "stable errors",
+        "version_not_found",
+        "last_version_delete_requires_chunk_delete",
+        "deletion rules",
+        "invalidation",
+        "metadata",
+        "schema",
+        "chunk_id",
+        "version_no",
+        "text_sha256",
+        "char_count",
+        "block_meta",
+        "is_current",
+        "example",
+        "paragraph change-log",
+        "document change-log",
+        "file change-log",
+    )
+    missing = [term for term in required_terms if term not in serialized]
+    assert not missing, f"info is missing chunk-version documentation: {missing}"
+
+    for command in (
+        "chunk_version_list",
+        "chunk_version_set_current",
+        "chunk_version_delete",
+    ):
+        assert command in serialized
+
+    assert "semantic_chunk_texts" in serialized
+    assert "semantic_chunk_current" in serialized
+    assert "semantic_chunk_versions" in serialized
+
+
 def test_unknown_section_has_documented_stable_error() -> None:
     result = asyncio.run(InfoCommand().execute(section="not_a_real_section"))
 

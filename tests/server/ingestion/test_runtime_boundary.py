@@ -15,6 +15,7 @@ from doc_store_server.ingestion.runtime_boundary import (
     _chunk_features,
     _clear_reprocessing_flags,
     _insert_semantic_chunk_default_metrics,
+    _insert_semantic_chunk_initial_version,
     _mark_existing_hierarchy_deleted,
     _sentence_chunks_from_paragraph_batch,
     _sentence_chunks_for_paragraph,
@@ -266,6 +267,55 @@ def test_runtime_default_metrics_preserve_quality_for_later_worker() -> None:
     assert "INSERT INTO semantic_chunk_feedback" in feedback_sql
     assert "VALUES (:chunk_uuid, 0, 0, 0)" in feedback_sql
     assert feedback_params == {"chunk_uuid": chunk_id}
+
+
+class _ScalarOneResult:
+    def __init__(self, value: object) -> None:
+        self._value = value
+
+    def scalar_one(self) -> object:
+        return self._value
+
+
+def test_runtime_ingestion_seeds_initial_semantic_chunk_version() -> None:
+    chunk_id = uuid4()
+    version_id = uuid4()
+
+    class RecordingConnection:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, object]]] = []
+
+        def execute(self, statement: object, params: dict[str, object]) -> object:
+            self.calls.append((str(statement), params))
+            return _ScalarOneResult(version_id if len(self.calls) == 1 else None)
+
+    connection = RecordingConnection()
+
+    _insert_semantic_chunk_initial_version(
+        connection,  # type: ignore[arg-type]
+        chunk_id,
+        text_value="Initial sentence.",
+        text_sha256="a" * 64,
+        char_count=17,
+        block_meta='{"role":"system"}',
+    )
+
+    version_sql, version_params = connection.calls[0]
+    current_sql, current_params = connection.calls[1]
+    assert "INSERT INTO semantic_chunk_versions" in version_sql
+    assert "version_no, text, text_sha256, char_count, block_meta" in version_sql
+    assert "VALUES (:chunk_uuid, 1, :body, :text_sha256, :char_count" in version_sql
+    assert "ON CONFLICT (chunk_uuid, version_no) DO NOTHING" in version_sql
+    assert version_params == {
+        "chunk_uuid": chunk_id,
+        "body": "Initial sentence.",
+        "text_sha256": "a" * 64,
+        "char_count": 17,
+        "block_meta": '{"role":"system"}',
+    }
+    assert "INSERT INTO semantic_chunk_current" in current_sql
+    assert "ON CONFLICT (chunk_uuid) DO UPDATE SET" in current_sql
+    assert current_params == {"chunk_uuid": chunk_id, "version_id": version_id}
 
 
 class _ScalarResult:

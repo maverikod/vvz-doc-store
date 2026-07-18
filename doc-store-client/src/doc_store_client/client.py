@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import is_dataclass
-from typing import Any, ClassVar, Mapping, Protocol, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, Mapping, Protocol, TypeVar
 
 from chunk_metadata_adapter import ChunkQuery
 
@@ -47,6 +47,16 @@ from .models import (
     TextReconstructionResult,
 )
 
+if TYPE_CHECKING:
+    from .models import (
+        ChunkVersionDeleteRequest,
+        ChunkVersionDeleteResult,
+        ChunkVersionListRequest,
+        ChunkVersionListResult,
+        ChunkVersionSetCurrentRequest,
+        ChunkVersionSetCurrentResult,
+    )
+
 DOC_STORE_COMMANDS: tuple[str, ...] = (
     "echo",
     "long_task",
@@ -72,6 +82,9 @@ DOC_STORE_COMMANDS: tuple[str, ...] = (
     "document_export",
     "chapter_text_get",
     "source_file_reconstruct",
+    "chunk_version_list",
+    "chunk_version_set_current",
+    "chunk_version_delete",
     "document_rebind",
     "processing_status",
     "document_delete",
@@ -268,6 +281,21 @@ class DocStoreClient:
         self, params: Mapping[str, Any] | None = None, **kwargs: Any
     ) -> Any:
         return await self.call("source_file_reconstruct", params, **kwargs)
+
+    async def chunk_version_list(
+        self, params: Mapping[str, Any] | None = None, **kwargs: Any
+    ) -> Any:
+        return await self.call("chunk_version_list", params, **kwargs)
+
+    async def chunk_version_set_current(
+        self, params: Mapping[str, Any] | None = None, **kwargs: Any
+    ) -> Any:
+        return await self.call("chunk_version_set_current", params, **kwargs)
+
+    async def chunk_version_delete(
+        self, params: Mapping[str, Any] | None = None, **kwargs: Any
+    ) -> Any:
+        return await self.call("chunk_version_delete", params, **kwargs)
 
     async def document_rebind(
         self, params: Mapping[str, Any] | None = None, **kwargs: Any
@@ -498,6 +526,36 @@ class DocStoreClient:
             TextReconstructionResult,
         )
 
+    async def list_chunk_versions(
+        self,
+        request: "ChunkVersionListRequest",
+    ) -> "ChunkVersionListResult":
+        return await self._execute(
+            "chunk_version_list",
+            request.to_params(),
+            _model_type("ChunkVersionListResult"),
+        )
+
+    async def set_current_chunk_version(
+        self,
+        request: "ChunkVersionSetCurrentRequest",
+    ) -> "ChunkVersionSetCurrentResult":
+        return await self._execute(
+            "chunk_version_set_current",
+            request.to_params(),
+            _model_type("ChunkVersionSetCurrentResult"),
+        )
+
+    async def delete_chunk_version(
+        self,
+        request: "ChunkVersionDeleteRequest",
+    ) -> "ChunkVersionDeleteResult":
+        return await self._execute(
+            "chunk_version_delete",
+            request.to_params(),
+            _model_type("ChunkVersionDeleteResult"),
+        )
+
     async def get_paragraph(self, request: ParagraphGetRequest) -> ParagraphGetResult:
         return await self._execute("paragraph_get", request.to_params(), ParagraphGetResult)
 
@@ -611,6 +669,14 @@ def _merge_params(
         raise ValueError(f"duplicate parameters: {', '.join(duplicate)}")
     result.update(kwargs)
     return result
+
+
+def _model_type(name: str) -> type[Any]:
+    """Resolve concurrently added public models without importing them eagerly."""
+
+    from . import models
+
+    return getattr(models, name)
 
 
 def _unwrap_response(response: Any, *, expect_mapping: bool = False) -> Any:

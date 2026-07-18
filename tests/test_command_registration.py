@@ -13,6 +13,11 @@ import pytest
 
 from doc_store_server.commands import registration
 from doc_store_server.commands.chunk_query_search_command import ChunkQuerySearchCommand
+from doc_store_server.commands.chunk_version_commands import (
+    ChunkVersionDeleteCommand,
+    ChunkVersionListCommand,
+    ChunkVersionSetCurrentCommand,
+)
 from doc_store_server.commands.corpus_audit_command import CorpusAuditCommand
 from doc_store_server.commands.document_delete_command import DocumentDeleteCommand
 from doc_store_server.commands.document_export_command import DocumentExportCommand
@@ -209,6 +214,30 @@ def test_manifest_has_exact_command_identity_and_registration_shape() -> None:
             "sync",
             "SourceFileReconstructCommand.metadata",
             "SourceFileReconstructCommand.get_schema",
+        ),
+        (
+            "chunk_version_list",
+            ChunkVersionListCommand,
+            "doc_store_server.commands.chunk_version_commands",
+            "sync",
+            "ChunkVersionListCommand.metadata",
+            "ChunkVersionListCommand.get_schema",
+        ),
+        (
+            "chunk_version_set_current",
+            ChunkVersionSetCurrentCommand,
+            "doc_store_server.commands.chunk_version_commands",
+            "sync",
+            "ChunkVersionSetCurrentCommand.metadata",
+            "ChunkVersionSetCurrentCommand.get_schema",
+        ),
+        (
+            "chunk_version_delete",
+            ChunkVersionDeleteCommand,
+            "doc_store_server.commands.chunk_version_commands",
+            "sync",
+            "ChunkVersionDeleteCommand.metadata",
+            "ChunkVersionDeleteCommand.get_schema",
         ),
         (
             "document_rebind",

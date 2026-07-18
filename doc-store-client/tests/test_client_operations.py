@@ -15,6 +15,12 @@ from doc_store_client.models import (
     ChapterGetRequest,
     ChapterGetResult,
     ChapterTextGetRequest,
+    ChunkVersionDeleteRequest,
+    ChunkVersionDeleteResult,
+    ChunkVersionListRequest,
+    ChunkVersionListResult,
+    ChunkVersionSetCurrentRequest,
+    ChunkVersionSetCurrentResult,
     DocumentChunkRequest,
     DocumentChunkResult,
     DocumentCreateRequest,
@@ -262,6 +268,75 @@ def test_document_write_result_preserves_runtime_extra_fields_in_details() -> No
             },
         ),
         (
+            "list_chunk_versions",
+            ChunkVersionListRequest(
+                chunk_id="550e8400-e29b-41d4-a716-446655440000",
+                limit=25,
+                offset=50,
+            ),
+            "chunk_version_list",
+            {
+                "chunk_id": "550e8400-e29b-41d4-a716-446655440000",
+                "limit": 25,
+                "offset": 50,
+            },
+            ChunkVersionListResult,
+            {
+                "chunk_id": "550e8400-e29b-41d4-a716-446655440000",
+                "items": [
+                    {
+                        "version_no": 1,
+                        "preview": "first version",
+                        "current": False,
+                    }
+                ],
+                "total": 1,
+                "limit": 25,
+                "offset": 50,
+            },
+        ),
+        (
+            "set_current_chunk_version",
+            ChunkVersionSetCurrentRequest(
+                chunk_id="550e8400-e29b-41d4-a716-446655440000",
+                version_no=2,
+            ),
+            "chunk_version_set_current",
+            {
+                "chunk_id": "550e8400-e29b-41d4-a716-446655440000",
+                "version_no": 2,
+            },
+            ChunkVersionSetCurrentResult,
+            {
+                "chunk_id": "550e8400-e29b-41d4-a716-446655440000",
+                "outcome": "updated",
+                "version": {
+                    "version_no": 2,
+                    "preview": "current version",
+                    "is_current": True,
+                },
+            },
+        ),
+        (
+            "delete_chunk_version",
+            ChunkVersionDeleteRequest(
+                chunk_id="550e8400-e29b-41d4-a716-446655440000",
+                version_no=1,
+            ),
+            "chunk_version_delete",
+            {
+                "chunk_id": "550e8400-e29b-41d4-a716-446655440000",
+                "version_no": 1,
+            },
+            ChunkVersionDeleteResult,
+            {
+                "chunk_id": "550e8400-e29b-41d4-a716-446655440000",
+                "outcome": "deleted",
+                "deleted_version_no": 1,
+                "current_version_no": 2,
+            },
+        ),
+        (
             "delete_document",
             DocumentDeleteRequest(document_id="doc-001", version_token="token-001"),
             "document_delete",
@@ -452,6 +527,101 @@ async def _test_operations_convert_typed_requests_and_results(
     assert isinstance(result, result_type)
     assert adapter.calls == [(command, payload)]
     assert adapter.execute_count == 1
+
+
+def test_chunk_version_raw_methods_use_exact_commands_and_payloads() -> None:
+    asyncio.run(_test_chunk_version_raw_methods_use_exact_commands_and_payloads())
+
+
+async def _test_chunk_version_raw_methods_use_exact_commands_and_payloads() -> None:
+    assert {
+        "chunk_version_list",
+        "chunk_version_set_current",
+        "chunk_version_delete",
+    }.issubset(DOC_STORE_COMMANDS)
+
+    adapter = FakeAdapter()
+    for command in (
+        "chunk_version_list",
+        "chunk_version_set_current",
+        "chunk_version_delete",
+    ):
+        adapter.responses[command] = {"command": command, "ok": True}
+
+    client = DocStoreClient(adapter)
+    await client.chunk_version_list(
+        params={"chunk_id": "chunk-001", "limit": 10, "offset": 20}
+    )
+    await client.chunk_version_set_current(
+        params={"chunk_id": "chunk-001", "version_no": 2}
+    )
+    await client.chunk_version_delete(
+        params={"chunk_id": "chunk-001", "version_no": 1}
+    )
+
+    assert adapter.calls == [
+        (
+            "chunk_version_list",
+            {"chunk_id": "chunk-001", "limit": 10, "offset": 20},
+        ),
+        (
+            "chunk_version_set_current",
+            {"chunk_id": "chunk-001", "version_no": 2},
+        ),
+        (
+            "chunk_version_delete",
+            {"chunk_id": "chunk-001", "version_no": 1},
+        ),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("model", "kwargs", "message"),
+    [
+        (
+            ChunkVersionListRequest,
+            {"chunk_id": "not-a-uuid"},
+            "chunk_id must be a UUID4",
+        ),
+        (
+            ChunkVersionListRequest,
+            {
+                "chunk_id": "550e8400-e29b-41d4-a716-446655440000",
+                "limit": 0,
+            },
+            "limit must be between 1 and 1000",
+        ),
+        (
+            ChunkVersionListRequest,
+            {
+                "chunk_id": "550e8400-e29b-41d4-a716-446655440000",
+                "offset": -1,
+            },
+            "offset must be between 0 and 10000000",
+        ),
+        (
+            ChunkVersionSetCurrentRequest,
+            {
+                "chunk_id": "550e8400-e29b-41d4-a716-446655440000",
+                "version_no": 0,
+            },
+            "version_no must be a positive integer",
+        ),
+        (
+            ChunkVersionDeleteRequest,
+            {
+                "chunk_id": "550e8400-e29b-41d4-a716-446655440000",
+                "version_no": True,
+            },
+            "version_no must be a positive integer",
+        ),
+    ],
+)
+def test_chunk_version_request_models_reject_invalid_values(
+    model: type[Any], kwargs: dict[str, Any], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        model(**kwargs)
 
 
 @pytest.mark.parametrize("queued", [False, True], ids=["immediate", "adapter-queued"])
@@ -750,6 +920,9 @@ def test_client_facade_has_no_transport_or_server_implementation() -> None:
         "get_chapter",
         "get_chapter_text",
         "reconstruct_source_file",
+        "list_chunk_versions",
+        "set_current_chunk_version",
+        "delete_chunk_version",
         "get_paragraph",
         "get_paragraph_by_number",
         "delete_document",

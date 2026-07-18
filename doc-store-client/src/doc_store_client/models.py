@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, fields
 from typing import Any, ClassVar, Mapping, Self
+from uuid import UUID
 
 from chunk_metadata_adapter import ChunkQuery
 
@@ -154,6 +155,133 @@ class DocumentChunkRequest(PublicModel):
 
 
 DocumentChunkResult = DocumentWriteResult
+
+
+@dataclass(frozen=True, kw_only=True)
+class ChunkVersionItem(PublicModel):
+    """Public summary of one semantic chunk text version."""
+
+    version_no: int
+    preview: str = ""
+    created_at: str | None = None
+    current: bool = False
+    char_count: int = 0
+    text_sha256: str | None = None
+    checksum: str | None = None
+    comment: str | None = None
+
+    def __post_init__(self) -> None:
+        _validate_version_no(self.version_no)
+        if self.char_count < 0:
+            raise ValueError("char_count must be non-negative")
+
+    @classmethod
+    def from_payload(cls, payload: Payload) -> Self:
+        values = dict(payload)
+        if "current" not in values and "is_current" in values:
+            values["current"] = values.pop("is_current")
+        # Set-current returns the runtime row, while list returns the public summary.
+        known = {model_field.name for model_field in fields(cls)}
+        values = {name: values[name] for name in known if name in values}
+        return _read(cls, values)
+
+
+@dataclass(frozen=True, kw_only=True)
+class ChunkVersionListRequest(PublicModel):
+    chunk_id: str
+    limit: int = 100
+    offset: int = 0
+
+    def __post_init__(self) -> None:
+        _validate_uuid4(self.chunk_id, "chunk_id")
+        _validate_version_bounds(self.limit, self.offset)
+
+
+@dataclass(frozen=True, kw_only=True)
+class ChunkVersionListResult(PublicModel):
+    chunk_id: str
+    items: tuple[ChunkVersionItem, ...] = ()
+    total: int = 0
+    limit: int = 100
+    offset: int = 0
+
+    def __post_init__(self) -> None:
+        _validate_uuid4(self.chunk_id, "chunk_id")
+        _validate_version_bounds(self.limit, self.offset)
+        if self.total < 0:
+            raise ValueError("total must be non-negative")
+
+    def to_params(self) -> dict[str, Any]:
+        result = _payload(self)
+        result["items"] = [item.to_payload() for item in self.items]
+        return result
+
+    @classmethod
+    def from_payload(cls, payload: Payload) -> Self:
+        values = dict(payload)
+        values["items"] = tuple(
+            item if isinstance(item, ChunkVersionItem) else ChunkVersionItem.from_payload(item)
+            for item in values.get("items", ())
+        )
+        return _read(cls, values)
+
+
+@dataclass(frozen=True, kw_only=True)
+class ChunkVersionSetCurrentRequest(PublicModel):
+    chunk_id: str
+    version_no: int
+
+    def __post_init__(self) -> None:
+        _validate_uuid4(self.chunk_id, "chunk_id")
+        _validate_version_no(self.version_no)
+
+
+@dataclass(frozen=True, kw_only=True)
+class ChunkVersionSetCurrentResult(PublicModel):
+    chunk_id: str
+    outcome: str
+    version: ChunkVersionItem | None = None
+
+    def __post_init__(self) -> None:
+        _validate_uuid4(self.chunk_id, "chunk_id")
+
+    def to_params(self) -> dict[str, Any]:
+        result = _payload(self)
+        if self.version is not None:
+            result["version"] = self.version.to_payload()
+        return result
+
+    @classmethod
+    def from_payload(cls, payload: Payload) -> Self:
+        values = dict(payload)
+        version = values.get("version")
+        if isinstance(version, Mapping):
+            values["version"] = ChunkVersionItem.from_payload(version)
+        return _read(cls, values)
+
+
+@dataclass(frozen=True, kw_only=True)
+class ChunkVersionDeleteRequest(PublicModel):
+    chunk_id: str
+    version_no: int
+
+    def __post_init__(self) -> None:
+        _validate_uuid4(self.chunk_id, "chunk_id")
+        _validate_version_no(self.version_no)
+
+
+@dataclass(frozen=True, kw_only=True)
+class ChunkVersionDeleteResult(PublicModel):
+    chunk_id: str
+    outcome: str
+    deleted_version_no: int
+    current_version_no: int | None = None
+
+    def __post_init__(self) -> None:
+        _validate_uuid4(self.chunk_id, "chunk_id")
+        _validate_version_no(self.deleted_version_no)
+        if self.current_version_no is not None:
+            _validate_version_no(self.current_version_no)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -540,6 +668,29 @@ def _validate_reconstruction_bounds(max_chars: int, limit: int, offset: int) -> 
         raise ValueError("offset must be non-negative")
 
 
+def _validate_uuid4(value: str, field_name: str) -> None:
+    if not isinstance(value, str):
+        raise ValueError(f"{field_name} must be a UUID4")
+    try:
+        parsed = UUID(value)
+    except (AttributeError, ValueError):
+        raise ValueError(f"{field_name} must be a UUID4") from None
+    if parsed.version != 4:
+        raise ValueError(f"{field_name} must be a UUID4")
+
+
+def _validate_version_no(value: int) -> None:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError("version_no must be a positive integer")
+
+
+def _validate_version_bounds(limit: int, offset: int) -> None:
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1 or limit > 1000:
+        raise ValueError("limit must be between 1 and 1000")
+    if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0 or offset > 10_000_000:
+        raise ValueError("offset must be between 0 and 10000000")
+
+
 def _validate_reconstruction_text_selectors(
     *,
     document_id: str | None,
@@ -701,6 +852,9 @@ class OperationState(PublicModel):
 
 __all__ = [
     "ChapterGetRequest", "ChapterGetResult", "ChapterTextGetRequest", "ChunkQuery",
+    "ChunkVersionDeleteRequest", "ChunkVersionDeleteResult", "ChunkVersionItem",
+    "ChunkVersionListRequest", "ChunkVersionListResult", "ChunkVersionSetCurrentRequest",
+    "ChunkVersionSetCurrentResult",
     "DocumentCreateRequest",
     "DocumentCreateResult", "DocumentChunkRequest", "DocumentChunkResult",
     "DocumentDeleteRequest", "DocumentDeleteResult", "DocumentGetRequest", "DocumentGetResult",

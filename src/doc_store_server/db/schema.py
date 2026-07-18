@@ -387,6 +387,12 @@ class SemanticChunk(EntityCRUDMixin, Base):
     text_payload: Mapped[SemanticChunkText | None] = relationship(
         back_populates="chunk", cascade="all, delete-orphan", uselist=False
     )
+    text_versions: Mapped[list[SemanticChunkVersion]] = relationship(
+        back_populates="chunk", cascade="all, delete-orphan", order_by="SemanticChunkVersion.version_no"
+    )
+    current_text: Mapped[SemanticChunkCurrent | None] = relationship(
+        back_populates="chunk", cascade="all, delete-orphan", uselist=False
+    )
 
 
 class SemanticChunkText(Base):
@@ -413,6 +419,65 @@ class SemanticChunkText(Base):
     block_meta: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
 
     chunk: Mapped[SemanticChunk] = relationship(back_populates="text_payload")
+
+
+class SemanticChunkVersion(Base):
+    """Immutable text history for a semantic chunk, keyed by version number."""
+
+    __tablename__ = "semantic_chunk_versions"
+    __table_args__ = (
+        UniqueConstraint("chunk_uuid", "version_no", name="uq_semantic_chunk_versions_chunk_version"),
+        CheckConstraint("version_no > 0", name="semantic_chunk_versions_version_positive"),
+        CheckConstraint("char_count >= 0", name="semantic_chunk_versions_char_count_nonnegative"),
+        Index("ix_semantic_chunk_versions_chunk_version", "chunk_uuid", "version_no"),
+        Index("ix_semantic_chunk_versions_text_sha256", "text_sha256"),
+    )
+
+    id: Mapped[UUID] = mapped_column(UUID4, primary_key=True, default=uuid4)
+    chunk_uuid: Mapped[UUID] = mapped_column(
+        UUID4, ForeignKey("semantic_chunks.id", ondelete="CASCADE"), nullable=False
+    )
+    version_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    text_sha256: Mapped[str] = mapped_column(String(128), nullable=False)
+    char_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+    block_meta: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+
+    chunk: Mapped[SemanticChunk] = relationship(back_populates="text_versions")
+    current: Mapped[SemanticChunkCurrent | None] = relationship(
+        back_populates="version", uselist=False, viewonly=True
+    )
+
+
+class SemanticChunkCurrent(Base):
+    """Selected active version pointer for a semantic chunk."""
+
+    __tablename__ = "semantic_chunk_current"
+    __table_args__ = (
+        UniqueConstraint("version_id", name="uq_semantic_chunk_current_version_id"),
+        Index("ix_semantic_chunk_current_version_id", "version_id"),
+    )
+
+    chunk_uuid: Mapped[UUID] = mapped_column(
+        UUID4, ForeignKey("semantic_chunks.id", ondelete="CASCADE"), primary_key=True
+    )
+    version_id: Mapped[UUID] = mapped_column(
+        UUID4, ForeignKey("semantic_chunk_versions.id", ondelete="CASCADE"), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    chunk: Mapped[SemanticChunk] = relationship(back_populates="current_text")
+    version: Mapped[SemanticChunkVersion] = relationship(
+        back_populates="current", uselist=False
+    )
 
 
 class SemanticChunkTypeAssignment(Base):
@@ -570,6 +635,8 @@ __all__ = (
     "SemanticChunkRoleAssignment",
     "SemanticChunkStatusAssignment",
     "SemanticChunkText",
+    "SemanticChunkVersion",
+    "SemanticChunkCurrent",
     "SemanticChunkTypeAssignment",
     "metadata",
 )

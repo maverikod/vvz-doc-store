@@ -19,6 +19,11 @@ from doc_store_server.commands.registration import (
     register_doc_store_commands as register_doc_store_commands,
 )
 from doc_store_server.commands.chunk_query_search_command import ChunkQuerySearchCommand
+from doc_store_server.commands.chunk_version_commands import (
+    ChunkVersionDeleteCommand,
+    ChunkVersionListCommand,
+    ChunkVersionSetCurrentCommand,
+)
 from doc_store_server.commands.document_delete_command import DocumentDeleteCommand
 from doc_store_server.commands.health_command import DocStoreHealthCommand
 from doc_store_server.commands.document_export_command import DocumentExportCommand
@@ -60,6 +65,7 @@ from doc_store_server.query.runtime_boundary import installed_search_orchestrato
 from doc_store_server.runtime.document_export import installed_document_export_service
 from doc_store_server.runtime.document_service import installed_document_service
 from doc_store_server.runtime.entity_lifecycle import installed_entity_lifecycle_service
+from doc_store_server.runtime.chunk_versions import installed_chunk_text_version_service
 from doc_store_server.runtime.embedding_config import (
     DEFAULT_EMBEDDING_BATCH_SIZE,
     DEFAULT_EMBEDDING_DIMENSION,
@@ -214,7 +220,7 @@ def create_server_application(config: ServerConfig | None = None) -> Any:
     return create_app(
         title="doc-store",
         description="doc-store adapter server",
-        version="0.1.59",
+        version="0.1.61",
         app_config=dict(config or {}),
     )
 
@@ -235,6 +241,7 @@ def configure_runtime_boundaries(config: ServerConfig) -> None:
     text_reconstruction = installed_text_reconstruction_service(dict(config))
     document_service = installed_document_service(dict(config))
     vectorization = installed_vectorization_service(config)
+    chunk_version = installed_chunk_text_version_service(config)
     DocumentCreateCommand.ingestion_boundary = ingestion
     DocumentUpdateCommand.ingestion_boundary = ingestion
     DocumentChunkCommand.ingestion_boundary = ingestion
@@ -249,6 +256,9 @@ def configure_runtime_boundaries(config: ServerConfig) -> None:
     ProcessingStatusCommand.runtime_status_boundary = status
     ChunkQuerySearchCommand.search_orchestrator = search
     EmbeddingsRebuildCommand.vectorization_boundary = vectorization
+    ChunkVersionListCommand.chunk_version_boundary = chunk_version
+    ChunkVersionSetCurrentCommand.chunk_version_boundary = chunk_version
+    ChunkVersionDeleteCommand.chunk_version_boundary = chunk_version
     for command in (
         EntityCreateCommand,
         EntityListCommand,

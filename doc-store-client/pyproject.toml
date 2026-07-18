@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "doc-store-client"
-version = "0.1.59"
+version = "0.1.61"
 description = "Client library for the doc-store documentation service."
 requires-python = ">=3.11"
 authors = [{ name = "Vasiliy Zdanovskiy" }]

@@ -10,7 +10,6 @@ from mcp_proxy_adapter.commands.result import ErrorResult
 
 from doc_store_server.commands.validation import parse_uuid4
 from doc_store_server.runtime.semantic_chunk_metadata import (
-    SemanticChunkMetadataService,
     installed_semantic_chunk_metadata_service,
 )
 

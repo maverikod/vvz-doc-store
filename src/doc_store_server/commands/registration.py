@@ -12,6 +12,11 @@ from mcp_proxy_adapter.commands.hooks import (
 )
 
 from doc_store_server.commands.chunk_query_search_command import ChunkQuerySearchCommand
+from doc_store_server.commands.chunk_version_commands import (
+    ChunkVersionDeleteCommand,
+    ChunkVersionListCommand,
+    ChunkVersionSetCurrentCommand,
+)
 from doc_store_server.commands.corpus_audit_command import CorpusAuditCommand
 from doc_store_server.commands.document_delete_command import DocumentDeleteCommand
 from doc_store_server.commands.document_export_command import DocumentExportCommand
@@ -183,6 +188,30 @@ DOC_STORE_COMMAND_MANIFEST: Final[tuple[CommandManifestEntry, ...]] = (
         "SourceFileReconstructCommand.get_schema",
     ),
     CommandManifestEntry(
+        "chunk_version_list",
+        ChunkVersionListCommand,
+        "doc_store_server.commands.chunk_version_commands",
+        "sync",
+        "ChunkVersionListCommand.metadata",
+        "ChunkVersionListCommand.get_schema",
+    ),
+    CommandManifestEntry(
+        "chunk_version_set_current",
+        ChunkVersionSetCurrentCommand,
+        "doc_store_server.commands.chunk_version_commands",
+        "sync",
+        "ChunkVersionSetCurrentCommand.metadata",
+        "ChunkVersionSetCurrentCommand.get_schema",
+    ),
+    CommandManifestEntry(
+        "chunk_version_delete",
+        ChunkVersionDeleteCommand,
+        "doc_store_server.commands.chunk_version_commands",
+        "sync",
+        "ChunkVersionDeleteCommand.metadata",
+        "ChunkVersionDeleteCommand.get_schema",
+    ),
+    CommandManifestEntry(
         "document_rebind",
         DocumentRebindCommand,
         "doc_store_server.commands.document_rebind_command",
@@ -336,6 +365,7 @@ DOC_STORE_COMMAND_MODULE_MANIFEST: Final[tuple[str, ...]] = (
     "doc_store_server.commands.ingestion_commands",
     "doc_store_server.commands.document_export_command",
     "doc_store_server.commands.text_reconstruction_commands",
+    "doc_store_server.commands.chunk_version_commands",
     "doc_store_server.commands.document_rebind_command",
     "doc_store_server.commands.processing_status_command",
     "doc_store_server.commands.document_delete_command",
@@ -372,6 +402,9 @@ register_custom_commands_hook(register_doc_store_commands)
 
 __all__ = [
     "ChunkQuerySearchCommand",
+    "ChunkVersionDeleteCommand",
+    "ChunkVersionListCommand",
+    "ChunkVersionSetCurrentCommand",
     "CommandManifestEntry",
     "CorpusAuditCommand",
     "DOC_STORE_COMMAND_MANIFEST",

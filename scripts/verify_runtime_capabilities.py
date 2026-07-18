@@ -1077,6 +1077,140 @@ async def _verify_lifecycle(
         chunks = await client.list_entities(
             EntityListRequest(
                 entity_type="semantic_chunks",
+                fields=("id", "text", "block_meta"),
+                filters={"document_id": document_id},
+                limit=1,
+            )
+        )
+        chunk_id = str(chunks.items[0]["id"]) if chunks.items else ""
+        _add_check(
+            checks,
+            "semantic_chunk fixture",
+            bool(chunk_id),
+            chunk_id or "no semantic_chunk found",
+        )
+        if chunk_id:
+            version_text = f"runtime version update {document_id}"
+            updated_chunk = await client.entity_update(
+                {
+                    "entity_type": "semantic_chunks",
+                    "entity_id": chunk_id,
+                    "values": {"text": version_text},
+                }
+            )
+            updated_value = updated_chunk.get("value", {}) if isinstance(updated_chunk, Mapping) else {}
+            _add_check(
+                checks,
+                "semantic_chunk entity_update creates version",
+                isinstance(updated_chunk, Mapping)
+                and updated_chunk.get("outcome") == "updated"
+                and isinstance(updated_value, Mapping)
+                and updated_value.get("id") == chunk_id,
+                json.dumps(updated_chunk, ensure_ascii=False, default=str)[:500],
+            )
+
+            listed = await client.call(
+                "chunk_version_list",
+                {"chunk_id": chunk_id, "limit": 10},
+            )
+            listed_items = listed.get("items", []) if isinstance(listed, Mapping) else []
+            listed_by_number = {
+                item.get("version_no"): item
+                for item in listed_items
+                if isinstance(item, Mapping)
+            }
+            _add_check(
+                checks,
+                "chunk_version_list after update",
+                isinstance(listed, Mapping)
+                and int(listed.get("total") or 0) >= 2
+                and 1 in listed_by_number
+                and 2 in listed_by_number
+                and listed_by_number[2].get("current") is True,
+                json.dumps(listed, ensure_ascii=False, default=str)[:700],
+            )
+
+            selected = await client.call(
+                "chunk_version_set_current",
+                {"chunk_id": chunk_id, "version_no": 1},
+            )
+            _add_check(
+                checks,
+                "chunk_version_set_current",
+                isinstance(selected, Mapping)
+                and selected.get("outcome") == "set_current"
+                and isinstance(selected.get("version"), Mapping)
+                and selected["version"].get("version_no") == 1,
+                json.dumps(selected, ensure_ascii=False, default=str)[:500],
+            )
+
+            after_select = await client.call("chunk_version_list", {"chunk_id": chunk_id})
+            after_select_items = after_select.get("items", []) if isinstance(after_select, Mapping) else []
+            current_versions = {
+                item.get("version_no")
+                for item in after_select_items
+                if isinstance(item, Mapping) and item.get("current") is True
+            }
+            _add_check(
+                checks,
+                "chunk_version_list reflects current version",
+                current_versions == {1},
+                json.dumps(after_select, ensure_ascii=False, default=str)[:700],
+            )
+
+            deleted = await client.call(
+                "chunk_version_delete",
+                {"chunk_id": chunk_id, "version_no": 2},
+            )
+            after_delete = await client.call("chunk_version_list", {"chunk_id": chunk_id})
+            remaining_items = after_delete.get("items", []) if isinstance(after_delete, Mapping) else []
+            _add_check(
+                checks,
+                "chunk_version_delete non-last version",
+                isinstance(deleted, Mapping)
+                and deleted.get("outcome") == "deleted"
+                and deleted.get("deleted_version_no") == 2
+                and isinstance(after_delete, Mapping)
+                and int(after_delete.get("total") or 0) == 1
+                and len(remaining_items) == 1
+                and remaining_items[0].get("version_no") == 1,
+                json.dumps(
+                    {"deleted": deleted, "remaining": after_delete},
+                    ensure_ascii=False,
+                    default=str,
+                )[:700],
+            )
+
+            try:
+                await client.call(
+                    "chunk_version_delete",
+                    {"chunk_id": chunk_id, "version_no": 1},
+                )
+            except DocStoreClientError as exc:
+                error_code = getattr(getattr(exc, "error", None), "code", "")
+                _add_check(
+                    checks,
+                    "chunk_version_delete rejects last version",
+                    error_code == "LAST_VERSION_DELETE_FORBIDDEN"
+                    or "LAST_VERSION_DELETE_FORBIDDEN" in str(exc),
+                    str(exc),
+                )
+            except Exception as exc:
+                _add_check(checks, "chunk_version_delete rejects last version", False, repr(exc))
+            else:
+                _add_check(
+                    checks,
+                    "chunk_version_delete rejects last version",
+                    False,
+                    "last version deletion unexpectedly succeeded",
+                )
+    except Exception as exc:
+        _add_check(checks, "semantic chunk versioning", False, repr(exc))
+
+    try:
+        chunks = await client.list_entities(
+            EntityListRequest(
+                entity_type="semantic_chunks",
                 fields=("id", "block_meta"),
                 filters={"document_id": document_id},
                 limit=1,
@@ -1244,6 +1378,9 @@ async def _run(args: argparse.Namespace) -> int:
         "entity_references",
         "entity_owner_tree",
         "semantic_chunk_metadata_update",
+        "chunk_version_list",
+        "chunk_version_set_current",
+        "chunk_version_delete",
         "chunk_query_search",
         "semantic_relations",
         "corpus_audit",
