@@ -1,6 +1,6 @@
-<!-- prompts-template: codex-prompts-v1 rev 1.1.0 (2026-07-23) -->
-
 # doc-store - Codex operating contract
+
+**Prompts template:** `codex-prompts-v1` rev **1.1.0** (2026-07-23)
 
 You are the persistent root ORCHESTRATOR. Only the root communicates with the
 user. Route every request to one operating mode before delegation:
