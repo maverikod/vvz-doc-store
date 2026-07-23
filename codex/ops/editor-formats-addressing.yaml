@@ -1,0 +1,41 @@
+# Format-specific addressing for universal_file_edit.
+
+format_groups:
+  python_sidecar:
+    extensions: [.py, .pyi, .pyw]
+    address: MAP short_id string in node_id, target_node_id, or parent_node_id
+    operations: [replace, insert, delete, move]
+    notes:
+      - use parent_node_id __root__ for module-level insertion
+      - use target_node_id plus before or after for sibling insertion
+      - split parent and child changes when NESTED_BATCH_FORBIDDEN applies
+      - universal_file_node_at_line returns the current node and ancestors
+      - SimpleStatementLine nodes inside try and except suites are valid targets
+  structured_tree:
+    extensions: [.json, .yaml, .yml, .ini, .cfg, .toml]
+    address: preview short_id in node_ref/node_id/short_id or json_pointer
+    operations: [replace, insert, delete, move]
+    notes:
+      - root YAML insertion accepts parent_json_pointer as empty string or slash form
+      - INI values are strings
+      - TOML values must be TOML-compatible and cannot be null
+      - INI and TOML preserve their source format through commit
+  markdown:
+    address: preview short_id or supported section slug
+  text:
+    extensions: [.txt, .rst, .adoc, .jsonl, .ndjson]
+    address: current line index or explicit 1-based range with optional anchors
+  parse_error_fallback:
+    address: line-based only until a clean commit restores structural mode
+
+invariants:
+  - re-resolve identifiers after a parent replacement or stale-node error
+  - never reuse line positions after an intervening line edit
+  - inspect preview diff before commit
+
+errors:
+  SESSION_FILE_PATH_REQUIRED: pass file_path for a multi-file session
+  NESTED_BATCH_FORBIDDEN: split parent and child edits
+  STALE_NODE_ID: preview or resolve the current node again
+  UNKNOWN_NODE_REF: obtain a current reference from preview
+  ANCHOR_MISMATCH: refresh the target lines and anchors

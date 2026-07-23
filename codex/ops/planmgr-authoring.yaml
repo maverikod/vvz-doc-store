@@ -1,0 +1,33 @@
+# ops: planmgr — authoring block (HRS paragraphs, MRS concepts/relations, GS/TS/AS CRUD).
+
+purpose: author/edit HRS paragraphs, MRS concepts/relations, and step (GS/TS/AS) CRUD; the drafting surface before freeze.
+trigger: authoring or editing HRS paragraphs, MRS concepts/relations, or GS/TS/AS steps.
+
+commands:
+  para_list / para_get: list/read HRS paragraphs
+  para_label_assign: assign a stable label {a3f9} to a paragraph
+  para_mark_non_binding: wrap non-binding text (excluded from MRS projection)
+  para_insert / para_update / para_delete: human-decided HRS mutations (admission-guarded, snapshot-recorded; delete = tombstone)
+  concept_get / concept_list: read concepts
+  concept_add / concept_update / concept_remove: mutate MRS concepts (behavior/invariant entities only; source_labels required)
+  relation_list: list typed relations
+  relation_add / relation_remove / relation_update: 'mutate relations (types: uses/owns/implements/extends/depends_on/produces/consumes)'
+  concept_coverage: coverage view — concept_axis (every concept >=1 step, overlap allowed) vs object_work_axis (no two steps
+    touch same object/work); "no gaps"=concept axis, "no overlaps"=object axis, never conflate
+  step_get / step_tree: read one step / a step subtree
+  step_create: scaffold draft skeleton only (next free G/T/A-NNN), NO field values on create; project_id is top-level, never in fields
+  step_update: mutate step fields; concepts is a TOP-LEVEL param — fields.concepts is ignored by the gate
+  step_move / step_delete: relocate / remove a step
+  step_list / step_search / files_report / step_xref: read-only reporting views over steps (no mutation)
+
+gotchas:
+  - step_create: CONTEXT_BLOCKS_MISSING unless the parent has a CURRENT context_common for the child level (a stale-revision block counts as absent)
+  - compile_order_rule: child context blocks compile LAST, after the parent settles — never author a child before parent context is current
+  - downward_narrowing: child scope_concepts must be a subset of parent common scope — else CONCEPT_OUT_OF_SCOPE
+  - one_file_rule / atomicity: an AS must be one code file, not meaningfully splittable — push file-granularity problems to TS redesign
+  - file_size_limit: target files <400 lines (350 recommended); over-limit escalates to TS redesign, not an AS workaround
+  - step_update concepts placement is the single most common authoring mistake — see tooling-rules.yaml planmgr_gotchas
+
+errors:
+  CONTEXT_BLOCKS_MISSING: 'parent lacks a current context_common for this child level — compile parent context first (ops/planmgr-prompt.yaml)'
+  CONCEPT_OUT_OF_SCOPE: 'child scope_concepts not a subset of parent common scope — narrow the child or widen parent scope via cascade'

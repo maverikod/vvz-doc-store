@@ -1,0 +1,33 @@
+# ops: planmgr — prompt block (context compilation + executor/review prompt assembly).
+
+purpose: assemble deterministic executor/review prompts and compiled context blocks.
+trigger: compiling context blocks, or assembling a branch/chain prompt for an executor or reviewer.
+
+commands:
+  context_compile: compile a context block for one scope (revision XOR cascade_uuid; live only at head or an open cascade)
+  context_common: compile the shared-parent common block — MUST be current before creating/reading children (admission_guard, ops/planmgr-authoring.yaml)
+  context_specific: compile the child-delta specific block — common before specific always (else CONCEPT_OUT_OF_SCOPE)
+  context_bundle: compiled common+specific bundle for a branch
+  block_get / block_list: read one / list compiled context blocks (typed DB rows, never files)
+  branch_dump: raw dump of one branch's frozen content, no prompt assembly
+  branch_prompt: 'deterministic single-branch executor prompt (order: MRS excerpt, HRS slice, GS, TS, AS delta) +
+    token estimate vs context_budget; returns within_budget'
+  plan_prompt_chain: QUEUED deterministic cache-keyed corpus for a scope+role — waves + per-step manifest; include_statuses
+    default [frozen, ready_for_review]
+
+procedure: |
+  1. context_common(parent, child_level) before authoring or prompting any child — admission_guard blocks children otherwise
+  2. context_specific after common settles (compile_order_rule: children compile LAST)
+  3. branch_prompt(one G/T/A) -> check within_budget; False means split the branch, never truncate manually
+  4. plan_prompt_chain(scope, role) for a multi-step corpus -> poll queue_get_job_status (queued)
+
+gotchas:
+  - context_block rows (common/specific/bundle) are derived_record / computed_views_only — never advance head, never edit directly
+  - context_common takes revision XOR cascade_uuid — pass exactly one; live compile only resolves at head or inside an open cascade
+  - PROMPT_ASSEMBLY_FAILED on a dangling concept_id in branch_prompt — fix the MRS reference (ops/planmgr-authoring.yaml), not the prompt call
+  - always check within_budget before handing a branch_prompt to a coder — False means split, never truncate
+
+errors:
+  CONTEXT_BLOCKS_MISSING: 'parent context_common not current — compile it first, then retry the child action'
+  CONCEPT_OUT_OF_SCOPE: 'child scope_concepts not a subset of parent common scope'
+  PROMPT_ASSEMBLY_FAILED: 'dangling concept_id referenced by the branch — fix the MRS relation, not the prompt'

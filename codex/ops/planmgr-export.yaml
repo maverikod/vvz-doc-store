@@ -1,0 +1,30 @@
+# ops: planmgr — export block (transfer, srt snapshots/diff, plan-level export/import).
+
+purpose: move plan truth and runtime state in/out of the server — full-tree export/import, transfer utilities,
+  point-in-time snapshots/diffs.
+trigger: exporting, importing, archiving, or diffing a plan.
+
+commands:
+  plan_export: QUEUED normative-tree export of a plan
+  plan_snapshot: QUEUED point-in-time snapshot of plan truth
+  plan_import: QUEUED — the SOLE file-to-truth import path (no other command writes truth from a file)
+  export_upload_save / export_read: stage/read a transfer file server-side
+  export_archive: package an export into an archive
+  hrs_import: QUEUED HRS-only import; dry_run=true by DEFAULT — a "success" without dry_run:false writes NOTHING
+    (see tooling-rules.yaml planmgr_gotchas)
+  hrs_export: HRS-only export
+  export_cleanup: remove stale transfer artifacts
+  srt_snapshot_create: QUEUED point-in-time snapshot for later diffing
+  srt_snapshot_list: list srt snapshots
+  srt_diff: diff two srt snapshots
+  export_runtime_overlay / import_runtime_overlay: move the runtime layer (execution/review/bug/todo records)
+    separately from plan truth — never mixes with plan_export/import
+
+gotchas:
+  - 'hrs_import defaults dry_run=true — always pass dry_run:false explicitly to actually write; a bare success otherwise means nothing landed'
+  - 'plan_import is the ONLY file->truth path — there is no partial/incremental truth import elsewhere'
+  - runtime overlay export/import is a SEPARATE layer from plan_export/import — never assume one covers the other
+  - 'plan_export/plan_snapshot/plan_import/hrs_import/srt_snapshot_create are QUEUED — poll queue_get_job_status, never job_status'
+
+errors:
+  VALIDATION_ERROR: 'param mismatch — cmd_help(cmdname), fix, retry once'

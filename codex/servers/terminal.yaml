@@ -1,0 +1,32 @@
+# mcp-terminal — thin server map. Read the triggered ops/ file before acting; no other source needed.
+
+server:
+  id: 'mcp-terminal-vvz'   # LIVE registry id — verify with list_servers; a short/generic name may -> SERVER_NOT_FOUND
+  copy_number: 1   # copy_number can flip after a backend service restart — verify with list_servers
+
+essence: |
+  Project-aware sandboxed terminal keyed by (project_id, session_id). session_id MUST be a
+  CA session_create id, else CLIENT_SESSION_NOT_FOUND. Three strictly separate targets:
+  sandbox (terminal_run, Docker, project at /workspace), sandbox PTY (attaches only to a
+  container kept via prior terminal_run keep_container=true), and real host (terminal_host_exec,
+  disabled by default).
+
+hard_rules:
+  - session_id MUST be a CA session_create id — never self-generated
+  - queue 'completed' != success — always check exit_code/timed_out (C-011)
+  - "command: bash alone exits immediately — use PTY for interactive work"
+  - WAF blocks complex shell (pipes, 2>&1, loops, command -v) — keep commands simple
+  - never run the full certificate-generation script that rebuilds the shared Root CA (breaks siblings) — use a per-service cert helper script only
+  - HOST_KEY_ACCESS_FORBIDDEN on referencing ssh key paths directly
+
+blocks:
+  sandbox:
+    ops_file: ops/terminal-sandbox.yaml
+    trigger: 'when running commands or an interactive shell inside the project sandbox container, or discovering/administering sessions'
+    commands: [terminal_session_create, terminal_run, terminal_attach, terminal_send, terminal_read_shell,
+      terminal_get_status, terminal_read, terminal_tail, terminal_stat, terminal_kill, terminal_delete,
+      terminal_list_watch, terminal_registry_refresh, terminal_sessions]
+  host_exec:
+    ops_file: ops/terminal-host-exec.yaml
+    trigger: 'when executing a command on the real host over SSH (requires explicit enablement)'
+    commands: [terminal_host_exec]

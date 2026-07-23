@@ -1,0 +1,257 @@
+# plan_manager — always-loaded planning-mode map: identity, full glossary, full methodology,
+# command-family overview, and the block->ops_file pointer table. Read the triggered
+# ops/planmgr-*.yaml before acting on a specific block; command-level gotchas live in
+# roles/tooling-rules.yaml (planmgr_gotchas) — not duplicated here.
+
+server:
+  id: 'planmgr'   # LIVE registry id — verify with list_servers
+  copy_number: 1   # copy_number can flip after a backend service restart — verify with list_servers
+  product: plan_manager   # verify the live version before relying on version-specific notes
+  adapter_min: '>=8.10.20'   # your adapter's minimum compatible version, if applicable
+
+essence: |
+  Authoritative server for plan truth (HRS/MRS/GS/TS/AS), its verification gates, and the
+  runtime layer (execution attempts, reviews, bugs, todos) that sits on top of a frozen plan.
+  156 commands across 27 families. This file is the always-loaded map; act on a specific
+  block only after reading its ops/planmgr-*.yaml.
+
+doc_store_profile:
+  plan_name: doc-store
+  plan_uuid: b847fc0b-7180-4430-a1a3-820d93d8261c
+  cas_project_uuid: ff997eab-d809-4cb9-b805-9dff4df60c6d
+  export_directory: docs/plans
+  exact_export_files: [source_spec.md, spec.yaml]
+  export_law: exact plan_export outputs only; non-normative; never reconstruct or edit
+  authoring_order:
+    - create and verify all GS nodes horizontally
+    - snapshot the complete G level
+    - choose the next dependency-ready GS
+    - decompose that branch vertically from TS to AS
+    - verify atomic AS quality and snapshot the completed branch
+
+# ---------------------------------------------------------------------------
+# (a) TERMINOLOGY GLOSSARY — complete, compressed wording only.
+# ---------------------------------------------------------------------------
+glossary:
+  artifact_levels:
+    HRS: 'L1, source_spec — human-readable source spec, docs/plans/<plan>/source_spec.md; unit = binding paragraph
+      with stable label {a3f9}; human-owned; normative changes go through cascade.'
+    paragraph_label: 'stable id of one binding HRS paragraph; edited via para_insert/update/delete (admission-guarded,
+      snapshot-recorded, tombstoned deletes).'
+    MRS: 'L2, machine_spec, spec.yaml — machine projection of HRS into concepts/relations. Forbidden: implementation
+      details, action sequences, alternatives, free prose.'
+    concept: 'entity with behavior or invariant (plain properties are NOT concepts); concept_id = C-NNN unique per plan.'
+    relation: 'typed edge; allowed types: uses, owns, implements, extends, depends_on, produces, consumes.'
+    source_labels: 'HRS labels justifying a concept.'
+    GS: 'L3, global_step, G-NNN — conceptual block, no file/function detail.'
+    TS: 'L4, tactical_step, T-NNN — refinement of one GS into concrete entities/actions, not file-level.'
+    AS: 'L5, atomic_step, A-NNN — self-contained prompt for ONE indivisible change touching exactly ONE code file;
+      multiple AS per file ordered by ascending priority.'
+    tezis: 'coherent semantic claim in HRS mapping to a concept/relation/property in MRS.'
+    drift: 'discrepancy between levels (orphan concept, missing thesis, insufficient/redundant step).'
+    green_pass_overall_green: 'verification loop with empty findings / all cycles green under the same MRS snapshot.'
+    finding: 'concrete standards violation. escalation (authoring) = stop and return to the upper level/human.'
+    overlap: 'two TS create/modify the same entity or the same action on the same target (shared concept_id alone is
+      NOT overlap).'
+    atomicity_one_file_rule: 'an AS is not meaningfully splittable; one AS = one code file.'
+    context_budget: 'token ceiling for AS execution context; plan-level field, default 4000, never server config.'
+    file_size_limit: 'target files <400 lines (recommended 350); violations escalate to TS design.'
+
+  cascade_verification_scoring:
+    cascade: 'top-down transactional change-set for MRS-and-below mutations; per-plan lock; anchored at head revision.'
+    cascade_lifecycle: 'cascade_begin/preview/commit/abort — open branch / dry gate+impact / publish (advance head only
+      on green) / discard.'
+    revision_head: 'every mutation = append-only revision; head = published current.'
+    mechanical_gate: 'deterministic checks (parse/identity/uniqueness/references/coverage; 20 base + structure-integrity
+      context-block check + embedded-code-in-AS-prompt check); blocks semantic scoring until green.'
+    coverage_axes: 'concept_axis (semantic: every concept covered by >=1 step, overlap allowed) vs object_work_axis
+      (no two steps touch same object/work). "No gaps" = concept axis; "no overlaps" = object axis; never conflate.'
+    semantic_index_trust_color: '0-100 index, trust, color; aggregation = MINIMUM of branch scores; embeddings down ->
+      trust floor 0.2, reported not hidden.'
+    derived_record_computed_views_only: 'context blocks and coverage views are computed DB records, never files,
+      never truth.'
+
+  context_compilation:
+    context_block: 'common (shared parent material) / specific (child delta) / bundle; typed DB rows; never advance head.'
+    scope_concepts_downward_narrowing: 'child scope must be a subset of parent common scope (else CONCEPT_OUT_OF_SCOPE).'
+    compile_order_rule: 'child blocks compiled LAST, after the parent settles.'
+    admission_guard: 'step_create refuses a child under a parent lacking a CURRENT context_common for that child level
+      (stale-revision block counts as absent) -> CONTEXT_BLOCKS_MISSING.'
+
+  statuses:
+    step: 'draft, ready_for_review, frozen, needs_review (cascade-only), in_progress/done (atomic-only via
+      step_set_status, NOT step_transition).'
+    cascade: 'open, committed, aborted (terminal).'
+    frozen: 'mutable only via cascade discipline; subtree unfreeze (scoped step_transition frozen->draft) writes
+      immutable audit (actor/reason/scope/head); a FULLY frozen plan escapes only via plan_unfreeze(plan, changed_by, reason).'
+
+  runtime_layer:
+    execution_attempt: 'factual per-run record, never self-certifying; terminal statuses succeeded/failed/cancelled/timed_out.'
+    review_result: 'immutable verdict (accepted/rejected/changes_requested/escalated/needs_owner_decision); create-only.'
+    owner_review_ladder: 'C-017 — no self-certification, strictly upward: hrs_mrs verifies gs; gs verifies ts; ts
+      verifies as AND as_execution; the code executor is never an ownership level.'
+    bug_lifecycle: 'C-020..C-026: BugReport (1 source anchor) -> BugImpact (many) -> BugFix (source) ->
+      BugFixPropagation (per impact). bug_close refused unless: source fix verified + every impact cleared/skipped-by-owner
+      + every propagation finished + mandatory TODOs closed + required cascades finished.'
+    todo: 'anchored kinded runtime record; priority_nice [-20,19]; todo_promote_to_cascade_request files an immutable
+      CascadeRequest (does NOT open/commit a cascade itself).'
+    model_binding: '6-level scope (system<plan<level<branch<step<role); model_binding_resolve gives effective
+      provider/model + inheritance path.'
+    anchor: 'three vocabularies (PrimaryAnchor allows none; CommentAnchor and BugSource/Impact-target do NOT).'
+    wave_parallel_map: 'graph_parallel_map / plan_prompt_chain.waves: waves from MRS relations + target_file
+      produce/consume edges + explicit depends_on.'
+    branch_prompt: 'deterministic executor prompt for one G/T/A branch (order: MRS excerpt, HRS slice, GS, TS, AS
+      delta) + token estimate vs context_budget (within_budget).'
+    runtime_overlay: 'C-034 — read-only snapshot of ALL runtime stores per plan; separate from plan_export/import.'
+    frozen_truth_tables: 'plan, revision, step, concept, relation, paragraph, node_version, ref: never mutated by
+      runtime commands (guard_frozen_truth, C-002).'
+
+# ---------------------------------------------------------------------------
+# (b) METHODOLOGY NARRATIVE — canonical 12-step lifecycle, complete.
+# ---------------------------------------------------------------------------
+methodology:
+  1_author_hrs: 'human-owned binding paragraphs with labels; para_mark_non_binding wraps non-binding text; binding
+    content changed only by human-decided para_insert/update/delete.'
+  2_project_into_mrs: 'each binding thesis -> concept (behavior entities only) with source_labels + typed relations.
+    Cycle 1 (source->machine alignment): concepts justified, every thesis represented, relation types valid, no
+    empty concept coverage.'
+  3_author_gs: 'step_create level=3; scaffolds a draft skeleton with the next free G-NNN. Requires current
+    context_common(parent, child_level) BEFORE creating children. Cycle 2: HRS+MRS+GS triple sufficient without
+    sibling GS.'
+  4_author_ts: 'author TS under GS (same context gating). tactical_triple: MRS+GS+TS self-contained; no entity/action
+    overlap with sibling TS.'
+  5_author_as: 'author AS under TS — one file, one prompt, priority ordering. atomic_quadruple: MRS+GS+TS+AS
+    self-contained for a coder model.'
+  6_freeze: 'step_transition(to_status=frozen, scope=..., require_green=true) — gate FIRST; green ->
+    draft->ready_for_review->frozen in one batch revision; red -> GATE_RED, zero mutation. needs_review only via cascade.'
+  7_publish: 'plan_prompt_chain(scope, role, include_statuses default [frozen, ready_for_review]) — deterministic
+    cache-keyed retrieval-free corpus (waves + per-step manifest); branch_prompt for one branch with a within_budget
+    verdict.'
+  8_execute: 'execution_attempt create/report per run (factual only).'
+  9_review: 'review_result_create per owner ladder (SELF_CERTIFICATION_FORBIDDEN: reviewer != producer).
+    Non-acceptance -> escalation upward.'
+  10_change_control_after_freeze: 'cascade_begin (FROZEN_TRUTH_WRITE on a fully frozen plan -> plan_unfreeze first)
+    -> mutate under cascade_uuid -> cascade_preview -> cascade_commit (green advances head; red leaves cascade open)
+    / cascade_abort.'
+  11_bugs_todos: 'runtime overlay records during execution; normative change requests via
+    todo_promote_to_cascade_request -> ordinary cascade.'
+  12_export_snapshot: 'plan_export/export_archive (normative tree), plan_import (sole file->truth path),
+    export/import_runtime_overlay (runtime layer), srt_snapshot_create/srt_diff (point-in-time diff).'
+  principles:
+    - 'semantic_reproduction: children reproduce parent; L1-2 = WHAT, L3-5 = HOW.'
+    - top_down_change
+    - 'zero_trust: re-read source fully each check.'
+    - computed_views_only
+    - human_owned_hrs
+
+# ---------------------------------------------------------------------------
+# (c) COMMAND-FAMILY OVERVIEW — one-liners, 27 families / 156 commands.
+# queued commands marked ^, mutating marked *.
+# ---------------------------------------------------------------------------
+command_families:
+  plan_core: 'plan_create*, plan_list, plan_status, plan_delete*, plan_export^, plan_snapshot^, plan_import*^,
+    plan_validate^, plan_score^ — basic plan CRUD (not separately routed, see below) + queued export/validate/score
+    members (routed to ops/planmgr-export.yaml and ops/planmgr-verification.yaml)'
+  project_binding: 'attach/detach/set_primary/clear_primary/list a plan<->CA-project binding -> ops/planmgr-project.yaml'
+  transfer: 'export_upload_save/read/archive, hrs_import/export, export_cleanup -> ops/planmgr-export.yaml'
+  paragraph: 'HRS paragraph list/get/label_assign/mark_non_binding/insert/update/delete -> ops/planmgr-authoring.yaml'
+  concept_relation: 'MRS concept/relation CRUD + concept_coverage -> ops/planmgr-authoring.yaml'
+  step: 'step_get/tree/create/update/move/delete (authoring) + step_set_status/transition (freeze control) +
+    step_runtime_get/report/list -> split across ops/planmgr-authoring.yaml and ops/planmgr-cascade.yaml'
+  step_report: 'step_list/search, files_report, step_xref — read-only reporting -> ops/planmgr-authoring.yaml'
+  graph: 'graph_deps/order/parallel_map/impact/dependents -> ops/planmgr-graph.yaml'
+  step_dependency: 'explicit dependency edge list/add/remove/set/clear/preview/apply -> ops/planmgr-graph.yaml'
+  context_prompt: 'branch_prompt, plan_prompt_chain^, context_compile/common/specific/bundle, block_get/list,
+    branch_dump -> ops/planmgr-prompt.yaml; branch_weak^ -> ops/planmgr-verification.yaml'
+  cascade: 'cascade_begin/commit/abort*, cascade_preview, plan_unfreeze* -> ops/planmgr-cascade.yaml'
+  srt: 'srt_snapshot_create^, srt_snapshot_list, srt_diff -> ops/planmgr-export.yaml'
+  system: 'info, ops_status, command_catalog_dump — server discovery, not separately routed'
+  audit: 'audit_list -> ops/planmgr-verification.yaml'
+  todo: 'todo create/get/list/update/reanchor*/resolve/close/delete/link_add/remove/queue/promote_to_cascade_request
+    -> ops/planmgr-todo.yaml'
+  runtime_link: 'runtime_link_add/list/remove -> ops/planmgr-runtime.yaml'
+  comment: 'comment_add/get/list/supersede/resolve/delete -> ops/planmgr-runtime.yaml'
+  model_binding: 'model_binding_set/get/list/remove/resolve/update -> ops/planmgr-runtime.yaml'
+  execution_attempt: 'execution_attempt_create/report/get/list -> ops/planmgr-runtime.yaml'
+  review_escalation: 'review_result_create/get/list, escalation_create/resolve/get/list -> ops/planmgr-runtime.yaml'
+  bug: 'bug_create/get/list/update/reanchor*, bug_triage/confirm/reject/mark_duplicate/reopen/close ->
+    ops/planmgr-bugs.yaml'
+  bug_impact: 'bug_impact_add/update/list/discover -> ops/planmgr-bugs.yaml'
+  bug_fix: 'bug_fix_create/update/list/verify -> ops/planmgr-bugs.yaml'
+  bug_propagation: 'bug_propagation_create/list/update/generate_todos -> ops/planmgr-bugs.yaml'
+  project_dependency: 'add/remove/list/discover/update/confirm, project_dependents -> ops/planmgr-project.yaml'
+  observability: 'command_timing_stats — server discovery, not separately routed'
+  verification: 'step_prompt_verify -> ops/planmgr-verification.yaml'
+
+# ---------------------------------------------------------------------------
+# (e) BLOCKS — trigger -> ops_file pointer table.
+# ---------------------------------------------------------------------------
+blocks:
+  authoring:
+    ops_file: ops/planmgr-authoring.yaml
+    trigger: 'authoring/editing HRS paragraphs, MRS concepts/relations, or GS/TS/AS steps'
+    commands: [para_list, para_get, para_label_assign, para_mark_non_binding, para_insert, para_update, para_delete,
+      concept_get, concept_list, concept_add, concept_update, concept_remove, relation_list, relation_add,
+      relation_remove, relation_update, concept_coverage, step_get, step_tree, step_create, step_update, step_move,
+      step_delete, step_list, step_search, files_report, step_xref]
+  cascade:
+    ops_file: ops/planmgr-cascade.yaml
+    trigger: 'opening/committing/aborting a cascade, or transitioning a step freeze status'
+    commands: [cascade_begin, cascade_preview, cascade_commit, cascade_abort, plan_unfreeze, step_set_status,
+      step_transition]
+  verification:
+    ops_file: ops/planmgr-verification.yaml
+    trigger: 'gate/scoring/verify: running or interpreting a gate, score, weak-prompt check, or audit query'
+    commands: [plan_validate, plan_score, branch_weak, step_prompt_verify, audit_list]
+  graph:
+    ops_file: ops/planmgr-graph.yaml
+    trigger: 'execution order/waves/dependencies between steps'
+    commands: [graph_deps, graph_order, graph_parallel_map, graph_impact, graph_dependents, step_dependency_list,
+      step_dependency_add, step_dependency_remove, step_dependency_set, step_dependency_clear,
+      step_dependency_preview, step_dependency_apply]
+  prompt:
+    ops_file: ops/planmgr-prompt.yaml
+    trigger: 'assembling executor/review prompts or compiling context blocks'
+    commands: [branch_prompt, plan_prompt_chain, context_compile, context_common, context_specific, context_bundle,
+      block_get, block_list, branch_dump]
+  runtime:
+    ops_file: ops/planmgr-runtime.yaml
+    trigger: 'recording execution/review/escalation/comment/link/model-binding facts'
+    commands: [execution_attempt_create, execution_attempt_report, execution_attempt_get, execution_attempt_list,
+      review_result_create, review_result_get, review_result_list, escalation_create, escalation_resolve,
+      escalation_get, escalation_list, comment_add, comment_get, comment_list, comment_supersede, comment_resolve,
+      comment_delete, runtime_link_add, runtime_link_list, runtime_link_remove, model_binding_set, model_binding_get,
+      model_binding_list, model_binding_remove, model_binding_resolve, model_binding_update]
+  bugs:
+    ops_file: ops/planmgr-bugs.yaml
+    trigger: 'bug tracking/closure: create/triage/fix/propagate/close a bug'
+    commands: [bug_create, bug_get, bug_list, bug_update, bug_reanchor, bug_triage, bug_confirm, bug_reject,
+      bug_mark_duplicate, bug_reopen, bug_close, bug_impact_add, bug_impact_update, bug_impact_list,
+      bug_impact_discover, bug_fix_create, bug_fix_update, bug_fix_list, bug_fix_verify, bug_propagation_create,
+      bug_propagation_list, bug_propagation_update, bug_propagation_generate_todos]
+  todo:
+    ops_file: ops/planmgr-todo.yaml
+    trigger: 'TODO/work-queue: create/resolve/promote a todo'
+    commands: [todo_create, todo_get, todo_list, todo_update, todo_reanchor, todo_resolve, todo_close, todo_delete,
+      todo_link_add, todo_link_remove, todo_queue, todo_promote_to_cascade_request]
+  project:
+    ops_file: ops/planmgr-project.yaml
+    trigger: 'project binding/dependency: attach/detach a plan-project binding, or manage a project dependency'
+    commands: [plan_project_attach, plan_project_detach, plan_project_set_primary, plan_project_clear_primary,
+      plan_project_list, project_dependency_add, project_dependency_remove, project_dependency_update,
+      project_dependency_confirm, project_dependency_list, project_dependency_discover, project_dependents]
+  export:
+    ops_file: ops/planmgr-export.yaml
+    trigger: 'export/import/snapshot: exporting, importing, archiving, or diffing a plan'
+    commands: [plan_export, plan_snapshot, plan_import, export_upload_save, export_read, export_archive, hrs_import,
+      hrs_export, export_cleanup, srt_snapshot_create, srt_snapshot_list, srt_diff, export_runtime_overlay,
+      import_runtime_overlay]
+
+not_separately_routed: >-
+  plan_create/plan_list/plan_status/plan_delete (basic plan CRUD) and info/ops_status/command_catalog_dump/
+  command_timing_stats (server discovery/observability) have no dedicated ops file — use cmd_help(cmdname) on demand.
+
+gotchas_pointer: >-
+  Command-level gotchas (hrs_import dry_run default, step_update concepts placement, bug_list filter semantics,
+  weak anchor validation) live in roles/tooling-rules.yaml under planmgr_gotchas — read there,
+  do not duplicate here. Per-block gotchas live in the matching ops/planmgr-*.yaml.

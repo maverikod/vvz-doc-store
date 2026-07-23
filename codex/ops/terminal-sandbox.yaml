@@ -1,0 +1,42 @@
+# ops: mcp-terminal — sandbox execution, PTY interactive attach, and discovery/admin.
+
+purpose: run commands (or an interactive shell) inside the project's Docker sandbox at /workspace, and discover/administer terminal sessions.
+
+procedure:
+  sandbox_run: |
+    1. CA session_create -> session_id
+    2. terminal_session_create(project_id, session_id, bootstrap_python_env?)
+    3. terminal_run({execution_kind:"shell", command, keep_container?, mode?, network?, timeout_seconds?})  # ALWAYS async: returns job_id+seq
+    4. terminal_get_status(job_id) -> poll; queue completed != success, check exit_code/timed_out (C-011)
+    5. terminal_read / terminal_tail / terminal_stat for output
+    6. terminal_kill if hung
+    7. terminal_delete when the session's work is done
+    8. CA session_delete to release the underlying CA session
+  pty_interactive: |
+    - only attaches to a container kept alive by a prior terminal_run with keep_container=true
+    - terminal_attach -> terminal_send (input) / terminal_read_shell (output) -> terminal_resize as needed -> terminal_detach
+
+commands:
+  terminal_session_create: 'project_id, session_id (a CA session_create id), bootstrap_python_env optional'
+  terminal_run: 'execution_kind:"shell", command, keep_container?, mode? (read_only|workspace_write|scratch_write), network? (none|package_registry), timeout_seconds?'
+  terminal_get_status: 'poll job_id+seq; check exit_code/timed_out, not just queue state'
+  terminal_read / terminal_tail / terminal_stat: 'fetch output/logs/file stat from the sandbox'
+  terminal_kill: 'kill a hung run'
+  terminal_delete: 'tear down the terminal session'
+  terminal_attach / terminal_send / terminal_read_shell / terminal_resize / terminal_detach: 'PTY interactive I/O, requires a kept container'
+  terminal_list_watch / terminal_registry_refresh / terminal_sessions: 'discovery/admin, config-gated'
+  terminal_get_session_bootstrap / terminal_purge_sessions: 'admin, config-gated'
+
+gotchas:
+  - session_id MUST be a CA session_create id, else CLIENT_SESSION_NOT_FOUND
+  - "command: bash alone exits immediately — use the PTY flow for interactive work, not terminal_run"
+  - cwd is simulated via shell_state.json (cd persists across runs unless cwd param given); cwd must be project-relative, no '..', no absolute path -> INVALID_CWD
+  - use_venv prepends /workspace/.venv/bin to PATH
+  - only ONE writer session (workspace_write) per project; others must be read_only
+  - WAF returns 403 on complex shell (pipes, 2>&1, loops, command -v) — keep commands simple, single-purpose
+  - sandbox venv is bare (no QA tools) unless image_profile=python_dev_3_12 (bundles ruff/pytest/mypy/flake8/black) — the project's quality gate runs CAS-side regardless
+
+errors:
+  CLIENT_SESSION_NOT_FOUND: 'session_id was not a valid CA session_create id'
+  INVALID_CWD: 'cwd absolute, has "..", or is not project-relative'
+  C-011: 'queue completed but exit_code non-zero or timed_out=true — treat as failure'

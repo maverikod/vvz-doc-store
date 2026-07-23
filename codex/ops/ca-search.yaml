@@ -1,0 +1,27 @@
+# ops: code-analysis-server — search block (fulltext/BM25/semantic/grep).
+
+purpose: search project content when AST/index-based analysis (ca-analysis.yaml) does not cover the need.
+
+procedure: |
+  1. search(...) -> fulltext/BM25 always on; enable_semantic and enable_grep are opt-in
+  2. first page of results returns inline
+  3. for more results: search_get_page(job_id, block_position)  # block_position is 1-based
+  4. search_get_status(job_id) if unsure whether more pages remain
+  5. search_close(job_id) when done to free server-side result state
+  6. search_cancel(job_id) to abort an in-flight search
+
+commands:
+  search: 'enable_semantic (min_semantic_score default 0.45), enable_grep opt-in; file_pattern/path_filter aliases MUST agree'
+  search_get_page: 'job_id, block_position (1-based)'
+  search_get_status: 'job_id -> progress/completion state'
+  search_cancel: 'job_id -> abort'
+  search_close: 'job_id -> release result state'
+
+gotchas:
+  - 'known defect in CAS as of CAS 1.6.53 (re-verify on your install and record your own bug ids): never run CAS calls concurrently — this includes multiple in-flight searches; strictly sequential'
+  - file_pattern and path_filter are aliases for the same concept — passing conflicting values is a silent footgun
+  - prefer ca-analysis.yaml (AST/index) first; fall back to search only if analysis missed the target
+
+errors:
+  VALIDATION_ERROR: 'param mismatch (e.g. file_pattern vs path_filter conflict) — cmd_help(search), fix, retry once'
+  BATCH_COMMAND_NOT_WHITELISTED: 'not applicable here — see ca-fs-sandbox.yaml read_only_batch whitelist if batching search'

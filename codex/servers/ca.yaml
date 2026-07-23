@@ -1,0 +1,49 @@
+# code-analysis-server — thin server map. Read the triggered ops/ file before acting; no other source needed.
+
+server:
+  id: 'code-analysis-server-vvz'   # LIVE registry id — verify with list_servers; a short/generic name may -> SERVER_NOT_FOUND
+  copy_number: 1   # copy_number can flip after a backend service restart (re-registration gets a new copy) — verify with list_servers
+
+essence: |
+  Authoritative server for project files, indexes, search, git, sessions, jobs, admin.
+  list_projects -> project_id; never use the host root_dir. Long commands return a job_id ->
+  poll via the queuemgr store; long_task/job_status is a SEPARATE in-memory store — never cross-poll.
+
+hard_rules:
+  - >-
+    known defect in CAS as of CAS 1.6.53 (re-verify on your install and record your own bug
+    ids): ALL CAS calls strictly sequential — concurrent search races give -32600
+    'command is required' for everything; heartbeat stays green, 'active' lies. Never fan out parallel CAS calls.
+  - list_projects -> project_id; never host root_dir
+  - queue 'completed' != command success — always check the inner result/exit code
+  - server-side git ALWAYS via CA git_* — never console/ssh git without explicit user permission
+
+blocks:
+  search:
+    ops_file: ops/ca-search.yaml
+    trigger: 'when doing fulltext/semantic/grep search over project content'
+    commands: [search, search_get_page, search_get_status, search_cancel, search_close]
+  analysis:
+    ops_file: ops/ca-analysis.yaml
+    trigger: 'when inspecting AST/structure/quality of code (before falling back to search)'
+    commands: [get_ast, search_ast_nodes, ast_statistics, file_structure, list_code_entities, get_code_entity_info,
+      get_imports, list_class_methods, find_classes, analyze_complexity, find_duplicates,
+      comprehensive_analysis, get_comprehensive_analysis_results, lint_code, type_check_code,
+      analyze_tree, list_long_files, list_errors_by_category]
+  refactoring_support:
+    ops_file: ops/ca-refactoring-support.yaml
+    trigger: 'when tracing usages/dependencies/hierarchy before a refactor'
+    commands: [find_usages, find_dependencies, get_entity_dependencies, get_entity_dependents, get_class_hierarchy, export_graph]
+  git:
+    ops_file: ops/ca-git.yaml
+    trigger: 'when performing any git operation on the server-side project'
+    commands: [git_status, git_log, git_diff, git_commit, git_pull, git_pull_safe, git_push, git_branch_checkout, git_repo_doctor]
+  jobs_queue:
+    ops_file: ops/ca-jobs-queue.yaml
+    trigger: 'when a command returned a job_id and needs polling, or managing the job queue directly'
+    commands: [queue_add_job, queue_start_job, queue_stop_job, queue_delete_job, queue_get_job_status, queue_get_job_logs, queue_list_jobs, queue_health]
+  fs_sandbox:
+    ops_file: ops/ca-fs-sandbox.yaml
+    trigger: 'when moving/copying/removing project files, running project scripts, managing venv/pip, batching read-only calls, or managing CA sessions'
+    commands: [fs_copy, fs_move, fs_remove, list_project_files, run_project_script, run_project_module,
+      project_pip_install, read_only_batch, session_create, session_validate, session_delete]

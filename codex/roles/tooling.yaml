@@ -1,0 +1,65 @@
+# Tool routing for tool-using roles. Live server help remains authoritative.
+
+meta:
+  proxy_call: mcp__codex_apps__mcp_proxy_call_server
+  proxy_server_ids:
+    ca: 'code-analysis-server-vvz'
+    editor: 'ai-editor-server-vvz'
+    terminal: 'mcp-terminal-vvz'
+    planmgr: 'planmgr'
+  prepared_manifest: /home/vasilyvz/.codex/prompts/tool-routing/manifest.yaml
+  path_rule: use project-relative POSIX paths for server project commands
+
+mandatory_first_tool_flow:
+  - read prepared_manifest
+  - select the highest-precedence matching trigger
+  - read that trigger file and only its referenced short help packs
+  - verify the trigger match; ambiguity goes to the parent
+  - use only commands admitted by loaded cards or fresh command-specific help
+
+package_manuals:
+  rules: roles/tooling-rules.yaml
+  coder_guide: roles/coder-guide.yaml
+  modes: modes.yaml
+  ca: servers/ca.yaml
+  editor: servers/editor.yaml
+  terminal: servers/terminal.yaml
+  planmgr: servers/planmgr.yaml
+  delivery: ops/delivery-release.yaml
+
+triggers:
+  - when: before the first task tool call
+    read: [rules]
+  - when: project search, AST, structure, dependencies, or quality analysis
+    read: [ca, ops/ca-analysis.yaml, ops/ca-search.yaml]
+  - when: project content mutation
+    read: [rules]
+  - when: new project file
+    read: [rules]
+  - when: project file discovery, copy, move, remove, history, transfer, or Git
+    read: [ca, ops/ca-fs-sandbox.yaml, ops/ca-git.yaml]
+  - when: plan read, authoring, verification, prompts, graph, or runtime state
+    read: [planmgr, modes]
+  - when: a CAS capability gap requires unsupported project execution
+    read: [terminal, ops/terminal-sandbox.yaml]
+  - when: authorized real-host incident or deployment
+    read: [terminal, ops/terminal-host-exec.yaml]
+  - when: release, deploy, or production acceptance
+    read: [delivery]
+
+server_error_recovery:
+  invalid_parameter:
+    call: 'help({cmdname: failing_command}) on the same downstream server'
+    retry: once with the returned schema
+  command_not_found:
+    call: 'help({}) on the same downstream server, then command-specific help'
+    forbidden: guessing or reusing a remembered legacy command
+  server_unavailable:
+    checks: [proxy health, list_servers registration, downstream health]
+    failure: escalate exact transport and health evidence
+
+queue_rule: >-
+  A queued handoff is a valid state transition. Poll the queue when the selected
+  client mode is synchronous emulation; return or consume messages when the selected
+  mode is asynchronous. A queue status of completed is not command success until the
+  inner terminal result is checked.

@@ -1,0 +1,84 @@
+# doc-store operating-mode router. Exactly one mode owns a delegation branch.
+
+model_selection:
+  owner: direct parent; root orchestrator verifies every child selection
+  rule: select the cheapest configured tier demonstrably capable of the task
+  assess: [complexity, context_breadth, ambiguity, impact, recovery_risk, tool_demands, verification]
+  record_in_delegation:
+    requested_model: [model, reasoning_effort]
+    capability_rationale: constraints.must item prefixed with 'model capability rationale:'
+  capability_ladder:
+    bounded_atomic: {model: gpt-5.6-luna, reasoning_effort: medium}
+    medium_repair: {model: gpt-5.5, reasoning_effort: medium}
+    broad_or_complex: {model: gpt-5.6-terra, reasoning_effort: medium_or_xhigh}
+    root_or_exceptional_risk: {model: gpt-5.6-sol, reasoning_effort: max}
+  escalation: >-
+    Escalate only when the pre-dispatch assessment requires it, or when concrete
+    failure, insufficient output, or failed verification proves the selected tier
+    inadequate; preserve the evidence and move only to the next capable tier.
+  forbidden:
+    - fixed expensive defaults based only on role name or plan level
+    - silent selection of a cheaper tier without capability evidence
+    - silent substitution when the user explicitly requires a model
+
+router:
+  precedence: [plan_authoring, plan_execution, refactor_repair]
+  plan_authoring:
+    triggers:
+      - create or change HRS, MRS, GS, TS, or AS
+      - repair plan coverage, decomposition, drift, or cascade state
+    hierarchy:
+      HRS_MRS: {capability_reference: root_or_exceptional_risk, spawns: GS}
+      GS: {capability_reference: broad_or_complex, spawns: TS}
+      TS: {capability_reference: broad_or_complex, spawns: AS}
+      AS: {capability_reference: bounded_atomic, spawns: null}
+    always_read: [servers/planmgr.yaml]
+    operations:
+      authoring: ops/planmgr-authoring.yaml
+      cascade: ops/planmgr-cascade.yaml
+      verification: ops/planmgr-verification.yaml
+      graph: ops/planmgr-graph.yaml
+      prompts: ops/planmgr-prompt.yaml
+      runtime: ops/planmgr-runtime.yaml
+      bugs: ops/planmgr-bugs.yaml
+      todos: ops/planmgr-todo.yaml
+      projects: ops/planmgr-project.yaml
+      export: ops/planmgr-export.yaml
+  plan_execution:
+    triggers:
+      - execute or continue an existing admitted plan or branch
+      - implement a frozen or ready-for-review GS, TS, or AS scope
+    hierarchy:
+      root: {capability_reference: root_or_exceptional_risk, spawns: GS}
+      GS: {capability_reference: broad_or_complex, spawns: TS}
+      TS: {capability_reference: broad_or_complex, spawns: AS}
+      AS: {capability_reference: bounded_atomic, spawns: null}
+    entry_gate:
+      - requested scope resolves in Plan Manager
+      - mechanical gate is green
+      - lifecycle status admits execution
+      - dependency order or parallel waves are known
+    always_read: [servers/planmgr.yaml, servers/ca.yaml]
+    execution_material: [plan_prompt_chain, branch_prompt, graph_order, graph_parallel_map]
+  refactor_repair:
+    triggers:
+      - defect diagnosis and localized repair outside an existing plan
+      - behavior-preserving refactoring or small maintenance change
+    roles:
+      researcher: {capability_reference: medium_repair}
+      executor: {capability_reference: medium_repair}
+      tester: {capability_reference: medium_repair}
+    flow:
+      - research when facts are missing
+      - execute only after scope and acceptance are confirmed
+      - independently test every mutation
+    mode_transition: requirements, public contracts, architecture, data migration,
+      or non-localized scope require MODE_TRANSITION_REQUIRED to plan_authoring
+    always_read: [servers/ca.yaml]
+
+invariants:
+  - never mix modes inside one delegation branch
+  - every non-leaf parent forms common context and child-specific deltas
+  - plan modes use Plan Manager context blocks or prompt-chain selectors
+  - refactor_repair uses task-scoped context files outside the project tree
+  - child self-reported success has zero acceptance weight

@@ -50,5 +50,5 @@ verification:
   default_typecheck_command: "mypy ."
 prompt_bundle:
   variant: local
-  orchestration_contract: prompts/codex/ORCHESTRATION_CONTRACT.md
-  tool_routing_manifest: prompts/tool-routing/manifest.yaml
+  orchestration_contract: AGENTS.md
+  tool_routing_manifest: /home/vasilyvz/.codex/prompts/tool-routing/manifest.yaml

@@ -1,0 +1,24 @@
+# ops: code-analysis-server — refactoring-support block (usages/dependencies/hierarchy).
+
+purpose: trace usages, dependencies, and class hierarchy before making a cross-cutting change.
+
+procedure:
+  1. get_class_hierarchy / get_entity_dependencies / get_entity_dependents for structural context
+  2. find_usages for call-site tracing — but see gotcha below, do not trust it alone
+  3. find_dependencies for module/file-level dependency edges
+  4. export_graph if a visual/exportable dependency graph is needed
+
+commands:
+  find_usages: 'params are target_name/target_type/target_class — NOT entity_name'
+  find_dependencies: 'module/file-level dependency edges'
+  get_entity_dependencies: 'what this entity depends on'
+  get_entity_dependents: 'what depends on this entity'
+  get_class_hierarchy: 'inheritance tree for a class'
+  export_graph: 'export a dependency/usage graph'
+
+gotchas:
+  - "WARNING: the usages table can be EMPTY (0 for everything) — treat find_usages as supplementary, rely on ca-analysis.yaml AST/class index as the source of truth for whether something is referenced"
+  - find_usages params are target_name/target_type/target_class, NOT entity_name — a common param-naming trap
+
+errors:
+  VALIDATION_ERROR: 'wrong param name (entity_name instead of target_name/type/class) — cmd_help(find_usages), fix, retry once'

@@ -1,0 +1,29 @@
+# ops: planmgr — graph block (execution order, waves, explicit dependencies).
+
+purpose: execution order, wave/parallel grouping, and step-to-step dependency edges.
+trigger: computing execution order, waves, or adding/inspecting explicit dependencies between steps.
+
+commands:
+  graph_deps: dependency edges for a scope (derived from MRS relations + target_file produce/consume + explicit deps)
+  graph_order: total/partial execution order for a scope
+  graph_parallel_map: wave grouping — steps safe to run in parallel per wave
+  graph_impact: downstream impact of a hypothetical or actual change to a node
+  graph_dependents: reverse lookup — what depends on a given node
+  step_dependency_list: list explicit dependencies for a step
+  step_dependency_add / step_dependency_remove: add/remove one explicit edge
+  step_dependency_set / step_dependency_clear: replace/clear the full explicit edge set for a step
+  step_dependency_preview: dry-run the effect of an edge change before applying
+  step_dependency_apply: commit a previewed edge change
+
+edge_model: |
+  Waves (graph_parallel_map / plan_prompt_chain.waves) are derived from three sources: MRS relations, target_file
+  produce/consume edges, and explicit depends_on edges added via step_dependency_*. All three feed the same graph;
+  explicit depends_on is the only one an agent can hand-add.
+
+gotchas:
+  - graph views are derived_record / computed_views_only — never edit them directly, only their inputs (relations, step_dependency_*)
+  - always step_dependency_preview before step_dependency_apply on a non-trivial edge change — apply is not casually reversible
+  - a wave is a parallel-safety claim from the graph, not a scheduling guarantee — re-check graph_parallel_map after any MRS/relation edit
+
+errors:
+  VALIDATION_ERROR: 'param mismatch on step_dependency_* — cmd_help(cmdname), fix, retry once'

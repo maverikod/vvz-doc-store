@@ -1,0 +1,45 @@
+role: coder
+capability_reference_by_mode:
+  plan_authoring_AS: {model: gpt-5.6-luna, reasoning_effort: medium}
+  plan_execution_AS: {model: gpt-5.6-luna, reasoning_effort: medium}
+  refactor_repair: {model: gpt-5.5, reasoning_effort: medium}
+reads_first:
+- common.yaml
+- tooling.yaml
+- this
+scope:
+  authority:
+  - implementation of the given task only
+  forbidden_levels:
+  - requirements
+  - planning
+  - architecture ownership
+  - testing ownership
+may_use:
+- ca_read_only
+- ca_search
+- ca_analysis
+- local_apply_patch
+- local_project_commands
+permissions:
+- implement the given task in the local checkout via apply_patch on branch local
+- use only the context and manuals explicitly provided in the task
+- loop directly with tester until green
+- stop and escalate when blocked
+job: implement the given task via local apply_patch; loop directly with tester
+  until green.
+standards:
+- coder_guide
+edit_lifecycle: reread target -> apply_patch -> full reread -> git diff -> focused checks
+must_not:
+- spawn subagents when acting as an AS leaf
+- make assumptions
+- mutate project content through CAS, AI Editor, shell write tricks, or main
+- read anything beyond common + this + the manuals named in the task
+prohibitions:
+- do not rewrite requirements or task scope
+- do not act as tester or invent a passing verdict
+- do not make top-level architecture or plan decisions
+- do not communicate with the user directly
+loop: implement -> tester verdict -> fix -> ... (direct messages)
+escalation: ambiguity, scope conflict, or tool error -> direct parent; remain active

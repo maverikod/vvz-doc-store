@@ -1,0 +1,37 @@
+# ops: code-analysis-server — AST/structure/quality analysis block.
+
+purpose: inspect code structure, quality, and metrics from the index/AST BEFORE falling back to cross-search.
+
+procedure: |
+  1. try AST/index commands first (get_ast, file_structure, list_code_entities, etc.)
+  2. only fall back to ca-search.yaml cross-search if step 1 missed the target
+  3. paginate long results: page_size default 20, block_position for the next page
+
+commands:
+  get_ast: 'full AST for a file'
+  search_ast_nodes: 'query AST nodes by predicate'
+  ast_statistics: 'aggregate AST stats for a file/project'
+  file_structure: 'structural outline — safe substitute for get_file_lines on healthy .py'
+  list_code_entities: 'entities (functions/classes/etc.) in a file or project'
+  get_code_entity_info: 'detail on one entity'
+  get_imports: 'import list for a file'
+  list_class_methods: 'methods of a given class'
+  find_classes: 'locate class definitions by name/pattern'
+  analyze_complexity: 'cyclomatic/cognitive complexity metrics'
+  find_duplicates: 'duplicate code detection'
+  comprehensive_analysis: 'kicks off a full multi-check analysis job'
+  get_comprehensive_analysis_results: 'fetch results of a comprehensive_analysis job'
+  lint_code: 'lint findings for a file'
+  type_check_code: 'type-check findings for a file'
+  analyze_tree: 'directory/module tree analysis'
+  list_long_files: 'files over a length threshold'
+  list_errors_by_category: 'aggregate errors grouped by category'
+
+gotchas:
+  - 'order matters: AST/index first, cross-search only if step 1 missed — do not default to search'
+  - pagination default page_size=20; use block_position to walk pages
+  - comprehensive_analysis is async — poll get_comprehensive_analysis_results, and if it returns a job_id see ca-jobs-queue.yaml
+
+errors:
+  VALIDATION_ERROR: 'param mismatch — cmd_help(cmdname), fix, retry once'
+  BATCH_COMMAND_NOT_WHITELISTED: 'if batching via read_only_batch, only a fixed subset is allowed — see ca-fs-sandbox.yaml'

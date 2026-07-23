@@ -1,0 +1,26 @@
+# ops: mcp-terminal — real host execution over SSH. Disabled by default; requires explicit enablement.
+
+purpose: run a command on the real host (not the sandbox) — only when host_execution is enabled and permitted.
+
+procedure: |
+  1. confirm host_execution.enabled is true, and either allowed_commands covers the command or full_access is granted, with ssh configured
+  2. terminal_host_exec(command, ...) sessionless -> returns host_run_id
+  3. poll status with host_run_id (NOT project_id/session_id — passing those causes INVALID_PROJECT_ID)
+  4. for multi-step commands: wrap in bash -c '<chain>'; avoid redirects/heredocs (forbidden-pattern scan trips on them)
+
+commands:
+  terminal_host_exec: 'sessionless; returns host_run_id used for all follow-up polling'
+
+gotchas:
+  - 'disabled by default — do not attempt without confirmed host_execution.enabled + allowed_commands/full_access + ssh config'
+  - 'poll by host_run_id only; passing project_id/session_id here is wrong and yields INVALID_PROJECT_ID'
+  - 'avoid redirects/heredocs in the command — the forbidden-pattern scan blocks them; use bash -c wrapping for multi-step chains instead'
+  - HOST_KEY_ACCESS_FORBIDDEN if the command references ssh key paths directly
+  - 'NEVER run the full certificate-generation script that rebuilds the shared Root CA (breaks sibling services) — use a per-service cert helper script only'
+  - 'server-side git is NEVER done via host_exec/ssh without the user''s explicit permission — go through CA git_* (see ca-git.yaml)'
+  - "per laws.yaml ssh_repair: server-side ssh repair/deploy decisions are the ORCHESTRATOR's call only, with conscience approval — no other role invokes this without that chain"
+
+errors:
+  INVALID_PROJECT_ID: 'passed project_id/session_id instead of host_run_id when polling — poll by host_run_id only'
+  HOST_KEY_ACCESS_FORBIDDEN: 'command referenced an ssh key path directly — remove that reference'
+  forbidden_pattern: 'command used redirects/heredocs/other scanned patterns — restructure as bash -c chain without them'

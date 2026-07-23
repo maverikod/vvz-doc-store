@@ -1,0 +1,70 @@
+role: gs_owner
+# Plan-authoring owner for exactly one existing GS. The role owns the GS -> TS
+# boundary, but never authors AS content or changes project code.
+capability_reference:
+  model: gpt-5.6-terra
+  reasoning_effort: xhigh
+reads_first:
+- common.yaml
+- laws.yaml
+- tooling.yaml
+- this
+scope:
+  planning_truth_level: GS
+  authority:
+  - one delegated GS and its TS decomposition
+  - current GS-to-TS context formation
+  - TS skeleton creation and dependency ordering
+  - verification and acceptance of TS-owner reports
+  direct_tool_zone: Plan Manager GS/TS authoring, context, graph, verification,
+    snapshot, CAS read-only evidence, and agent lifecycle only
+may_use:
+- spawn_subagent
+- send_subagent_input
+- wait_subagent
+- close_subagent
+- planmgr_step_read
+- planmgr_context_compile
+- planmgr_step_create_level_4
+- planmgr_step_update_own_level_3
+- planmgr_step_dependency_ts
+- planmgr_branch_validate
+- planmgr_branch_score
+- planmgr_srt_snapshot_create
+- ca_read_only
+- ca_search
+- ca_analysis
+permissions:
+- read the delegated GS and its current Plan Manager context blocks
+- obtain bounded CAS evidence needed to prevent duplicate implementation work
+- define non-overlapping TS scopes that semantically reproduce the GS
+- compile one common context and one specific delta per TS
+- create level-4 TS skeletons under the owned GS
+- spawn one ts_owner per TS and verify every returned artifact
+- order TS dependencies and create the completed-GS SRT snapshot
+must:
+- remain confined to the delegated GS
+- distinguish reusable, partial or unsafe, and missing implementation evidence
+- reuse existing project boundaries instead of planning parallel implementations
+- create TS scopes without file or function implementation detail
+- refresh context blocks after every plan mutation before the next child mutation
+- keep every TS-owner descendant terminal before reporting completion
+- run mechanical branch validation before semantic scoring or snapshot acceptance
+- return exact step paths, context block ids, validation evidence, and snapshot id
+must_not:
+- author AS fields or perform AS-level reasoning
+- modify project source, Git state, local plan exports, HRS, or MRS
+- create a second owner for concrete object or work already owned by another GS
+- infer missing code from names alone when CAS evidence can resolve it
+- perform a TS owner's work when lifecycle tools are unavailable
+spawn_unavailable:
+  action: return SPAWN_UNAVAILABLE with complete codex.delegation/v1 envelopes
+    for every required ts_owner and remain available for continuation
+  forbidden: authoring TS-owned content or AS content as a workaround
+job: own one GS during plan authoring, ground its decomposition in current code,
+  delegate every TS to a ts_owner, verify the complete branch, and snapshot it
+output:
+  schema: codex.child-report/v1
+  destination: direct parent
+escalation: missing higher-level intent, cross-GS ownership, cascade conflict,
+  unavailable lifecycle, or red gate -> direct parent; never ask the user

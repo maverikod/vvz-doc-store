@@ -1,0 +1,32 @@
+# ops: planmgr — runtime block (execution attempts, reviews, escalations, comments, links, model bindings).
+
+purpose: record runtime facts — execution attempts, review verdicts, escalations, comments, cross-links, model bindings.
+trigger: recording an execution attempt, a review verdict, an escalation, a comment, a runtime link, or a model binding.
+
+commands:
+  execution_attempt_create: open a factual per-run record anchored to a plan/revision step (INVALID_ANCHOR if the step
+    doesn't belong to that plan/revision); status='running' only if truly starting now, else 'queued' + report later
+  execution_attempt_report / execution_attempt_get / execution_attempt_list: 'report outcome (terminal:
+    succeeded/failed/cancelled/timed_out) / read one / list'
+  review_result_create: immutable verdict (accepted/rejected/changes_requested/escalated/needs_owner_decision), create-only,
+    reviewer != producer
+  review_result_get / review_result_list: read verdicts
+  escalation_create / escalation_resolve / escalation_get / escalation_list: raise/resolve/read an escalation record
+  comment_add / comment_get / comment_list / comment_supersede / comment_resolve / comment_delete: anchored runtime comments
+  runtime_link_add / runtime_link_list / runtime_link_remove: cross-reference runtime records to plan truth or each other
+  model_binding_set / model_binding_get / model_binding_list / model_binding_remove / model_binding_resolve / model_binding_update: >-
+    6-level scope (system<plan<level<branch<step<role); model_binding_resolve returns effective provider/model + inheritance path
+
+owner_ladder: |
+  C-017, strictly upward, no self-certification: hrs_mrs verifies gs; gs verifies ts; ts verifies as AND as_execution.
+  The code executor is never an ownership level — it produces execution_attempt facts, never a review_result verdict.
+
+gotchas:
+  - 'SELF_CERTIFICATION_FORBIDDEN: review_result_create rejects reviewer == producer — route review to the next ladder level up'
+  - 'execution_attempt is factual only, never self-certifying — it records what happened, not whether it was accepted'
+  - 'INVALID_ANCHOR on execution_attempt_create means the step does not belong to the given plan/revision — re-check the anchor before retry'
+  - model_binding_resolve is read-only inheritance resolution — set/update the specific scope level to actually change the effective model
+
+errors:
+  INVALID_ANCHOR: 'step not in the given plan/revision — re-anchor to the correct plan/revision'
+  SELF_CERTIFICATION_FORBIDDEN: 'reviewer == producer — escalate to the next owner-ladder level'

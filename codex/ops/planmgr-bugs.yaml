@@ -1,0 +1,28 @@
+# ops: planmgr — bugs block (report -> impact -> fix -> propagation -> closure).
+
+purpose: bug lifecycle from report through fix, impact, propagation, and closure.
+trigger: creating, triaging, fixing, propagating, or closing a bug.
+
+commands:
+  bug_create / bug_get / bug_list / bug_update: report/read/list/update a BugReport (one source anchor)
+  bug_reanchor: fix a bad source anchor (anchor validation is weak — see gotcha below)
+  bug_triage / bug_confirm / bug_reject / bug_mark_duplicate / bug_reopen / bug_close: lifecycle transitions
+  bug_impact_add / bug_impact_update / bug_impact_list / bug_impact_discover: BugImpact records (many per bug)
+  bug_fix_create / bug_fix_update / bug_fix_list / bug_fix_verify: BugFix records (source-anchored)
+  bug_propagation_create / bug_propagation_list / bug_propagation_update / bug_propagation_generate_todos:
+    BugFixPropagation records (one per impact) + auto-generate follow-up todos
+
+lifecycle: 'BugReport (1 source anchor) -> BugImpact (many) -> BugFix (source) -> BugFixPropagation (per impact)'
+
+closure_discipline: |
+  bug_close is refused unless ALL of: source fix verified (bug_fix_verify) + every impact cleared or explicitly
+  skipped-by-owner + every propagation finished + mandatory TODOs closed + required cascades finished. Partial
+  completion never closes a bug — fix the gap, do not force-close.
+
+gotchas:
+  - 'bug_create anchor validation is weak (known defect in planmgr as of planmgr 0.1.44 — re-verify on your install and record your own bug ids): accepts a nonexistent source_project_id — double-check UUIDs before create; fix via bug_reanchor'
+  - 'bug_list plan-filter is DIRECT source_plan_uuid equality (project-anchored bugs excluded, correct); project-filter is TRANSITIVE (matches source_project_id AND plan-bound bugs) — use project filter to see project-anchored records'
+  - closure_discipline above is the single most common false-done — check every clause before calling bug_close
+
+errors:
+  BUG_NOT_CLOSABLE: 'one or more closure_discipline clauses unmet — bug_get to see which, close the gap, retry'

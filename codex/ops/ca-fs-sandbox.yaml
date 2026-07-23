@@ -1,0 +1,51 @@
+# ops: code-analysis-server — fs ops, project script/venv execution, read-only batching, and sessions.
+
+purpose: filesystem mutation, running project code, dependency management, batched read-only queries, and CA session lifecycle (shared by editor + terminal).
+
+procedure:
+  fs: |
+    fs_copy/fs_move/fs_remove do NOT update the DB index by themselves — follow with
+    update_indexes, or rely on the file watcher, or the index will drift from disk.
+  run_project: |
+    run_project_script -> QUEUED (poll via ca-jobs-queue.yaml).
+    run_project_module -> INLINE, for long-lived processes; needs the project venv, else VENV_NOT_FOUND.
+    project_pip_install/list/show/uninstall/check/search manage that venv.
+  read_only_batch: |
+    Only a hardcoded whitelist of commands may be batched: ast_statistics, find_classes,
+    find_dependencies, find_usages, fulltext_search, get_ast, get_class_hierarchy,
+    get_code_entity_info, get_entity_dependencies, get_entity_dependents, list_class_methods,
+    list_code_entities, universal_file_preview. Anything else -> BATCH_COMMAND_NOT_WHITELISTED.
+    Oversize results -> output_file + results_metadata instead of inline.
+  sessions: |
+    session_create({comment}) -> session_id, consumed by BOTH editor and terminal.
+    session_validate / session_delete(force) / session_view / session_open_file / session_close_file /
+    session_list_file_locks / subordinate_session_* manage that session and its file locks.
+
+commands:
+  fs_copy: 'copy a project file/dir — does not update the index'
+  fs_move: 'move a project file/dir — does not update the index'
+  fs_remove: 'remove a project file/dir — does not update the index'
+  list_project_files: 'glob fnmatch listing; returns file_id when indexed'
+  list_backup_files: 'list backup snapshots'
+  list_deleted_files: 'list soft-deleted files'
+  repair_database: 'reconcile DB index against disk after drift'
+  run_project_script: 'QUEUED execution of a script in the project'
+  run_project_module: 'INLINE execution for long-lived processes; requires project venv'
+  project_pip_install: 'install a dependency in the project venv'
+  read_only_batch: 'batch ONLY the whitelisted commands listed above'
+  session_create: 'comment -> session_id shared by editor + terminal'
+  session_validate: 'check a session_id is still live'
+  session_delete: 'force=true to force-delete a session with locks held'
+  session_view: 'inspect session state'
+  session_list_file_locks: 'list files locked under a session'
+
+gotchas:
+  - fs_copy/fs_move/fs_remove leave the DB index stale — run update_indexes or trust the watcher, do not assume it is instant
+  - run_project_module needs a project venv or it returns VENV_NOT_FOUND — provision with project_pip_install first if missing
+  - read_only_batch silently rejects anything off the whitelist with BATCH_COMMAND_NOT_WHITELISTED — do not assume other read commands batch
+  - one CA session_id is shared across editor AND terminal calls for the same unit of work
+
+errors:
+  VENV_NOT_FOUND: 'run_project_module needs a project venv — set one up via project_pip_install first'
+  BATCH_COMMAND_NOT_WHITELISTED: 'requested command not in the read_only_batch whitelist — call it individually instead'
+  SESSION_NOT_FOUND: 'session_id invalid/expired — re-run session_create'

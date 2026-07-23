@@ -1,0 +1,32 @@
+# ops: planmgr — verification block (mechanical gate, semantic score, prompt verify, audit).
+
+purpose: gate/scoring/verification loop — mechanical gate, semantic score, prompt verification, audit trail.
+trigger: running or interpreting a gate, a score, a weak-prompt check, or an audit query.
+
+commands:
+  plan_validate: QUEUED mechanical gate (20 base checks + structure-integrity context-block check + embedded-code-in-AS-prompt
+    check); poll via queue_get_job_status; fail_fast stops only at check-group boundaries
+  plan_score: QUEUED semantic scoring; refuses a non-green scope (GATE_RED — validate first); expected_revision mismatch ->
+    VERDICT_STALE if head moved
+  branch_weak: QUEUED weak-prompt/anchor check for one branch
+  step_prompt_verify: verify an assembled branch prompt against the step it targets
+  audit_list: read the append-only audit trail (freeze/unfreeze/cascade actions)
+
+concepts:
+  mechanical_gate: deterministic checks only; blocks semantic scoring until green — always green the mechanical gate before scoring.
+  coverage_axes: concept_axis (semantic — every concept covered by >=1 step, overlap allowed) vs object_work_axis (no two
+    steps touch the same object/work); "no gaps"=concept axis, "no overlaps"=object axis, never conflate the two.
+  semantic_index: 0-100 index/trust/color per branch; aggregation up the tree = MINIMUM of branch scores (one weak branch
+    caps the whole subtree); embeddings-down -> trust floor 0.2, reported not hidden.
+  verification_cycles: cycle 1 (HRS<->MRS source/machine alignment); tactical_triple (MRS+GS+TS self-contained, no sibling
+    TS overlap); atomic_quadruple (MRS+GS+TS+AS self-contained for a coder model).
+
+gotchas:
+  - 'plan_validate/plan_score/branch_weak are QUEUED — poll queue_get_job_status, NEVER job_status (separate store, silently wrong)'
+  - 'plan_score on a non-green scope is refused (GATE_RED) — run plan_validate first, always'
+  - 'expected_revision on plan_score guards a moved head mid-flight — VERDICT_STALE means re-fetch and re-score'
+  - 'do not conflate concept_axis ("no gaps") with object_work_axis ("no overlaps") when reading concept_coverage (ops/planmgr-authoring.yaml)'
+
+errors:
+  GATE_RED: 'mechanical or semantic findings present — read findings, fix at source (authoring/graph/cascade), retry'
+  VERDICT_STALE: 'head moved since expected_revision was captured — re-read head, retry plan_score'

@@ -1,0 +1,31 @@
+# ops: code-analysis-server — git block. ALL server-side git goes through these commands, never console/ssh.
+
+purpose: perform every git operation on the server-side project through CA — status, history, branches, sync, repair.
+
+procedure: |
+  1. inspect first: git_status / git_log / git_diff / git_show / git_blame
+  2. mutate: git_add / git_commit / git_reset / git_restore / git_revert
+  3. sync with remote: prefer git_pull_safe on a dirty tree (guarded stash -> pull -> apply -> drop)
+     over raw git_pull; do not push without explicit user authorization
+  4. branch ops as needed: git_branch_checkout/create/delete/list/compare/current/sync_status/fetch/pull/push/track_remote/set_upstream/unset_upstream
+  5. most git commands are QUEUED -> poll via ca-jobs-queue.yaml
+  6. if the repo is in a bad state: git_repo_doctor -> git_repo_permissions_check -> repair; git_repo_lock_cleanup for stuck locks
+
+commands:
+  git_pull: 'params: project_id, remote, ref, rebase — NOT "branch"'
+  git_pull_safe: 'guarded stash->pull->apply->drop; recommended whenever the tree is dirty'
+  git_repo_doctor: 'diagnose repo health'
+  git_repo_permissions_check: 'check + repair permission drift'
+  git_repo_lock_cleanup: 'clear stuck git locks'
+  github_*: 'REST helpers for GitHub-hosted remotes'
+  merge / rebase / cherry_pick / stash_* / clean / tag / config / identity: 'standard git ops, all server-side via CA'
+
+gotchas:
+  - 'LAW: server-side git ALWAYS via CA git_* — NEVER console/ssh git without explicit user permission (laws.yaml ssh_repair carve-out)'
+  - 'LAW branch_discipline: local and cas exchange only through main; after deploy and verification prepare main, report the exact commit, and wait for user push confirmation before CAS pulls and merges it'
+  - git_pull takes ref, not branch — a common param-naming trap
+  - 'most git commands are queued: a "completed" queue status is not the same as command success — check the inner result'
+
+errors:
+  VALIDATION_ERROR: 'wrong param name (e.g. branch instead of ref on git_pull) — cmd_help(cmdname), fix, retry once'
+  queue_result_failure: 'queue says completed but inner result/exit code is non-zero — treat as a real failure, do not report success'

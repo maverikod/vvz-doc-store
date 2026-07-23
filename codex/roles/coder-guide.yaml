@@ -1,0 +1,274 @@
+# doc-store — MCP Coder Agent Guide (ships with the template; universal mechanics).
+# Read this file before performing any file operations.
+# doc-store profile: CAS through MCP Proxy is first for search and analysis;
+# project content mutation uses the local checkout and apply_patch on branch local.
+# Project-specific values in this package are already resolved for doc-store.
+
+meta:
+  project_id: 'obtain once via CA list_projects (use the returned project_id UUID in every call)'
+  mcp_tool: mcp__codex_apps__mcp_proxy_call_server
+  servers:
+    ca: 'code-analysis-server-vvz'        # sessions, quality gates, FS read
+    editor: 'ai-editor-server-vvz'  # file create/modify lifecycle
+
+# ─────────────────────────────────────────────────────────────────────
+# 1. CALL PATTERN
+# ─────────────────────────────────────────────────────────────────────
+# Every MCP call:
+#   mcp__codex_apps__mcp_proxy_call_server(
+#     server_id = "code-analysis-server-vvz" | "ai-editor-server-vvz",
+#     copy_number = <live copy from list_servers()>,
+#     command = "<name>",
+#     params = { ... }
+#   )
+#
+# All file_path values are project-relative POSIX (e.g. "src/module.py").
+# NEVER pass host absolute paths.
+
+# ─────────────────────────────────────────────────────────────────────
+# 2. CA SERVER — READ / SEARCH / QUALITY / SESSIONS
+# ─────────────────────────────────────────────────────────────────────
+ca_commands:
+
+  session_create:
+    params: {}
+    returns: { session_id: '<uuid>' }
+    note: 'Call first. Reuse session_id for all subsequent editor calls.'
+
+  list_project_files:
+    params: { project_id: '<uuid>', file_pattern: 'src/*.py', page_size: 50 }
+    returns: { items: [{ file_path: x, file_id: y }] }
+    note: 'file_pattern is optional fnmatch; * crosses /.'
+
+  get_file_lines:
+    params: { project_id: '<uuid>', file_path: 'src/module.py', start_line: 1, end_line: 50 }
+    returns: { lines: ['...'], total_lines: N }
+    note: 'Read-only inspection without an editor session; start/end optional, 1-based.'
+
+  universal_file_preview:
+    params: { project_id: '<uuid>', file_path: 'src/module.py', node_ref: '' }
+    returns: { nodes: [{ short_id: 1, kind: class, name: X }] }
+    note: 'One-shot preview without lock when session_id is omitted; "" = root node list.'
+
+  search:
+    params: { project_id: '<uuid>', query: 'class ExampleName', enable_semantic: false, enable_grep: true, file_pattern: 'src/' }
+    returns: { items: ['...'], has_more: true, job_id: '<id>' }
+    note: 'Use search_get_page(job_id, block_position=2) for next pages.'
+
+  file_structure:
+    params: { project_id: '<uuid>', file_path: 'src/module.py' }
+    returns: { classes: ['...'], functions: ['...'] }
+
+  lint_code:
+    params: { project_id: '<uuid>', file_path: 'src/module.py' }
+    pass_condition: 'success == true AND error_count == 0'
+
+  type_check_code:
+    params: { project_id: '<uuid>', file_path: 'src/module.py' }
+    pass_condition: 'success == true AND error_count == 0'
+
+  run_project_module:
+    params: { project_id: '<uuid>', module: 'src.module', timeout_seconds: 30 }
+    pass_condition: 'returncode == 0'
+    note: 'Module name only (python -m), not file path. Tests importability.'
+
+  fs_move:
+    params: { project_id: '<uuid>', source_path: 'old.py', dest_path: 'src/new.py' }
+    note: 'Move/rename within project. Updates version history.'
+
+  fs_remove:
+    params: { project_id: '<uuid>', file_path: 'old_file.py', backup: true }
+    note: 'backup defaults true (backs up to old_code/).'
+
+# ─────────────────────────────────────────────────────────────────────
+# 3. EDITOR SERVER — FILE LIFECYCLE
+# ─────────────────────────────────────────────────────────────────────
+# MANDATORY order: open → preview → edit → write(preview) → write(commit) → close
+# session_id comes from CA session_create, NOT from open.
+# close MUST always be called, even after error.
+
+editor_commands:
+
+  universal_file_open:
+    params_existing: { project_id: '<uuid>', file_path: 'src/module.py', session_id: '<ca-session-id>' }
+    params_new: { project_id: '<uuid>', file_path: 'src/new_file.py', session_id: '<ca-session-id>', create: true, initial_content: '# full content as one string with \n' }
+    returns: { format_group: sidecar, draft_path: x, multi_file_bundle: y }
+    errors: [FILE_ALREADY_OPEN, OPEN_ERROR, SESSION_NOT_FOUND, UNKNOWN_FORMAT]
+    note: |
+      .py -> format_group "sidecar"; .yaml/.yml/.json -> "tree-temp"; .md/.txt -> "text";
+      unknown extensions: pass format_group explicitly.
+
+  universal_file_preview:
+    params: { project_id: '<uuid>', file_path: 'src/module.py', session_id: '<ca-session-id>', node_ref: '' }
+    returns: 'nodes list: short_id (integer; use as STRING in edit ops), kind, name'
+    note: |
+      Re-preview after EVERY edit before targeting node_refs —
+      short_id values change after edits.
+
+  universal_file_edit:
+    params: { project_id: '<uuid>', session_id: '<ca-session-id>', operations: [] }
+    note: 'Mutates draft only. CA file unchanged until commit.'
+
+  universal_file_write:
+    params_preview: { project_id: '<uuid>', session_id: '<ca-session-id>', file_path: 'src/module.py', write_mode: preview }
+    params_commit: { project_id: '<uuid>', session_id: '<ca-session-id>', file_path: 'src/module.py', write_mode: commit }
+    returns_commit: { uploaded: true }
+    errors: [VALIDATION_ERROR]
+    note: |
+      ALWAYS write(preview) before write(commit) in the same session.
+      On VALIDATION_ERROR: fix via edit -> write(preview) -> write(commit).
+      uploaded:true is REQUIRED to confirm success.
+
+  universal_file_close:
+    params: { project_id: '<uuid>', session_id: '<ca-session-id>' }
+    note: 'ALWAYS call, including after errors. Releases CA lock.'
+
+# ─────────────────────────────────────────────────────────────────────
+# 4. EDIT OPERATION TYPES
+# ─────────────────────────────────────────────────────────────────────
+operations:
+
+  # Python (.py / sidecar) — use short_id as string in node_id / target_node_id
+  python_insert_after:
+    type: insert
+    target_node_id: '5'
+    position: after
+    code_lines: ['', 'def new_function() -> None:', '    pass']
+
+  python_replace_node:
+    type: replace
+    node_id: '3'
+    code_lines: ['class Updated:', '    pass']
+
+  # YAML / JSON (.yaml/.yml / tree-temp) — use short_id as string in node_ref
+  yaml_replace_value:
+    type: replace
+    node_ref: '12'
+    value: done
+
+  yaml_replace_by_pointer:
+    type: replace
+    json_pointer: /status
+    value: done
+
+  # IMPORTANT: do NOT mix parent and child nodes in one batch (NESTED_BATCH_FORBIDDEN)
+
+# ─────────────────────────────────────────────────────────────────────
+# 5. COMMON WORKFLOW PATTERNS
+# ─────────────────────────────────────────────────────────────────────
+patterns:
+
+  CREATE_FILE:
+    steps:
+      1: 'CA: session_create -> session_id'
+      2: 'Editor: open(create=true, initial_content=<full content>)'
+      3: 'Editor: write(preview) -> check diff'
+      4: 'Editor: write(commit) -> check uploaded:true'
+      5: 'Editor: close'
+      6: 'CA: run_project_module, lint_code, type_check_code -> all pass'
+
+  MODIFY_APPEND:
+    description: 'Add code after the last node in file'
+    steps:
+      1: 'CA: session_create -> session_id'
+      2: 'Editor: open(file_path)'
+      3: "Editor: preview(node_ref='') -> find last node short_id"
+      4: 'Editor: edit([{type:insert, target_node_id:<last>, position:after, code_lines:[...]}])'
+      5: 'Editor: write(preview) -> verify diff'
+      6: 'Editor: write(commit) -> check uploaded:true'
+      7: 'Editor: close'
+      8: 'CA: run_project_module, lint_code, type_check_code -> all pass'
+
+  MODIFY_REPLACE_NODE:
+    description: 'Replace an existing node (e.g. update a class with new methods)'
+    steps:
+      1: 'CA: session_create -> session_id'
+      2: 'Editor: open(file_path)'
+      3: "Editor: preview(node_ref='') -> find target node short_id"
+      4: 'Editor: edit([{type:replace, node_id:<target>, code_lines:[...]}])'
+      5: 'Editor: write(preview) -> verify diff'
+      6: 'Editor: write(commit) -> check uploaded:true'
+      7: 'Editor: close'
+      8: 'CA: run_project_module, lint_code, type_check_code -> all pass'
+
+  UPDATE_YAML_FIELD:
+    description: 'Set one scalar field in a YAML file (e.g. a status flag your workflow tracks)'
+    steps:
+      1: 'CA: session_create -> session_id'
+      2: 'Editor: open(file_path=<yaml path>)'
+      3: "Editor: preview(node_ref='') -> find the field's node short_id"
+      4: "Editor: edit([{type:replace, node_ref:<short_id>, value:'<new value>'}])"
+      5: 'Editor: write(preview)'
+      6: 'Editor: write(commit) -> check uploaded:true'
+      7: 'Editor: close'
+
+  READ_FILE:
+    description: 'Read file content without locking (inspection only)'
+    steps:
+      1: 'CA: get_file_lines(project_id, file_path, start_line, end_line)'
+    note: 'No session needed. Use for reading YAMLs, checking current state.'
+
+# ─────────────────────────────────────────────────────────────────────
+# 6. QUALITY GATE — REQUIRED AFTER EVERY CODE STEP
+# ─────────────────────────────────────────────────────────────────────
+quality_gate:
+  required_checks:
+    - { command: run_project_module, pass: 'returncode == 0' }
+    - { command: lint_code, pass: 'success == true' }
+    - { command: type_check_code, pass: 'success == true' }
+  on_failure: 'STOP. Report exact error + step + command. Do NOT proceed.'
+
+# ─────────────────────────────────────────────────────────────────────
+# 6a. DOCSTRING & SIGNATURE STANDARD — MANDATORY
+# ─────────────────────────────────────────────────────────────────────
+docstring_standard:
+  origin: 'user directive 2026-07-20, MANDATORY — the editor commit gate enforces this with zero tolerance'
+  required_always:
+    module: 'every .py file starts with a module docstring describing the file''s overall purpose'
+    module_functions: 'every module-level function has a docstring describing its purpose'
+    classes: 'every class has a docstring describing its purpose'
+    methods: 'every class method has a docstring describing its purpose'
+    module_variables: 'every module-level variable carries documentation describing its purpose (docstring line or trailing doc-comment)'
+  content_rule: >-
+    a docstring states the PURPOSE of the object (what it is for), never merely restates its
+    name; Google style; include Args/Returns/Raises sections where applicable; the SIGNATURE
+    and the docstring together must describe IN DETAIL both the TYPE and the PURPOSE of every
+    object involved: full type annotations on all parameters and the return value in the
+    signature, and per-parameter/return type + purpose descriptions in the docstring
+  signature_rule: >-
+    method/function signatures carry complete type annotations (every parameter and the return
+    type); the docstring's Args/Returns entries repeat the type and explain the purpose —
+    signature and docstring must agree
+  gate: >-
+    the editor commit gate hard-blocks on missing docstrings, missing Returns sections, and
+    missing return-type hints — fix by writing real documentation, never by bypass (see
+    laws.editor_gate_no_bypass)
+  forbidden_note: 'placeholder docstrings remain forbidden (see forbidden section)'
+
+# ─────────────────────────────────────────────────────────────────────
+# 7. FORBIDDEN
+# ─────────────────────────────────────────────────────────────────────
+forbidden:
+  - 'Using bash/shell commands to read or modify project files (mcp profile)'
+  - 'Using local Read/Write/Edit tools on project files (mcp profile)'
+  - 'write(commit) without preceding write(preview) in same session'
+  - 'Reusing node short_ids after an edit without re-preview'
+  - '# noqa, # type: ignore, placeholder docstrings, weakening types to Any'
+  - 'Skipping the quality gate'
+  - 'Silently retrying on error without reporting'
+  - 'Editing immutable Plan Manager exports: docs/plans/source_spec.md or docs/plans/spec.yaml'
+
+# ─────────────────────────────────────────────────────────────────────
+# 8. ERROR RECOVERY
+# ─────────────────────────────────────────────────────────────────────
+error_recovery:
+  VALIDATION_ERROR:
+    action: 'fix via edit -> write(preview) -> write(commit); DO NOT close and reopen'
+  UPSTREAM_UPLOAD_FAILED:
+    action: 'STOP. Report. Do not retry blindly.'
+  FILE_ALREADY_OPEN:
+    action: 'Another session holds the lock. Wait or use session_list to inspect.'
+  uploaded_missing_from_commit:
+    action: 'STOP. uploaded:true is REQUIRED. Report.'
+  SESSION_NOT_FOUND:
+    action: 'Session expired. Create new session, reopen file from scratch.'

@@ -1,0 +1,41 @@
+# ops: planmgr — cascade block (change control + freeze/unfreeze status control).
+
+purpose: top-down transactional change-set for MRS-and-below mutations, plus freeze/unfreeze status control.
+trigger: opening/previewing/committing/aborting a cascade, or transitioning a step's freeze status.
+
+commands:
+  cascade_begin: open a per-plan branch (lock), anchored at head revision
+  cascade_preview: dry gate + impact preview inside an open cascade (no publish)
+  cascade_commit: publish — advances head ONLY if the gate is green; GATE_RED leaves the cascade OPEN, nothing changes
+  cascade_abort: discard the open cascade — zero published effect
+  plan_unfreeze: escape door for a FULLY frozen plan (changed_by + reason mandatory) — the only way to mutate it
+  step_set_status: atomic-only status flips (in_progress/done) — NEVER used for freeze transitions
+  step_transition: status-machine moves (draft->ready_for_review->frozen etc.); require_green=true runs the gate FIRST
+
+procedure: |
+  1. cascade_begin(plan) -> cascade_uuid
+  2. mutate MRS-and-below under that cascade_uuid (authoring/graph/etc. ops, scoped to the cascade)
+  3. cascade_preview(cascade_uuid) -> dry gate + impact, no publish
+  4. cascade_commit(cascade_uuid) -> green advances head (terminal: committed); red -> stays open, fix findings, retry
+  5. or cascade_abort(cascade_uuid) -> discard, terminal
+
+freeze_flow: |
+  step_transition(to_status=frozen, scope, require_green=true): gate runs FIRST; green -> one batch revision
+  draft->ready_for_review->frozen; red -> GATE_RED, zero mutation.
+  needs_review is cascade-only, never reached via step_transition directly.
+  Subtree unfreeze: scoped step_transition(frozen->draft) writes an immutable audit record (actor/reason/scope/head).
+  Fully-frozen plan: step_transition refuses (FROZEN_TRUTH_WRITE) -> plan_unfreeze(plan, changed_by, reason) first.
+
+gotchas:
+  - 'fully-frozen plan + cascade_begin -> FROZEN_TRUTH_WRITE; use plan_unfreeze, no workaround'
+  - 'one open cascade per plan at a time (CASCADE_CONFLICT) — commit or abort before opening another'
+  - 'cascade_abort has zero published effect — safe to use freely when a branch goes wrong'
+  - 'committed/aborted are TERMINAL — no further action on that cascade_uuid'
+  - 'step_transition illegal targets are refused SYNCHRONOUSLY: zero gate run, zero mutation (INVALID_TRANSITION carries legal_targets)'
+  - 'in_progress/done/needs_review are NEVER reached via step_transition — in_progress/done via step_set_status (atomic only), needs_review only inside a cascade'
+
+errors:
+  FROZEN_TRUTH_WRITE: 'plan is fully frozen — plan_unfreeze(plan, changed_by, reason) then retry'
+  CASCADE_CONFLICT: 'another cascade already open on this plan — commit/abort it first'
+  GATE_RED: 'mechanical or semantic findings failed — fix findings; cascade stays open (or step stays undrafted); retry'
+  INVALID_TRANSITION: 'target status illegal from current — response carries legal_targets, pick one'

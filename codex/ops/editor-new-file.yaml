@@ -1,0 +1,24 @@
+# Creating a brand-new file through ai-editor.
+
+procedure:
+  - create a CA session
+  - call universal_file_open with create=true and initial_content
+  - use the native handler selected by the target extension
+  - preview and edit the draft as needed
+  - inspect write_mode=preview
+  - commit with verify_after_upload=true; the first commit atomically creates,
+    registers, and locks the CA file
+  - close the editor file and delete the CA session
+
+native_structured_formats: [.json, .yaml, .yml, .ini, .cfg, .toml]
+
+gotchas:
+  - Python create requires parseable initial_content
+  - unknown extensions need an explicit supported format_group
+  - do not create TOML through a temporary .txt file; TOML is natively supported
+  - closing a modified uncommitted draft is rejected to prevent silent data loss
+
+errors:
+  UNKNOWN_FORMAT: select a supported extension or explicit format_group
+  OPEN_ERROR: verify project-relative path and initial content
+  VALIDATION_ERROR: obtain command-specific help and retry once

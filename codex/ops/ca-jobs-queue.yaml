@@ -1,0 +1,29 @@
+# ops: code-analysis-server — jobs/queue block. Two SEPARATE stores — never cross-poll.
+
+purpose: poll and manage long-running CA commands that returned a job_id.
+
+procedure:
+  1. command returns job_id -> queue_get_job_status(job_id) to poll
+  2. queue_get_job_logs(job_id) for detail on progress/failure
+  3. queue_list_jobs / queue_health for overview
+  4. queue_add_job/queue_start_job/queue_stop_job/queue_delete_job only when directly managing the queue itself (not typical per-command polling)
+  5. ALWAYS check the inner result/exit code — a queue status of "completed" is not the same as success
+
+commands:
+  queue_add_job: 'enqueue a new job directly'
+  queue_start_job: 'start a queued job'
+  queue_stop_job: 'stop a running job'
+  queue_delete_job: 'remove a job from the queue'
+  queue_get_job_status: 'poll status by job_id (queuemgr store)'
+  queue_get_job_logs: 'fetch logs by job_id'
+  queue_list_jobs: 'list all jobs in the queue'
+  queue_health: 'queue subsystem health'
+
+gotchas:
+  - "long_task/job_status is a SEPARATE in-memory store from the queuemgr queue_* family — NEVER cross-poll one store's job_id against the other's command"
+  - queue 'completed' != command success — always inspect the inner result/exit code before reporting success
+  - 'known defect in CAS as of CAS 1.6.53 (re-verify on your install and record your own bug ids): do not poll multiple job_ids concurrently — CAS calls are strictly sequential'
+
+errors:
+  VALIDATION_ERROR: 'wrong job_id / wrong store — confirm which store issued the job_id, cmd_help(cmdname)'
+  job_not_found: 'job_id from the wrong store (queuemgr vs in-memory long_task) — re-check which command issued it'

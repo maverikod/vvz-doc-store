@@ -1,0 +1,41 @@
+# doc-store delivery and production acceptance.
+
+project:
+  version_sources: discover and verify from current project configuration before release
+  build: discover and verify the canonical build or release entrypoint before use
+  deploy_host: discover from current project configuration and verify current user authorization
+  live_pipeline: discover and verify the single canonical real-server acceptance pipeline before use
+  production_servers: [doc-store-vvz]
+  checks: [pytest, 'ruff check .', 'mypy .']
+  deploy_target_excluded_scope: >-
+    this project's own live doc-store database on the deployment target - a
+    bugfix-cycle deploy exercises the discovered live pipeline against the
+    deployed doc-store-vvz service but MUST NEVER write test/throwaway data
+    into or otherwise mutate the production doc-store database; use an
+    isolated test database/schema for pipeline checks that need write access
+
+procedure:
+  - reproduce the defect against the relevant current surface
+  - identify and prove the root cause before mutation
+  - implement the localized repair and focused regression test
+  - run focused tests, pytest, ruff check ., and mypy .
+  - discover and verify the current release mechanics; stop instead of guessing
+  - increment and align every version source
+  - run the discovered canonical build or release entrypoint from the active working branch
+  - deploy the built artifact only to the discovered and currently authorized target;
+    scope is everything EXCEPT deploy_target_excluded_scope - never touch it
+  - run the discovered single canonical real-server acceptance pipeline against production
+  - verify registration, health, version, and changed behavior through MCP Proxy
+  - create and verify the Plan Manager fix, then close only the proven bug
+  - merge the verified working branch into local main, report the ready commit,
+    and wait for the user to push main
+  - after user confirmation, CAS pulls main, verifies the commit, merges main into
+    cas, and remains on cas
+
+invariants:
+  - exactly one real-server pipeline; extend it instead of adding another
+  - queue handoff is normal; selected client mode determines polling or messages
+  - completed queue state is not success until the inner result is checked
+  - do not deploy from or edit main before production verification
+  - the agent never pushes main
+  - release mechanics are current-project facts to discover and verify, never prompt defaults to invent

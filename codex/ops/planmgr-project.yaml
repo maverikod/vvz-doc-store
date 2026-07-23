@@ -1,0 +1,21 @@
+# ops: planmgr — project block (plan-project binding + cross-project dependencies).
+
+purpose: bind a plan to a code-analysis project, and track cross-project dependencies.
+trigger: attaching/detaching a plan-project binding, or adding/inspecting a project dependency.
+
+commands:
+  plan_project_attach / plan_project_detach: bind/unbind a plan to a CA project
+  plan_project_set_primary / plan_project_clear_primary: mark/clear the primary binding among several
+  plan_project_list: list bindings for a plan
+  project_dependency_add / project_dependency_remove / project_dependency_update / project_dependency_confirm: manage
+    one cross-project dependency edge
+  project_dependency_list: list dependency edges
+  project_dependency_discover: auto-detect candidate dependencies
+  project_dependents: reverse lookup — what depends on a given project
+
+guards:
+  - a plan can have multiple project bindings but only one primary — plan_project_set_primary is exclusive per plan
+  - project_dependency_discover proposes candidates only — project_dependency_confirm is the human/agent decision step, never auto-applied
+
+errors:
+  VALIDATION_ERROR: 'param mismatch — cmd_help(cmdname), fix, retry once'

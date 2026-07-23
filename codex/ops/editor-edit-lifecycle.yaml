@@ -1,0 +1,36 @@
+# ai-editor open/preview/edit/write/close lifecycle.
+
+purpose: mutate a project file through a CA-owned session while canonical bytes
+  remain unchanged until commit
+
+procedure:
+  - create a CA session with session_create and retain its session_id
+  - open the project-relative file with universal_file_open
+  - preview the current draft and select format-appropriate identifiers
+  - apply one bounded batch with universal_file_edit
+  - inspect universal_file_write(write_mode=preview) and verify exact placement
+  - commit with universal_file_write(write_mode=commit, verify_after_upload=true)
+  - close every opened file with universal_file_close
+  - delete the CA session after all files are closed
+
+required_live_contract:
+  edit_outcome: a successful edit mutates the draft; preview diff confirms acceptance
+  python_headers: class and def trailing comments are preserved
+  nested_statements: try and except suite statements are addressable and replaceable
+  imports: sibling project imports are visible to isolated validation
+  formats: [python, json, yaml, yml, ini, cfg, toml, markdown, text]
+
+commands:
+  universal_file_open: project_id, file_path, session_id; create and initial_content for a new file
+  universal_file_preview: inspect draft and obtain node references
+  universal_file_node_at_line: resolve the most specific current Python CST node and ancestors
+  universal_file_edit: operations plus file_path for multi-file sessions
+  universal_file_write: explicit write_mode preview or commit
+  universal_file_close: refuses unsaved changes unless write_before_close commits them
+
+errors:
+  SESSION_NOT_FOUND: create a fresh CA session; do not invent an editor session id
+  FILE_ALREADY_OPEN: identify and close the owning session before retrying
+  MODIFIED_NOT_WRITTEN: commit intentionally or restore the draft; never silently discard
+  VALIDATION_ERROR: read command-specific help, correct parameters, retry once
+  UPSTREAM_UPLOAD_FAILED: stop and report exact CA evidence

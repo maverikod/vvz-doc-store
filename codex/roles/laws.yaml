@@ -1,0 +1,141 @@
+# doc-store standing laws. Every role reads this file before acting.
+# prompts-template: codex-prompts-v1 rev 1.1.0 (2026-07-23)
+
+variables:
+  file_access: local
+  local_branch: local
+  cas_branch: cas
+  transfer_branch: main
+
+laws:
+  branch_discipline: >-
+    There are three branches: local is the local working branch, cas is the Code
+    Analysis Server working branch, and main is transfer-only. Work only on the
+    branch belonging to the active site. Never edit main directly and never merge
+    local directly with cas. Before new work, synchronize main into the active
+    working branch. Build, deploy, and run the live acceptance pipeline from the
+    active working branch. Only after deployment and live verification are green,
+    merge that working branch into local main. The agent MUST NOT push main. It
+    reports the exact ready commit and waits for the user's explicit confirmation
+    that main was pushed. After confirmation, the opposite site checks out main,
+    pulls it through its authoritative Git surface, verifies the expected commit,
+    checks out its own working branch, and merges main into it. The same sequence is
+    mirrored when work originates on cas. All local changes are made only on local;
+    all registered CAS project changes are made only on cas. Leave each site on its
+    own working branch.
+  language: >-
+    Use Russian only for user-facing communication. Use English for code, comments,
+    commits, prompts, child tasks and reports, Plan Manager records, and logs.
+  root_tool_gate: >-
+    The root orchestrator is deny-by-default. Without current explicit permission it
+    uses only agent lifecycle operations and HRS/MRS Plan Manager actions. Read-only
+    filesystem, shell, Git, MCP, web, build, test, deploy, and runtime calls still
+    require direct permission or delegation. Tool failure grants no fallback right.
+  local_mode: >-
+    In the default local profile, project search, preview, structure, dependency,
+    usage, and quality analysis use the registered CAS project first. Project
+    content edits use the local checkout and apply_patch on branch local. Local Git,
+    tests, builds, and release preparation use native commands with the repository
+    workdir. Commit a coherent, verified task result; do not push. Server-side Git
+    operations always use CAS Git commands through MCP Proxy on branch cas.
+  cas_mode: >-
+    Registered CAS project analysis and Git, index, or administrative state changes
+    target branch cas through MCP Proxy. Project content mutation never uses CAS or
+    AI Editor; it remains local apply_patch work on branch local. Never edit main,
+    never merge local directly with cas, and never silently switch sites.
+  level_confinement: >-
+    An agent reasons only inside its declared level and supplied common/specific
+    context. It labels inference, asks its direct parent for information from above,
+    delegates work that belongs below, never inspects sibling-specific context, and
+    never widens scope without a new delegation envelope.
+  zero_trust: >-
+    A child report is a claim, not evidence. Verify the actual artifact, diff, command
+    result, test output, live behavior, and authoritative server state before
+    acceptance. Re-check weak branches manually even when semantic scoring is green.
+  reproduce_before_claiming: >-
+    Read live help/info, reproduce a failure cleanly, identify the cause, and prove the
+    causal link before filing a bug or changing code. A title, old workaround, single
+    transient failure, or agent statement is not proof.
+  proxy_defect_bug_registration: >-
+    Every discovered code defect, inaccuracy, or mismatch between observed behavior
+    and description, help, or info in the MCP proxy itself or in any server accessed
+    through it MUST be registered immediately as a BUG in Plan Manager and attached to
+    the corresponding project before continuing. The BUG description must include the
+    evidence, expected behavior, actual behavior, reproduction steps when available,
+    and the confirmed project anchoring. Treat documentation or contract mismatches as
+    BUGs, not TODOs.
+  disk_scale_output_pagination_todo: >-
+    When a command produces output so long that it must be persisted and read from
+    disk, register a separate TODO in Plan Manager for the corresponding server
+    project before continuing. The TODO must name the exact command and require an
+    adequate pagination contract with bounded defaults and maximum limits,
+    deterministic ordering, compatibility behavior for existing callers, and live MCP
+    Proxy verification. The TODO must record the observed output-size or
+    spill-to-disk symptom or evidence and confirm the corresponding project anchoring
+    before continuing.
+  server_error_recovery: >-
+    Invalid parameter: obtain command-specific help and retry once with the returned
+    schema. Command missing: obtain general help, select a listed command, then obtain
+    its specific help. Server unavailable: proxy health, registration, and downstream
+    health; stop and escalate exact evidence if unhealthy. Never guess legacy names.
+  editor_gate_no_bypass: >-
+    A failed editor validation gate must be diagnosed and fixed. Never bypass syntax,
+    Ruff, Flake8, mypy, import, or format validation. A false positive is a tooling bug
+    to reproduce and record, not permission to weaken the gate.
+  queue_semantics: >-
+    A long synchronous operation may validly transition to a queued job. This is not
+    an adapter leak. The shared mcp-proxy-adapter client supports synchronous emulation
+    by polling and unwrapping the terminal result (auto_poll=true) and asynchronous or
+    message-driven handling (auto_poll=false or manual_event_handling=true). Every
+    caller must select the intended mode explicitly and test its terminal-result and
+    terminal-error behavior.
+  host_execution: >-
+    Project work uses local tools or the MCP Terminal project sandbox according to the
+    active profile. Discover the deployment target from current project configuration
+    and verify current user authorization before host execution. Host execution is
+    only for deploy, real-host debugging, or service administration, never ordinary
+    source work.
+  delivery_checks: >-
+    For doc-store: reproduce, identify cause, prove, fix, add focused coverage,
+    run pytest, ruff check ., and mypy ., then discover and verify the current
+    authoritative version sources, build entrypoint, authorized deployment target,
+    and single live acceptance pipeline. Align versions, build, deploy, run that
+    pipeline, verify doc-store-vvz registration and changed behavior through MCP
+    Proxy, and record a verified Plan Manager fix before closing the bug. Never
+    invent release mechanics. Deploy scope is everything on the target EXCEPT
+    ops/delivery-release.yaml `deploy_target_excluded_scope` (this project's own
+    live doc-store database) - excluded scope is NEVER touched by a bugfix-cycle
+    deploy. Then apply branch_discipline.
+  server_client_law: >-
+    A server client wraps mcp-proxy-adapter rather than reimplementing transport. It
+    exposes an explicit synchronous-emulation mode and an asynchronous/message mode.
+    In synchronous mode callers receive the terminal result or exception; in async
+    mode a queued job/message handoff is valid. Client, server, image, and package
+    versions remain aligned where the project ships those artifacts.
+  doc_store_product_boundary: >-
+    The published products are the doc-store documentation server and the
+    independently installable doc-store-client. mcp-proxy-adapter exclusively owns
+    transport, JSON-RPC, OpenAPI, authorization, TLS or mTLS, queues, WebSocket
+    behavior, and proxy registration. Do not create a separate FastAPI or REST
+    surface.
+  doc_store_domain_storage: >-
+    The hierarchy is Document to Chapter to Paragraph to SemanticChunk. PostgreSQL
+    is canonical storage and pgvector is the semantic index. Ingestion is atomic,
+    versioned, and idempotent; incomplete versions are invisible. SvoChunkerClient,
+    EmbeddingClient, and chunk-metadata-adapter own chunking, embeddings, and
+    canonical chunk metadata respectively.
+  doc_store_search_commands: >-
+    ChunkQuery is the sole public full-text, semantic, and hybrid search contract.
+    ServerManager owns an explicit command manifest. One shared hook registers the
+    identical command set in the main process and workers. help comes from the live
+    registry and info is complete and synchronized with it.
+  doc_store_plan_authoring: >-
+    Plan b847fc0b-7180-4430-a1a3-820d93d8261c in planmgr is normative. Author every
+    GS horizontally, verify HRS/MRS coverage, duplication, boundaries, dependencies,
+    order, and parallelism, and take a G-level snapshot. Then select each
+    dependency-ready GS, decompose it vertically from TS to AS, verify atomic AS
+    quality, and snapshot the completed branch before continuing.
+  doc_store_exports: >-
+    docs/plans/source_spec.md and docs/plans/spec.yaml may only be unchanged bare-file
+    outputs of Plan Manager plan_export. They are non-normative and must never be
+    reconstructed, merged, or edited.

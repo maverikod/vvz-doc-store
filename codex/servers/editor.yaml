@@ -1,0 +1,33 @@
+# ai-editor-server — thin server map. Read the triggered ops/ file before acting; no other source needed.
+
+server:
+  id: 'ai-editor-server-vvz'   # LIVE registry id — verify with list_servers; a short/generic name may -> SERVER_NOT_FOUND
+  copy_number: 1   # copy_number can flip after a backend service restart — verify with list_servers
+
+essence: |
+  Thin MCP layer between agent and CA. Zero independent locking: every lock/download/upload
+  is CA under the hood, via a CA session_id (from CA session_create — editor never mints one).
+  Draft lives in {workspace_root}/{session_id}/; CA canonical bytes untouched until commit.
+
+hard_rules:
+  - session_id MUST come from CA session_create; editor does not generate one
+  - ALWAYS universal_file_close, even on abort — unclosed session = stale lock blocking the pipeline
+  - multi_file_bundle.open_file_count > 1 -> file_path required on edit/write/close
+  - 'editor_gate_no_bypass (laws.yaml): gate rejection -> STOP, analyze, FIX; never bypass'
+  - never CA get_file_lines on a healthy .py (USE_CST_COMMANDS) — use one-shot preview or file_structure
+  - JSON, YAML, INI/CFG, and TOML have native structured edit support
+  - resolve current Python nodes with universal_file_node_at_line after structural changes
+
+blocks:
+  lifecycle:
+    ops_file: ops/editor-edit-lifecycle.yaml
+    trigger: 'when opening, editing, previewing, writing, or closing an existing project file'
+    commands: [universal_file_open, universal_file_preview, universal_file_edit, universal_file_write, universal_file_close]
+  new_file:
+    ops_file: ops/editor-new-file.yaml
+    trigger: 'when creating a brand-new file with create=true'
+    commands: ['universal_file_open (create=true)', universal_file_write]
+  formats_addressing:
+    ops_file: ops/editor-formats-addressing.yaml
+    trigger: 'when choosing how to address an edit operation (node_id / node_ref / json_pointer / line index) per file format'
+    commands: ['universal_file_edit (operations[])', universal_file_node_at_line]

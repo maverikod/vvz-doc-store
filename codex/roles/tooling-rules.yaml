@@ -1,0 +1,63 @@
+# Operational rules for the editor toolchain and authoritative services.
+
+project_access_rules:
+  local_branch: local
+  cas_branch: cas
+  transfer_branch: main
+  analysis: registered CAS project through MCP Proxy first
+  content_editing: local checkout via apply_patch only
+  local_execution: native commands with the explicit repository workdir
+  plan_truth: registered doc-store plan in Plan Manager through MCP Proxy only
+  plan_exports: docs/plans/source_spec.md and docs/plans/spec.yaml are immutable non-normative exports
+
+editor_rules:
+  lifecycle: >-
+    CA session_create -> universal_file_open -> preview -> edit -> write(preview) ->
+    write(commit) -> universal_file_close -> CA session_delete. Reuse the same CA
+    session_id. Always close; do not silently discard modified drafts.
+  outcome_correlation: >-
+    Verify that universal_file_edit success correlates with draft mutation on the
+    installed editor version. Preview the diff before commit as an acceptance step.
+  python_addressing: >-
+    Python statements, including SimpleStatementLine nodes inside try and except
+    suites, are addressable by MAP short_id. universal_file_node_at_line can resolve
+    the current node and ancestors after the tree changes.
+  header_comments: >-
+    Keep an explicit live regression assertion that Python class and def trailing
+    header comments survive structured edits.
+  structured_formats: >-
+    JSON, YAML, INI/CFG, and TOML use structured node_ref/json_pointer addressing.
+    YAML root-key insertion and native INI/TOML edit, commit, and readback are covered
+    by the canonical live pipeline.
+  import_validation: >-
+    Verify that Python validation resolves sibling project modules in its isolated
+    QA copy. Do not add import-path bypasses; preserve the regression test.
+  qa_gate: never bypass Ruff, Flake8, mypy, parsing, or format validation
+
+cas_rules:
+  server_id: 'code-analysis-server-vvz'
+  project_id: 'ff997eab-d809-4cb9-b805-9dff4df60c6d'
+  branch: cas
+  git: all server-side Git uses CAS Git commands through MCP Proxy
+  read_order: structural and AST analysis before cross-search when applicable
+  copy_number: verify live registration after service restart
+
+queue_rules:
+  valid_transition: a long operation may return a queued job instead of blocking
+  synchronous_emulation: adapter client polls and unwraps with auto_poll=true
+  asynchronous_messages: use auto_poll=false or manual_event_handling=true
+  acceptance: inspect terminal payload or terminal exception, not only queue status
+
+planmgr_rules:
+  - Plan Manager is authoritative for plan levels, lifecycle, cascades, prompts,
+    execution records, bugs, TODOs, links, validation, and semantic score.
+  - Read a bug or TODO body before reanchoring, linking, closing, or duplicating it.
+  - Run mechanical validation before semantic scoring; manually inspect weak branches.
+  - Binding HRS is human-owned; never invent or silently rewrite it.
+
+branch_rules:
+  - all local changes occur only on local; all registered CAS changes occur only on cas; main is transfer-only
+  - never merge local directly with cas
+  - deploy and verify from the active working branch before merging it into main
+  - never push main; report the ready commit and wait for user push confirmation
+  - after confirmation, pull main at the opposite site and merge main into its branch

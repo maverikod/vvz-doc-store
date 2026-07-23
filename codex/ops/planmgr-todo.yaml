@@ -1,0 +1,22 @@
+# ops: planmgr — todo block (work-queue records + promotion into normative change requests).
+
+purpose: anchored runtime work-queue items and their promotion into normative change requests.
+trigger: creating, resolving, or promoting a TODO.
+
+commands:
+  todo_create / todo_get / todo_list / todo_update: create/read/list/update an anchored kinded runtime record
+  todo_reanchor: fix a bad anchor (weak anchor validation — same class of issue as bug_reanchor)
+  todo_resolve / todo_close / todo_delete: lifecycle end-states
+  todo_link_add / todo_link_remove: cross-link a todo to other runtime records
+  todo_queue: the prioritized work queue view
+  todo_promote_to_cascade_request: file an immutable CascadeRequest from a todo
+
+priority_nice: 'range [-20, 19], lower = more urgent (nice-style), drives todo_queue ordering'
+
+gotchas:
+  - 'todo_promote_to_cascade_request only FILES an immutable CascadeRequest — it does NOT open or commit a cascade itself; a human/orchestrator still runs cascade_begin (ops/planmgr-cascade.yaml)'
+  - 'target_step_path on the promoted CascadeRequest is NOT schema-enforced — supply and verify it yourself, nothing validates it for you'
+  - anchor validation is weak here too (see planmgr-bugs.yaml bug_reanchor note) — double-check anchors before todo_create
+
+errors:
+  VALIDATION_ERROR: 'param mismatch — cmd_help(cmdname), fix, retry once'
