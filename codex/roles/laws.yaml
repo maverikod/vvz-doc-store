@@ -129,28 +129,82 @@ laws:
     deliverer role executing the mandated procedure (roles/deliverer.yaml). No other
     role ever performs host execution or asks for it.
   delivery_checks: >-
-    For doc-store: reproduce, identify cause, prove, fix, add focused coverage,
-    run pytest, ruff check ., and mypy ., then discover and verify the current
-    authoritative version sources, build entrypoint, authorized deployment target,
-    and single live acceptance pipeline (build/test/deploy SCRIPT execution is
-    always LOCAL - see ops/delivery-release.yaml `build_execution`; never via MCP
-    Proxy or MCP Terminal). Align versions, build, publish the doc-store-client to
-    PyPI at the same version, deploy, run that
-    pipeline, verify doc-store-vvz registration and changed behavior through MCP
-    Proxy, and record a verified Plan Manager fix before closing the bug. Never
-    invent release mechanics. Deploy scope is everything on the target EXCEPT
-    ops/delivery-release.yaml `deploy_target_excluded_scope` (this project's own
-    live doc-store database) - excluded scope is NEVER touched by a bugfix-cycle
-    deploy. Then apply branch_discipline. OWNER: the delivery DECISION is
-    orchestrator-level; its MECHANICS are delegated to the deliverer role
-    (roles/deliverer.yaml) executing that decision; coder/tester gate their own
-    steps, not delivery.
+    DELIVERY DEFINITION - "work delivered to the user" means, in order: (1)
+    discover and verify the current authoritative version sources
+    (ops/delivery-release.yaml `version_sources`) and bump every one, always
+    before any deploy; (2) discover and verify the canonical build entrypoint
+    (ops/delivery-release.yaml `build`) and run it (build/test/deploy SCRIPT
+    execution is always LOCAL - see `build_execution`; never via MCP Proxy or
+    MCP Terminal); (3) publish the doc-store-client to PyPI at the same
+    version; (4) discover and verify the currently authorized deployment
+    target (ops/delivery-release.yaml `deploy_host`) and deploy to it - scope
+    is everything on the target EXCEPT `deploy_target_excluded_scope` (this
+    project's own live doc-store database), which is NEVER touched; (5)
+    discover and verify the single live acceptance pipeline
+    (ops/delivery-release.yaml `live_pipeline`), run it GREEN against the
+    deployed instance, and verify doc-store-vvz registration and changed
+    behavior through MCP Proxy; (6) apply branch_discipline post-deploy
+    propagation. Never invent release mechanics. Reproduce/cause/prove/fix and
+    the RED-before-mutation requirement belong to bugfix_acceptance_cycle, not
+    here; record a verified Plan Manager fix and close the bug there, not as a
+    delivery step. FULL PROCEDURE, INVARIANTS, AND GOTCHAS:
+    ops/delivery-release.yaml - read it BEFORE the first release action. A
+    task that modified a server is complete only after all steps pass. OWNER:
+    the delivery DECISION is orchestrator-level; its MECHANICS are delegated
+    to the deliverer role (roles/deliverer.yaml) executing that decision;
+    coder/tester gate their own steps, not delivery.
   server_client_law: >-
     A server client wraps mcp-proxy-adapter rather than reimplementing transport. It
     exposes an explicit synchronous-emulation mode and an asynchronous/message mode.
     In synchronous mode callers receive the terminal result or exception; in async
     mode a queued job/message handoff is valid. Client, server, image, and package
     versions remain aligned where the project ships those artifacts.
+  bugfix_acceptance_cycle: >-
+    [TRIGGER: any bug fix AND any acceptance of new code - fires immediately and
+    independently of any scheduled delivery] The mandatory cycle is, in order: (1)
+    REPRODUCE the defect live, through the project's real access surface; (2)
+    EXTEND the discovered single real-server acceptance pipeline
+    (ops/delivery-release.yaml `live_pipeline`) with a covering check for this
+    defect and CONFIRM the defect WITH the pipeline - RED - before any further
+    step; (3) FIND THE CAUSE in code; (4) PROVE cause->symptom with concrete
+    evidence; (5) FIX with focused regression tests, then run pytest, ruff
+    check ., and mypy .; (6) BUMP the version at every discovered and verified
+    version source (ops/delivery-release.yaml `version_sources`) - always
+    before any deploy; (7) DEPLOY to the discovered, currently authorized
+    deployment target (ops/delivery-release.yaml `deploy_host`) - build
+    SCRIPT execution stays LOCAL (see `build_execution`); everything on that
+    target is a test target EXCEPT ops/delivery-release.yaml
+    `deploy_target_excluded_scope` (this project's own live doc-store
+    database) - excluded scope is NEVER touched; (8) RE-RUN the discovered
+    pipeline and require it GREEN (coverage requirement:
+    single_real_server_pipeline). LOOP, do not stop short: reproduction fails
+    at (1) -> OK, done; still red after (8) -> return to (3). ECONOMY
+    PRINCIPLE: a test deploy is CHEAPER than extended model reasoning - when
+    judging "is it fixed", prefer deploy-and-check over further analysis.
+    After the cause of an error is found, checks proving its elimination MUST
+    be added to the pipeline (named after the bug) - this is step (2)/(8)
+    above, not a separate action. Never invent release mechanics; discover and
+    verify them, as ops/delivery-release.yaml `procedure` requires. Work is
+    not accepted until every applicable step has passed. Single authoritative
+    definition of this cycle - do not restate it elsewhere; ops files,
+    modes.yaml, and AGENTS.md cross-reference this law by name instead.
+  single_real_server_pipeline: >-
+    [once per session] Discover and verify the project's single full-testing
+    pipeline that runs against the REAL deployed doc-store-vvz server
+    (ops/delivery-release.yaml `live_pipeline`), and confirm it exists in
+    EXACTLY ONE instance. The pipeline MUST exercise ALL API methods of the
+    server EXCEPT mcp-proxy-adapter's own built-in adapter methods. A missing
+    pipeline is a gap to close immediately; a duplicate is a defect to merge
+    into the single pipeline. New checks always extend the existing pipeline -
+    never create a second one.
+  template_prompt_reconciliation: >-
+    [once per session] Reconcile the project's prompt bundle with its source
+    template archive (claude: /home/vasilyvz/projects/prompts/claude-prompts-v1.5.0.tar.gz;
+    codex: /home/vasilyvz/projects/prompts/codex-prompts-v1.5.0.tar.gz). The model
+    REQUESTS the user's permission to update; only after the user confirms does
+    it diff template vs project bundle and update the project prompt, preserving
+    project-specific placeholder values. Template improvements flow back to the
+    template only on the user's explicit order.
   doc_store_product_boundary: >-
     The published products are the doc-store documentation server and the
     independently installable doc-store-client. mcp-proxy-adapter exclusively owns

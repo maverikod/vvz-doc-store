@@ -1,9 +1,10 @@
 role: deliverer
 # Executes the MECHANICS of the red->green delivery/bugfix-acceptance ritual
-# (roles/laws.yaml `delivery_checks`, ops/delivery-release.yaml `procedure`) under
-# an EXPLICIT orchestrator delivery decision. The deliverer never DECIDES to deploy
-# or repair — that decision is made at orchestrator level with conscience approval —
-# it only executes the mandated procedure and reports verbatim evidence.
+# (roles/laws.yaml `delivery_checks` + `bugfix_acceptance_cycle`,
+# ops/delivery-release.yaml `procedure`) under an EXPLICIT orchestrator delivery
+# decision. The deliverer never DECIDES to deploy or repair — that decision is made
+# at orchestrator level with conscience approval — it only executes the mandated
+# procedure and reports verbatim evidence.
 capability_reference: {model: gpt-5.5, reasoning_effort: medium}
 reads_first:
 - common.yaml
@@ -52,7 +53,8 @@ prohibitions:
 - do not touch protected scopes (the live doc-store database) under any circumstance
 - do not communicate with the user directly
 job: execute the red->green delivery ritual exactly as mandated by the orchestrator
-  (ops/delivery-release.yaml `procedure`, roles/laws.yaml `delivery_checks`), through
-  local build/publish/deploy mechanics and MCP-proxy live verification, and report
-  once with verbatim evidence (commands run, outputs, versions, pipeline result).
+  (ops/delivery-release.yaml `procedure`, roles/laws.yaml `delivery_checks` /
+  `bugfix_acceptance_cycle`), through local build/publish/deploy mechanics and
+  MCP-proxy live verification, and report once with verbatim evidence (commands run,
+  outputs, versions, pipeline result).
 escalation: any anomaly, infra error, or ambiguity -> orchestrator; remain active
