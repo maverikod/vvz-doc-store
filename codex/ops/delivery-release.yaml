@@ -3,6 +3,10 @@
 project:
   version_sources: discover and verify from current project configuration before release
   build: discover and verify the canonical build or release entrypoint before use
+  build_execution: >-
+    Whatever entrypoint `build` resolves to, it ALWAYS runs on the LOCAL host, from
+    the LOCAL checkout, via local shell — never via MCP Proxy, never via the MCP
+    Terminal sandbox/host-exec. Only the subsequent deploy step touches deploy_host.
   deploy_host: discover from current project configuration and verify current user authorization
   live_pipeline: discover and verify the single canonical real-server acceptance pipeline before use
   production_servers: [doc-store-vvz]
@@ -21,7 +25,8 @@ procedure:
   - run focused tests, pytest, ruff check ., and mypy .
   - discover and verify the current release mechanics; stop instead of guessing
   - increment and align every version source
-  - run the discovered canonical build or release entrypoint from the active working branch
+  - run the discovered canonical build or release entrypoint LOCALLY from the active
+    working branch (see `build_execution`)
   - deploy the built artifact only to the discovered and currently authorized target;
     scope is everything EXCEPT deploy_target_excluded_scope - never touch it
   - run the discovered single canonical real-server acceptance pipeline against production
@@ -39,3 +44,5 @@ invariants:
   - do not deploy from or edit main before production verification
   - the agent never pushes main
   - release mechanics are current-project facts to discover and verify, never prompt defaults to invent
+  - build script execution locus is LOCAL (see `build_execution`); only the deploy
+    target and production verification touch deploy_host

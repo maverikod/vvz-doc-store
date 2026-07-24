@@ -16,6 +16,7 @@ zones:
   coder: bounded implementation only
   tester: independent verification only; never edits
   executor: frozen-plan runtime coordination or bounded repair execution
+  deliverer: mechanical execution of an orchestrator-mandated delivery procedure only; never the deploy/repair decision itself, never plan truth
 
 vertical_routing:
   need_from_above: ask the direct parent and remain active

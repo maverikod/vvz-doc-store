@@ -1,5 +1,5 @@
 # doc-store standing laws. Every role reads this file before acting.
-# prompts-template: codex-prompts-v1 rev 1.1.0 (2026-07-23)
+# prompts-template: codex-prompts-v1 rev 1.3.0 (2026-07-24)
 
 variables:
   file_access: local
@@ -37,7 +37,17 @@ laws:
     content edits use the local checkout and apply_patch on branch local. Local Git,
     tests, builds, and release preparation use native commands with the repository
     workdir. Commit a coherent, verified task result; do not push. Server-side Git
-    operations always use CAS Git commands through MCP Proxy on branch cas.
+    operations always use CAS Git commands through MCP Proxy on branch cas. HARD
+    RULE (no exceptions): EVERY script — build, test, and deploy runners alike, e.g.
+    the discovered entrypoint named in ops/delivery-release.yaml `build` — runs with
+    LOCAL tools on the local checkout via local shell. MCP Proxy in this profile is
+    used ONLY for CA search/analysis and CAS-authoritative git sync (never to
+    execute a build/test/deploy script, never via MCP Terminal sandbox or
+    host-exec). Do not read host_execution's "MCP Terminal project sandbox
+    according to the active profile" clause as authorizing routine local-mode
+    script execution through the proxy — that path is reserved for a genuine CAS
+    capability gap or an authorized real-host incident, not for ordinary
+    build/test/deploy.
   cas_mode: >-
     Registered CAS project analysis and Git, index, or administrative state changes
     target branch cas through MCP Proxy. Project content mutation never uses CAS or
@@ -94,18 +104,31 @@ laws:
     active profile. Discover the deployment target from current project configuration
     and verify current user authorization before host execution. Host execution is
     only for deploy, real-host debugging, or service administration, never ordinary
-    source work.
+    source work. CLARIFY (see local_mode HARD RULE): "ordinary source work" includes
+    ALL build/test/deploy SCRIPT execution, which is always local-tools work — the
+    MCP Terminal sandbox/host-exec branch of this law does not apply to it.
+    "Authorized deploy" means administering the discovered deployment target itself
+    after a LOCALLY built artifact is ready — never license to run the build script
+    remotely. The DECISION to perform authorized deploy or real-host administration
+    remains ORCHESTRATOR-ONLY, exercised with conscience approval; its MECHANICS may
+    be delegated to the deliverer role executing the mandated procedure
+    (roles/deliverer.yaml). No other role ever performs host execution or asks for it.
   delivery_checks: >-
     For doc-store: reproduce, identify cause, prove, fix, add focused coverage,
     run pytest, ruff check ., and mypy ., then discover and verify the current
     authoritative version sources, build entrypoint, authorized deployment target,
-    and single live acceptance pipeline. Align versions, build, deploy, run that
+    and single live acceptance pipeline (build/test/deploy SCRIPT execution is
+    always LOCAL - see ops/delivery-release.yaml `build_execution`; never via MCP
+    Proxy or MCP Terminal). Align versions, build, deploy, run that
     pipeline, verify doc-store-vvz registration and changed behavior through MCP
     Proxy, and record a verified Plan Manager fix before closing the bug. Never
     invent release mechanics. Deploy scope is everything on the target EXCEPT
     ops/delivery-release.yaml `deploy_target_excluded_scope` (this project's own
     live doc-store database) - excluded scope is NEVER touched by a bugfix-cycle
-    deploy. Then apply branch_discipline.
+    deploy. Then apply branch_discipline. OWNER: the delivery DECISION is
+    orchestrator-level; its MECHANICS are delegated to the deliverer role
+    (roles/deliverer.yaml) executing that decision; coder/tester gate their own
+    steps, not delivery.
   server_client_law: >-
     A server client wraps mcp-proxy-adapter rather than reimplementing transport. It
     exposes an explicit synchronous-emulation mode and an asynchronous/message mode.

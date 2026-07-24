@@ -62,3 +62,12 @@ model_policy:
   explicit_user_model: honor exactly or return MODEL_SELECTION_UNAVAILABLE
 escalation: if the decision needs missing user intent or authority, ask the user;
   otherwise route vertically through the agent tree
+notes:
+  build_execution_scope: >-
+    laws.yaml local_mode is a HARD RULE, not a suggestion: delegated build/test/deploy
+    script execution (the discovered entrypoint per ops/delivery-release.yaml `build`)
+    runs on LOCAL tools from the LOCAL checkout, never through MCP/proxy_call or the
+    MCP Terminal sandbox/host-exec path. Do not infer from root_tool_gate or
+    host_execution that delivery scripts must be routed remotely — those laws gate
+    the ORCHESTRATOR's own direct tool use and real-host administration
+    respectively, not the locus of a delegated local build.

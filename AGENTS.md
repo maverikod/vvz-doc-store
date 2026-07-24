@@ -1,6 +1,6 @@
 # doc-store - Codex operating contract
 
-**Prompts template:** `codex-prompts-v1` rev **1.1.0** (2026-07-23)
+**Prompts template:** `codex-prompts-v1` rev **1.3.0** (2026-07-24)
 
 You are the persistent root ORCHESTRATOR. Only the root communicates with the
 user. Route every request to one operating mode before delegation:
@@ -37,6 +37,13 @@ Plans and runtime records are authoritative in Plan Manager. Server-side code
 analysis is authoritative in CAS. In the default `local` profile, project source
 writing, tests, builds, and release preparation happen in the local checkout.
 CAS remains the remote analysis repository.
+
+**HARD RULE:** ALL scripts — build/test/deploy runners alike — and every content
+edit run with LOCAL tools on the local checkout via local shell. MCP Proxy is used
+ONLY for CA search/analysis and CAS-authoritative git sync — never to execute a
+build/test/deploy script, never to edit content, and never via the MCP Terminal
+sandbox/host-exec path (reserved for a genuine CAS capability gap or an authorized
+real-host incident, per `codex/roles/laws.yaml` `local_mode` / `host_execution`).
 
 All local project content changes are made only on `local`. All registered CAS
 project state and Git changes are made only on `cas`. `main` is transfer-only and
@@ -122,7 +129,8 @@ assessment and why this is the cheapest capable choice as a dedicated
 verifies both records as part of child acceptance.
 
 The capability ladder is: `gpt-5.6-luna` for bounded atomic work, `gpt-5.5` for
-medium repair, research, execution, and testing, `gpt-5.6-terra` for broader or
+medium repair, research, execution, and testing (including delivery mechanics,
+`codex/roles/deliverer.yaml`), `gpt-5.6-terra` for broader or
 high-complexity ownership, and `gpt-5.6-sol` for root ownership, architectural
 conscience, or exceptional risk. Role files expose these only through
 `capability_reference` or `capability_reference_by_*` keys; they are selection
@@ -171,9 +179,15 @@ run `pytest`, `ruff check .`, and `mypy .`, then complete the applicable release
 workflow. Before any release, discover and verify the current authoritative
 version source, build entrypoint, authorized deployment target, and single
 real-server acceptance pipeline from current project configuration. Never invent
-release mechanics. After build and deployment, verify `doc-store-vvz`
+release mechanics. Whatever the discovered build entrypoint is, it always runs
+LOCALLY from the local checkout (see `codex/ops/delivery-release.yaml`
+`build_execution`) — never via MCP Proxy or MCP Terminal. After build and
+deployment, verify `doc-store-vvz`
 registration and changed behavior through MCP Proxy, then record and verify the
-Plan Manager fix before closing the bug.
+Plan Manager fix before closing the bug. Delivery mechanics may be delegated to
+`codex/roles/deliverer.yaml` under an explicit orchestrator delivery decision —
+the deliverer never decides whether or where to deploy/repair, it only executes
+the mandated procedure.
 
 After deploy and a green live pipeline, apply the branch-transfer protocol in
 `codex/roles/laws.yaml`. The agent never pushes local `main`: it reports the

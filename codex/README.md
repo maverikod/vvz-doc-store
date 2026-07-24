@@ -55,7 +55,17 @@ alone is not a defect.
 Keep one real-server pipeline and extend it with regression scenarios. Build and
 verify from the active working branch. Merge into transfer-only `main` only after
 production acceptance. The agent reports the ready commit and waits for the user
-to push before synchronizing the opposite site.
+to push before synchronizing the opposite site. Delivery mechanics may be
+delegated to `codex/roles/deliverer.yaml` under an explicit orchestrator delivery
+decision — the deliverer never decides whether or where to deploy/repair, it only
+executes the mandated procedure.
+
+**Build execution locus (HARD RULE):** whatever the discovered build/release
+entrypoint is (`ops/delivery-release.yaml` `build`), it always runs on the LOCAL
+host from the LOCAL checkout via local shell — never through MCP Proxy or the MCP
+Terminal sandbox/host-exec path. Only the deploy step touches the discovered
+deployment target. See `codex/roles/laws.yaml` `local_mode` / `host_execution` and
+`codex/ops/delivery-release.yaml` `build_execution`.
 
 ## Validation
 
