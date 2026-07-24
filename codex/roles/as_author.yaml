@@ -21,7 +21,6 @@ may_use:
 - planmgr_step_update_own_level_5
 - planmgr_branch_validate
 - ca_read_only
-- ca_search
 - ca_analysis
 permissions:
 - read the supplied common and specific Plan Manager context blocks

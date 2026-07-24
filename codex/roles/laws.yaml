@@ -1,11 +1,12 @@
 # doc-store standing laws. Every role reads this file before acting.
-# prompts-template: codex-prompts-v1 rev 1.3.0 (2026-07-24)
+# prompts-template: codex-prompts-v1 rev 1.5.0 (2026-07-24)
 
 variables:
-  file_access: local
+  file_access: local      # local (default) | cas | local_ide. Governs local_mode/cas_mode/local_ide_mode and the profile-dependent parts of branch_discipline.
   local_branch: local
   cas_branch: cas
   transfer_branch: main
+  escalation: strict      # strict (default) | off. User pre-sets 'off' -> law server_error_recovery is relaxed.
 
 laws:
   branch_discipline: >-
@@ -53,6 +54,13 @@ laws:
     target branch cas through MCP Proxy. Project content mutation never uses CAS or
     AI Editor; it remains local apply_patch work on branch local. Never edit main,
     never merge local directly with cas, and never silently switch sites.
+  local_ide_mode: >-
+    [active when variables.file_access=local_ide] Files live locally and are edited by
+    the HUMAN through the IDE; the agent NEVER edits project files directly - it
+    delivers proposed patches/diffs in its reports for the human to apply. Search and
+    analysis still run through CAS via MCP Proxy; sync local<->server state with Git
+    (push from local, CAS git_pull_safe on the server). Branch rules follow the
+    'local' clause of branch_discipline.
   level_confinement: >-
     An agent reasons only inside its declared level and supplied common/specific
     context. It labels inference, asks its direct parent for information from above,
@@ -84,10 +92,16 @@ laws:
     spill-to-disk symptom or evidence and confirm the corresponding project anchoring
     before continuing.
   server_error_recovery: >-
-    Invalid parameter: obtain command-specific help and retry once with the returned
-    schema. Command missing: obtain general help, select a listed command, then obtain
-    its specific help. Server unavailable: proxy health, registration, and downstream
-    health; stop and escalate exact evidence if unhealthy. Never guess legacy names.
+    [unless variables.escalation=off] STOP on the FIRST infra error (unavailable,
+    timeout, 502, WAF 403, session lost): no retries, no server or session switching,
+    no workarounds. Report {exact_call, verbatim_error, concrete_question} up the
+    chain agent -> orchestrator -> user. escalation=off relaxes this STOP-first
+    requirement. Taxonomy: Invalid parameter -> obtain command-specific help and retry
+    once with the returned schema (self-correctable even under strict escalation).
+    Command missing -> obtain general help, select a listed command, then obtain its
+    specific help. Server unavailable -> check proxy health, registration, and
+    downstream health; stop and escalate exact evidence if unhealthy. Never guess
+    legacy names.
   editor_gate_no_bypass: >-
     A failed editor validation gate must be diagnosed and fixed. Never bypass syntax,
     Ruff, Flake8, mypy, import, or format validation. A false positive is a tooling bug
@@ -110,16 +124,18 @@ laws:
     "Authorized deploy" means administering the discovered deployment target itself
     after a LOCALLY built artifact is ready — never license to run the build script
     remotely. The DECISION to perform authorized deploy or real-host administration
-    remains ORCHESTRATOR-ONLY, exercised with conscience approval; its MECHANICS may
-    be delegated to the deliverer role executing the mandated procedure
-    (roles/deliverer.yaml). No other role ever performs host execution or asks for it.
+    remains ORCHESTRATOR-ONLY, exercised with conscience approval (record the date
+    your project's user granted this); its MECHANICS may be delegated to the
+    deliverer role executing the mandated procedure (roles/deliverer.yaml). No other
+    role ever performs host execution or asks for it.
   delivery_checks: >-
     For doc-store: reproduce, identify cause, prove, fix, add focused coverage,
     run pytest, ruff check ., and mypy ., then discover and verify the current
     authoritative version sources, build entrypoint, authorized deployment target,
     and single live acceptance pipeline (build/test/deploy SCRIPT execution is
     always LOCAL - see ops/delivery-release.yaml `build_execution`; never via MCP
-    Proxy or MCP Terminal). Align versions, build, deploy, run that
+    Proxy or MCP Terminal). Align versions, build, publish the doc-store-client to
+    PyPI at the same version, deploy, run that
     pipeline, verify doc-store-vvz registration and changed behavior through MCP
     Proxy, and record a verified Plan Manager fix before closing the bug. Never
     invent release mechanics. Deploy scope is everything on the target EXCEPT

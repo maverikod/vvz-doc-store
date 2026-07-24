@@ -17,7 +17,6 @@ scope:
   - testing ownership
 may_use:
 - ca_read_only
-- ca_search
 - ca_analysis
 - local_apply_patch
 - local_project_commands

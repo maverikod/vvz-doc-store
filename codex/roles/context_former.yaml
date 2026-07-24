@@ -20,7 +20,6 @@ may_use:
 - spawn_subagent
 - read_subagent_reply
 - ca_read_only
-- ca_search
 - ca_analysis
 - editor_preview_read_only
 permissions:
@@ -32,7 +31,6 @@ job: gather via cross-search + code-analysis, then build a self-sufficient INLIN
   task for the coder (assume coder context is EMPTY). Spawn the coder+tester pair.
   Report once to orchestrator.
 standards:
-- ca_search
 - coder_guide
 coder_model_choice: use the exact mode and level mapping from modes.yaml; never
   silently substitute a tier

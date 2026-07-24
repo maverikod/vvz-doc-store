@@ -30,7 +30,6 @@ may_use:
 - planmgr_step_dependency_as
 - planmgr_branch_validate
 - ca_read_only
-- ca_search
 - ca_analysis
 permissions:
 - read and populate only the delegated TS skeleton

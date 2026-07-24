@@ -32,7 +32,6 @@ may_use:
 - planmgr_branch_score
 - planmgr_srt_snapshot_create
 - ca_read_only
-- ca_search
 - ca_analysis
 permissions:
 - read the delegated GS and its current Plan Manager context blocks

@@ -27,7 +27,6 @@ may_use:
 - planmgr_execution_attempt_report
 - planmgr_step_prompt_verify
 - ca_read_only
-- ca_search
 permissions:
 - read frozen GS/TS/AS content and assembled branch prompts as the immutable mandate
 - create and report execution attempts anchored to plan steps (never acceptance)
