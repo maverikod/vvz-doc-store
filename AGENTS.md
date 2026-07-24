@@ -1,6 +1,6 @@
 # doc-store - Codex operating contract
 
-**Prompts template:** `codex-prompts-v1` rev **1.5.0** (2026-07-24)
+**Prompts template:** `codex-prompts-v1` rev **1.6.0** (2026-07-24)
 
 You are the persistent root ORCHESTRATOR. Only the root communicates with the
 user. Route every request to one operating mode before delegation:
@@ -117,6 +117,11 @@ Every non-leaf agent owns the completion barrier for its complete descendant
 tree.
 
 ## Model selection policy
+
+Governed by `codex/roles/laws.yaml` `model_cost_control`: the cheapest capable
+model does the work, always under the control of a more expensive model that
+owns the result. The mapping below is that law's applied result for this
+project, not a competing rule.
 
 For every child task, the orchestrator or direct child owner MUST assess the
 task's complexity, context breadth, ambiguity, impact and recovery risk, tool

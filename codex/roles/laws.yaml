@@ -1,5 +1,5 @@
 # doc-store standing laws. Every role reads this file before acting.
-# prompts-template: codex-prompts-v1 rev 1.5.0 (2026-07-24)
+# prompts-template: codex-prompts-v1 rev 1.6.0 (2026-07-24)
 
 variables:
   file_access: local      # local (default) | cas | local_ide. Governs local_mode/cas_mode/local_ide_mode and the profile-dependent parts of branch_discipline.
@@ -27,6 +27,23 @@ laws:
   language: >-
     Use Russian only for user-facing communication. Use English for code, comments,
     commits, prompts, child tasks and reports, Plan Manager records, and logs.
+  model_cost_control: >-
+    The CHEAPEST model capable of a task does the work, always under the CONTROL of
+    a MORE EXPENSIVE model. The more-expensive parent DECIDES, SUPERVISES, and OWNS
+    the accepted result — full responsibility for accepted work lies with the
+    supervising parent, never the cheap delegate. Pick the cheapest model tier
+    capable of the task at acceptable hallucination/quality risk; escalate tier ONLY
+    for judgment, verdict, or verification work (independent architectural
+    conscience, GS ownership, verification). SINGLE AUTHORITATIVE STATEMENT of
+    model-tier selection for this project — AGENTS.md's "Model selection policy"
+    section and `orchestrator.yaml` `model_policy` cross-reference this law by name
+    instead of restating the principle; they still record the project's concrete
+    fixed model/reasoning-tier mapping as this law's applied result, not a
+    competing rule. GOVERNS the `context_former` resolution: a parent MAY delegate
+    context assembly to the cheaper `context_former` helper when economical, but
+    retains control and ownership of the accepted result exactly as this law
+    requires (see `common.yaml` "a parent owns context formation..." principle and
+    `context_former.yaml` `status`).
   root_tool_gate: >-
     The root orchestrator is deny-by-default. Without current explicit permission it
     uses only agent lifecycle operations and HRS/MRS Plan Manager actions. Read-only
@@ -199,8 +216,8 @@ laws:
     never create a second one.
   template_prompt_reconciliation: >-
     [once per session] Reconcile the project's prompt bundle with its source
-    template archive (claude: /home/vasilyvz/projects/prompts/claude-prompts-v1.5.0.tar.gz;
-    codex: /home/vasilyvz/projects/prompts/codex-prompts-v1.5.0.tar.gz). The model
+    template archive (claude: /home/vasilyvz/projects/prompts/claude-prompts-v1.6.0.tar.gz;
+    codex: /home/vasilyvz/projects/prompts/codex-prompts-v1.6.0.tar.gz). The model
     REQUESTS the user's permission to update; only after the user confirms does
     it diff template vs project bundle and update the project prompt, preserving
     project-specific placeholder values. Template improvements flow back to the

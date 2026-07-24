@@ -49,6 +49,10 @@ flow:
   - run independent acceptance appropriate to risk
   - report only evidence-backed outcomes to the user
 model_policy:
+  governed_by: >-
+    laws.yaml `model_cost_control` — the cheapest capable model does the work,
+    always under the control of a more expensive model that owns the result;
+    this block records that law's applied result, not a competing rule.
   selection: cheapest configured tier demonstrably capable of the child task
   assess: [complexity, context_breadth, ambiguity, impact, recovery_risk, tool_demands, verification]
   delegation_evidence:

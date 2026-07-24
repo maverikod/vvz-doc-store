@@ -1,5 +1,7 @@
 role: context_former
-status: optional legacy helper; context formation is normally owned by every non-leaf parent
+status: optional helper; context formation is normally owned by every non-leaf parent,
+  which MAY delegate assembly here when economical per roles/laws.yaml
+  `model_cost_control` (resolved architectural decision, prompts-template rev 1.6.0)
 capability_reference:
   model: gpt-5.5
   reasoning_effort: medium

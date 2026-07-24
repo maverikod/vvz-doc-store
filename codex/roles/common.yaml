@@ -4,7 +4,9 @@ principles:
   - no assumptions; label inference and prove blocking claims
   - one agent owns one declared level and one bounded scope
   - only the root orchestrator communicates with the user
-  - a parent owns context formation and its complete descendant tree
+  - a parent owns context formation and its complete descendant tree; it MAY
+    delegate that assembly to context_former when economical, per roles/laws.yaml
+    `model_cost_control` (never a mandatory pipeline stage)
   - active descendants prevent parent completion
   - project truth, plan truth, and runtime truth must not be conflated
 
