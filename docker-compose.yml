@@ -24,6 +24,11 @@ services:
     environment:
       DOC_STORE_UID: "${DOC_STORE_UID:-1000}"
       DOC_STORE_GID: "${DOC_STORE_GID:-1000}"
+      # Same language declaration the Debian package installs to
+      # /etc/default/doc-store. Export it (or set it in a local .env) to match
+      # production; left empty it is reported as an absent declaration rather
+      # than silently defaulted.
+      DOC_STORE_LOCALES: "${DOC_STORE_LOCALES:-}"
       DATABASE_URL: postgresql+psycopg://doc_store:doc_store@postgres:5432/doc_store
       DOC_STORE_HOST: 0.0.0.0
       DOC_STORE_PORT: "8000"

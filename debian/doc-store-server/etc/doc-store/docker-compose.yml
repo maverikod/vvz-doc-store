@@ -29,6 +29,13 @@ services:
       DOC_STORE_CONFIG: /etc/doc-store/config.json
       DOC_STORE_UID: ${DOC_STORE_UID:-1000}
       DOC_STORE_GID: ${DOC_STORE_GID:-1000}
+      # Packaged language declaration from /etc/default/doc-store, which
+      # doc-store.service loads through EnvironmentFile before starting the
+      # stack. doc-store-init-locales generates these locales on the host; the
+      # service still needs the declaration itself to know which languages it
+      # must analyse. Deliberately no default: an absent declaration must be
+      # reported, never silently replaced by an assumed language set.
+      DOC_STORE_LOCALES: "${DOC_STORE_LOCALES:-}"
       DOC_STORE_HOST: 0.0.0.0
       DOC_STORE_PORT: 8000
       DOC_STORE_PROTOCOL: https
