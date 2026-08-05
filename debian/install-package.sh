@@ -12,6 +12,8 @@ install -m 644 "${CURDIR}/packaging/systemd/doc-store.service" \
 install -d "${ST}/usr/lib/doc-store/bin"
 install -m 755 "${CURDIR}/packaging/bin/doc-store-init-locales" \
     "${ST}/usr/lib/doc-store/bin/"
+install -m 755 "${CURDIR}/packaging/bin/doc-store-init-tsearch" \
+    "${ST}/usr/lib/doc-store/bin/"
 
 install -d "${ST}/etc/default"
 install -m 644 "${CURDIR}/packaging/default/doc-store" \

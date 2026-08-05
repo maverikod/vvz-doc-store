@@ -9,6 +9,12 @@ services:
       - /var/doc-store/secrets/.env
     volumes:
       - /var/doc-store/postgres/data:/var/lib/postgresql/data
+      # Ukrainian is declared in /etc/default/doc-store, but PostgreSQL 16 ships
+      # no ukrainian text-search configuration. The package depends on
+      # hunspell-uk; these two host files become the dictionary that
+      # doc-store-init-tsearch registers once the stack is up.
+      - /usr/share/hunspell/uk_UA.dic:/usr/share/postgresql/16/tsearch_data/uk_ua.dict:ro
+      - /usr/share/hunspell/uk_UA.aff:/usr/share/postgresql/16/tsearch_data/uk_ua.affix:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U doc_store -d doc_store"]
       interval: 5s

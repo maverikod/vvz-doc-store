@@ -1,9 +1,9 @@
 Package: doc-store-server
-Version: 0.1.65-1
+Version: 0.1.66-1
 Architecture: all
 Maintainer: Vasiliy Zdanovskiy <vasilyvz@gmail.com>
-Installed-Size: 46
-Depends: systemd, adduser, openssl, ca-certificates, locales, docker.io | docker-ce-cli, docker-compose-plugin
+Installed-Size: 50
+Depends: systemd, adduser, openssl, ca-certificates, locales, hunspell-uk, docker.io | docker-ce-cli, docker-compose-plugin
 Section: net
 Priority: optional
 Homepage: https://github.com/vasilyvz/doc-store

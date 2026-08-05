@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# Register the text-search configurations for languages that PostgreSQL does
+# not ship itself, for every language declared in DOC_STORE_LOCALES.
+#
+# PostgreSQL 16 ships snowball configurations for russian and english but none
+# for ukrainian, so a deployment that declares uk_UA has no way to normalize
+# Ukrainian text. The package depends on hunspell-uk, docker-compose.yml binds
+# its two files into the database container's tsearch_data directory, and this
+# script registers them once the stack is up. It is idempotent: re-running it
+# after the objects exist is a no-op.
+set -euo pipefail
+
+DEFAULT_FILE="${DOC_STORE_DEFAULT_FILE:-/etc/default/doc-store}"
+CONTAINER="${DOC_STORE_POSTGRES_CONTAINER:-doc-store-postgres}"
+DB_USER="${DOC_STORE_DB_USER:-doc_store}"
+DB_NAME="${DOC_STORE_DB_NAME:-doc_store}"
+TSEARCH_DIR="${DOC_STORE_TSEARCH_DIR:-/usr/share/postgresql/16/tsearch_data}"
+LOCALES="${DOC_STORE_LOCALES:-}"
+
+log() { echo "doc-store-init-tsearch: $*"; }
+
+if [[ -f "$DEFAULT_FILE" ]]; then
+    # shellcheck disable=SC1090
+    source "$DEFAULT_FILE"
+    LOCALES="${DOC_STORE_LOCALES:-$LOCALES}"
+fi
+
+if [[ -z "${LOCALES// }" ]]; then
+    log "no languages declared in ${DEFAULT_FILE}; nothing to register"
+    exit 0
+fi
+
+if [[ " $LOCALES " != *" uk_UA"* ]]; then
+    log "uk_UA is not declared; Ukrainian text search is not registered"
+    exit 0
+fi
+
+ready=0
+for _ in $(seq 1 30); do
+    if docker exec "$CONTAINER" pg_isready -U "$DB_USER" -d "$DB_NAME" >/dev/null 2>&1; then
+        ready=1
+        break
+    fi
+    sleep 2
+done
+if (( ! ready )); then
+    log "ERROR: ${CONTAINER} did not become ready; Ukrainian text search is NOT registered"
+    exit 1
+fi
+
+for f in uk_ua.dict uk_ua.affix; do
+    if ! docker exec "$CONTAINER" test -f "${TSEARCH_DIR}/${f}"; then
+        log "ERROR: ${TSEARCH_DIR}/${f} is missing inside ${CONTAINER}."
+        log "ERROR: install hunspell-uk on the host and check the docker-compose bind mounts."
+        log "ERROR: Ukrainian text search is NOT registered."
+        exit 1
+    fi
+done
+
+docker exec -i "$CONTAINER" psql -v ON_ERROR_STOP=1 -U "$DB_USER" -d "$DB_NAME" <<'SQL'
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_ts_dict WHERE dictname = 'ukrainian_hunspell') THEN
+        CREATE TEXT SEARCH DICTIONARY ukrainian_hunspell (
+            TEMPLATE  = ispell,
+            DictFile  = uk_ua,
+            AffFile   = uk_ua
+        );
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM pg_ts_config WHERE cfgname = 'ukrainian') THEN
+        CREATE TEXT SEARCH CONFIGURATION ukrainian (COPY = simple);
+        ALTER TEXT SEARCH CONFIGURATION ukrainian
+            ALTER MAPPING FOR asciiword, word, hword, hword_part,
+                              asciihword, hword_asciipart
+            WITH ukrainian_hunspell, simple;
+    END IF;
+END
+$$;
+SQL
+
+log "ukrainian text search configuration is registered"
