@@ -200,6 +200,104 @@ class EntityUuidRegistry(Base):
     )
 
 
+ASSERTION_KINDS: tuple[str, ...] = (
+    "payload",
+    "interval_boundary",
+    "supersession",
+    "deletion",
+    "restoration",
+)
+"""Append-only evidence kinds a temporal assertion row may record."""
+
+_ASSERTION_KIND_ALLOWLIST_SQL = "assertion_kind IN ({values})".format(
+    values=", ".join(f"'{kind}'" for kind in ASSERTION_KINDS)
+)
+
+
+class TemporalAssertion(Base):
+    """Sole registered version identity for one typed payload claim about one object.
+
+    Each row is one assertion: a single UUIDv4 identity (`assertion_id`) that
+    directly names, through `object_id`, the registered object whose typed
+    payload it asserts. `object_id` references the ObjectRegistry
+    (`EntityUuidRegistry`) rather than any typed table, so the assertion reuses
+    the one registry boundary and no parallel version or object registry is
+    introduced.
+
+    Bitemporality:
+
+    * effective time is the half-open interval ``[effective_from,
+      effective_until)``; a NULL `effective_until` means open-ended;
+    * transaction time is `recorded_at`, the immutable instant at which the
+      assertion became known, together with its acceptance provenance.
+
+    History is append-only. A correction, an interval boundary, a deletion or a
+    restoration is a *new* row whose `supersedes_assertion_id` names the
+    assertion it replaces; no accepted row is ever rewritten, so the known-time
+    end of an assertion is derived from the `recorded_at` of the assertion that
+    supersedes it and is deliberately not stored on the superseded row. Several
+    rows may supersede one original, which is what a partial-interval correction
+    (left copy, corrected overlap, right copy) appends. `revision_no` carries the
+    monotonic accepted revision order per registered object, determined by
+    accepted assertion order and not by any mutable current-state pointer.
+
+    Domain payloads are not embedded here: `payload_family` names the
+    family-specific payload table that is keyed by this assertion UUID. This
+    declaration owns persistence shape only; resolution, supersession, deletion
+    and ambiguity rejection belong to the services above it, and
+    `SemanticChunkVersion` keeps its own current-pointer mechanism untouched.
+    """
+
+    __tablename__ = "temporal_assertions"
+    __table_args__ = (
+        UniqueConstraint("object_id", "revision_no", name="uq_temporal_assertions_object_revision"),
+        CheckConstraint("revision_no > 0", name="revision_positive"),
+        CheckConstraint(
+            "effective_until IS NULL OR effective_until > effective_from",
+            name="effective_interval_half_open",
+        ),
+        CheckConstraint(_ASSERTION_KIND_ALLOWLIST_SQL, name="assertion_kind_allowlisted"),
+        CheckConstraint("payload_family <> ''", name="payload_family_present"),
+        CheckConstraint(
+            "supersedes_assertion_id IS NULL OR supersedes_assertion_id <> assertion_id",
+            name="supersedes_another_assertion",
+        ),
+        Index(
+            "ix_temporal_assertions_object_effective",
+            "object_id",
+            "effective_from",
+            "effective_until",
+        ),
+        Index("ix_temporal_assertions_object_recorded", "object_id", "recorded_at"),
+        Index("ix_temporal_assertions_supersedes", "supersedes_assertion_id"),
+        Index("ix_temporal_assertions_payload_family", "payload_family"),
+    )
+
+    assertion_id: Mapped[UUID] = mapped_column(UUID4, primary_key=True, default=uuid4)
+    object_id: Mapped[UUID] = mapped_column(
+        UUID4,
+        ForeignKey("entity_uuid_registry.entity_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    payload_family: Mapped[str] = mapped_column(String(64), nullable=False)
+    assertion_kind: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="payload", server_default="payload"
+    )
+    revision_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    supersedes_assertion_id: Mapped[UUID | None] = mapped_column(
+        UUID4, ForeignKey("temporal_assertions.assertion_id", ondelete="SET NULL")
+    )
+    effective_from: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    effective_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    accepted_by: Mapped[str | None] = mapped_column(String(255))
+    accepted_via: Mapped[str | None] = mapped_column(String(64))
+    acceptance_operation_id: Mapped[UUID | None] = mapped_column(UUID4)
+    acceptance_comment: Mapped[str | None] = mapped_column(Text)
+
+
 class Project(EntityCRUDMixin, Base):
     """A first-class project grouping documents under one UUID identity."""
 
@@ -738,6 +836,7 @@ class SemanticChunkCategoryAssignment(Base):
 
 
 __all__ = (
+    "ASSERTION_KINDS",
     "Base",
     "BlockTypeDictionary",
     "CategoryDictionary",
@@ -766,5 +865,6 @@ __all__ = (
     "SemanticChunkVersion",
     "SemanticChunkCurrent",
     "SemanticChunkTypeAssignment",
+    "TemporalAssertion",
     "metadata",
 )
