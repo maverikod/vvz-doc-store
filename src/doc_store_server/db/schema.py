@@ -145,6 +145,7 @@ REGISTRY_KIND_LOCATORS: Mapping[str, str] = MappingProxyType(
         "paragraph": "paragraphs",
         "semantic_chunk": "semantic_chunks",
         "file": "files",
+        "content_attachment": "content_attachments",
         "project": "projects",
         "chunk_type": "chunk_types",
         "chunk_role": "chunk_roles",
