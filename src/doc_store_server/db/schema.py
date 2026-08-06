@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime
+from types import MappingProxyType
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -136,17 +138,62 @@ class CategoryDictionary(DictionaryCRUDMixin, Base):
     __tablename__ = "categories"
 
 
+REGISTRY_KIND_LOCATORS: Mapping[str, str] = MappingProxyType(
+    {
+        "document": "documents",
+        "chapter": "chapters",
+        "paragraph": "paragraphs",
+        "semantic_chunk": "semantic_chunks",
+        "file": "files",
+        "project": "projects",
+        "chunk_type": "chunk_types",
+        "chunk_role": "chunk_roles",
+        "chunk_status": "chunk_statuses",
+        "block_type": "block_types",
+        "language": "languages",
+        "category": "categories",
+    }
+)
+"""Allowlisted registry kind to concrete typed-table locator pairs."""
+
+REGISTRY_KINDS: tuple[str, ...] = tuple(REGISTRY_KIND_LOCATORS)
+REGISTRY_TABLE_LOCATORS: tuple[str, ...] = tuple(dict.fromkeys(REGISTRY_KIND_LOCATORS.values()))
+
+_REGISTRY_KIND_ALLOWLIST_SQL = "kind IN ({values})".format(
+    values=", ".join(f"'{kind}'" for kind in REGISTRY_KINDS)
+)
+_REGISTRY_KIND_LOCATOR_ALLOWLIST_SQL = "(kind, entity_table) IN ({pairs})".format(
+    pairs=", ".join(f"('{kind}', '{table}')" for kind, table in REGISTRY_KIND_LOCATORS.items())
+)
+
+
 class EntityUuidRegistry(Base):
-    """Global UUID registry for addressable entity rows."""
+    """Sole ObjectRegistry: one UUIDv4 identity per registered concrete object.
+
+    Each row binds exactly one UUIDv4 (`entity_id`, the single-column primary
+    key) to one allowlisted object `kind` and its concrete typed-table locator
+    (`entity_table`). The UUID alone resolves the row, so a caller never has to
+    supply the object type to locate a registered object. This declaration is
+    the only registry mapping in the schema; no parallel registry exists.
+    """
 
     __tablename__ = "entity_uuid_registry"
     __table_args__ = (
         UniqueConstraint("entity_id", name="uq_entity_uuid_registry_entity_id"),
+        CheckConstraint(
+            _REGISTRY_KIND_ALLOWLIST_SQL,
+            name="kind_allowlisted",
+        ),
+        CheckConstraint(
+            _REGISTRY_KIND_LOCATOR_ALLOWLIST_SQL,
+            name="kind_locator_allowlisted",
+        ),
         Index("ix_entity_uuid_registry_entity_table", "entity_table"),
     )
 
-    entity_table: Mapped[str] = mapped_column(String(128), primary_key=True)
     entity_id: Mapped[UUID] = mapped_column(UUID4, primary_key=True)
+    kind: Mapped[str] = mapped_column(String(64), nullable=False)
+    entity_table: Mapped[str] = mapped_column(String(128), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -705,6 +752,9 @@ __all__ = (
     "LanguageDictionary",
     "Paragraph",
     "Project",
+    "REGISTRY_KINDS",
+    "REGISTRY_KIND_LOCATORS",
+    "REGISTRY_TABLE_LOCATORS",
     "SemanticChunk",
     "SemanticChunkBlockTypeAssignment",
     "SemanticChunkCategoryAssignment",
