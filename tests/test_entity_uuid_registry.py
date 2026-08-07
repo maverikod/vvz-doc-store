@@ -50,6 +50,13 @@ from doc_store_server.runtime.entity_lifecycle import (
 ROOT = Path(__file__).resolve().parents[1]
 MIGRATIONS = ROOT / "migrations" / "versions"
 REGISTRY_MIGRATION = "0005_entity_lifecycle_registry"
+# Every migration that shapes entity_uuid_registry, in chain order. 0005 creates it
+# with a composite key and no kind; 0018a aligns it with the ObjectRegistry contract.
+# The contract is a property of the chain, not of any single revision.
+REGISTRY_MIGRATIONS = (
+    "0005_entity_lifecycle_registry",
+    "0018a_object_registry_kind_alignment",
+)
 
 # Locators declared ahead of the table that will back them. G-001/T-004/A-001
 # enrolled content_attachment before the attachment branch created its table.
@@ -84,6 +91,10 @@ def _offline_sql(module: ModuleType, function: str = "upgrade") -> str:
 
 def _registry_upgrade_sql() -> str:
     return _offline_sql(_load_migration(REGISTRY_MIGRATION))
+
+
+def _registry_chain_sql() -> str:
+    return "\n".join(_offline_sql(_load_migration(name)) for name in REGISTRY_MIGRATIONS)
 
 
 def _registration_function_sql(upgrade_sql: str) -> str:
@@ -337,38 +348,26 @@ def test_every_trigger_registered_table_in_any_migration_is_allowlisted() -> Non
     assert set(REGISTRY_TABLE_LOCATORS) - triggered == set(FORWARD_DECLARED_LOCATORS)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Known divergence: migration 0005 still creates entity_uuid_registry with the "
-        "composite primary key (entity_table, entity_id) and no kind column, while the ORM "
-        "declares a single-column entity_id primary key plus kind and the allowlist checks. "
-        "No plan step owns the DDL that closes this; the ORM side is the contract."
-    ),
-)
-def test_migration_creates_the_registry_the_orm_declares() -> None:
-    """The deployed registry must be the registry the ObjectRegistry contract declares."""
+def test_migration_chain_leaves_the_registry_the_orm_declares() -> None:
+    """The migrated registry must end up as the ObjectRegistry contract declares."""
 
-    upgrade_sql = _registry_upgrade_sql()
-    start = upgrade_sql.index("CREATE TABLE entity_uuid_registry")
-    create_table_sql = upgrade_sql[start : upgrade_sql.index(");", start)]
+    sql = _registry_chain_sql()
 
-    assert "kind VARCHAR(64) NOT NULL" in create_table_sql
-    assert "PRIMARY KEY (entity_id)" in create_table_sql
-    assert "PRIMARY KEY (entity_table, entity_id)" not in create_table_sql
-    assert "kind_allowlisted" in upgrade_sql
-    assert "kind_locator_allowlisted" in upgrade_sql
+    assert "ADD COLUMN kind VARCHAR(64)" in sql
+    assert "ALTER COLUMN kind SET NOT NULL" in sql
+    assert "DROP CONSTRAINT pk_entity_uuid_registry" in sql
+    assert "ADD CONSTRAINT pk_entity_uuid_registry PRIMARY KEY (entity_id)" in sql
+    assert "ck_entity_uuid_registry_kind_allowlisted" in sql
+    assert "ck_entity_uuid_registry_kind_locator_allowlisted" in sql
+    # The registration trigger must supply the kind the table now requires.
+    assert "INSERT INTO entity_uuid_registry (kind, entity_table, entity_id)" in sql
+
+    # Both sides of the contract, so the test fails if either drifts.
+    registry = EntityUuidRegistry.__table__
+    assert [column.name for column in registry.primary_key.columns] == ["entity_id"]
+    assert "kind" in registry.c
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Known gap: 0007_files_owner_model and 0008_semantic_chunk_dictionaries still "
-        "backfill the registry with ON CONFLICT (entity_id) DO UPDATE SET entity_table, "
-        "which reassigns the locator of an already registered UUID. G-001/T-002/A-001 "
-        "removed that upsert from 0005 only; {b2v7} forbids it everywhere."
-    ),
-)
 def test_no_migration_reassigns_a_registered_locator_by_upsert() -> None:
     """{b2v7}: registry allocation must never upsert, in any migration."""
 
