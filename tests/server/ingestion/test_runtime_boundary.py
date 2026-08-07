@@ -6,12 +6,13 @@ from uuid import uuid4
 
 from chunk_metadata_adapter import BlockType, SemanticChunk
 
+from doc_store_server.ingestion.persistence_plan import PersistencePlan
+from doc_store_server.ingestion.publication_repository import PublicationRepository
 from doc_store_server.ingestion.runtime_boundary import (
     InMemoryRuntimeStatus,
     RuntimeIngestionBoundary,
     RuntimeChunk,
     SEMANTIC_CLASSIFIER_DEFAULTS,
-    _PersistencePlan,
     _chunk_features,
     _clear_reprocessing_flags,
     _insert_semantic_chunk_default_metrics,
@@ -153,38 +154,36 @@ def test_runtime_ingestion_requests_paragraph_and_sentence_chunks(monkeypatch) -
     fake = FakeChunker()
     boundary = RuntimeIngestionBoundary("postgresql://unused", InMemoryRuntimeStatus(), fake)
 
-    def fake_prepare(**_: object) -> _PersistencePlan:
-        return _PersistencePlan(
-            document_id=document_id,
-            source_version_id="source-v1",
-            normalized_source_version_id="source-v1",
-            operation_id=str(operation_id),
-            command="document_create",
-            text_value="First sentence. Second sentence.",
-            filename=None,
-            content_sha256="0" * 64,
-            chunking_strategy="paragraph",
-            source_version=1,
-            title="First sentence.",
-            source_name=None,
-            length=32,
-            body_sha256="1" * 64,
-            file_id=uuid4(),
-            doc_meta={},
-        )
+    # The mapper and the repository are the seam now: the boundary maps the
+    # request into one PersistencePlan and hands that plan, with both chunk
+    # tuples, to the single publishing transaction.  Only the two repository
+    # methods that reach storage are replaced, so the real mapper, the real
+    # repository class and the real publication call all stay on the path.
+    def fake_find_committed_version(
+        _self: PublicationRepository,
+        _source_upload_id: object,
+        _source_version: object,
+        _plan: PersistencePlan | None,
+    ) -> None:
+        return None
 
-    def fake_persist(
-        prepared: _PersistencePlan,
+    def fake_publish(
+        _self: PublicationRepository,
+        prepared: PersistencePlan,
         paragraph_chunks: tuple[RuntimeChunk, ...],
         sentence_chunks: tuple[RuntimeChunk, ...],
     ) -> dict[str, object]:
         assert prepared.document_id == document_id
-        assert paragraph_chunks == (paragraph,)
-        assert sentence_chunks == sentences
+        assert prepared.operation_id == str(operation_id)
+        assert prepared.text_value == "First sentence. Second sentence."
+        assert tuple(paragraph_chunks) == (paragraph,)
+        assert tuple(sentence_chunks) == sentences
         return {"document_id": str(document_id), "chunk_ids": tuple(str(item.uuid) for item in sentence_chunks)}
 
-    monkeypatch.setattr(boundary, "_prepare_persistence", fake_prepare)
-    monkeypatch.setattr(boundary, "_persist_prepared_chunks", fake_persist)
+    monkeypatch.setattr(
+        PublicationRepository, "_find_committed_version", fake_find_committed_version
+    )
+    monkeypatch.setattr(PublicationRepository, "_publish", fake_publish)
 
     result = _run(boundary._persist_source(
         requested_document_id=document_id,
