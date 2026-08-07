@@ -11,6 +11,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from doc_store_server.commands.retrieval_commands import (
+    TEMPORAL_PARAMETERS,
     ChapterGetCommand,
     DocumentGetCommand,
     InvalidVersionError,
@@ -191,7 +192,9 @@ def test_each_command_exposes_complete_live_schema_and_metadata(command_class: t
     identifier_field = command_class.identifier_field
     assert schema["type"] == "object"
     assert schema["properties"] == command_class.schema_properties
-    assert set(schema["properties"]) == {identifier_field, "source_version"}
+    pinned_properties = {identifier_field, "source_version"}
+    published_properties = set(schema["properties"])
+    assert pinned_properties <= published_properties <= pinned_properties | set(TEMPORAL_PARAMETERS)
     assert schema["required"] == [identifier_field]
     assert schema["additionalProperties"] is False
     assert set(metadata) == {
