@@ -33,6 +33,41 @@ from doc_store_server.runtime.ingestion_logs import (
 
 CHUNKING_STRATEGIES = frozenset({"paragraph", "sentence", "semantic"})
 
+SOURCE_STATE_PAYLOAD_FAMILY = "source_state"
+"""``TemporalAssertion.payload_family`` whose payload table is ``source_states``."""
+
+NORMALIZATION_PROFILE_ID = "doc-store.ingestion.runtime_boundary"
+"""Immutable identity of the deterministic normalization profile applied here."""
+
+NORMALIZATION_PROFILE_VERSION = "1"
+"""Version of that profile; a changed algorithm takes a new version, never a rewrite."""
+
+NORMALIZED_SOURCE_ENCODING = "utf-8"
+"""Encoding the normalizer decodes into and the reconstruction retains."""
+
+COMPARISON_SCOPE = "document_normalized_source"
+"""The one recorded scope this boundary compares: a document's normalized source."""
+
+DEFAULT_RUN_ACTOR = "doc-store:ingestion-runtime-boundary"
+RUN_ACTOR_ENV = "DOC_STORE_RUN_ACTOR"
+
+RUN_KIND_BY_COMMAND: Mapping[str, str] = {
+    "document_create": "document_create",
+    "document_update": "document_update",
+    # A rechunk re-derives an existing document's hierarchy from its stored
+    # source and re-verifies the round trip: an existing-document recheck.
+    "document_chunk": "integrity_recheck",
+}
+DEFAULT_RUN_KIND = "file_ingest"
+
+RECONSTRUCTION_SEPARATORS: Mapping[str, str] = {
+    # The separators ``source_file_reconstruct`` re-inserts between the stored
+    # chunk payloads. They are part of the restoration manifest because without
+    # them the persisted chunks do not determine one text.
+    "within_paragraph": " ",
+    "between_paragraphs": "\n\n",
+}
+
 _INSTALLED_STATUS: InMemoryRuntimeStatus | None = None
 _INSTALLED_BOUNDARY: RuntimeIngestionBoundary | None = None
 _INSTALLED_BOUNDARY_URL: str | None = None
@@ -58,6 +93,11 @@ class _PersistencePlan:
     body_sha256: str
     file_id: UUID
     doc_meta: Mapping[str, Any]
+    # Facts about the *original* bytes, retained so the immutable PrimarySource
+    # can be stated from what was actually received rather than guessed. Both are
+    # unknown on the rechunk path, where the File already names its original.
+    media_type: str | None = None
+    byte_length: int | None = None
 
 
 @dataclass(slots=True)
@@ -178,7 +218,16 @@ class InMemoryRuntimeStatus:
 
 
 class RuntimeIngestionBoundary:
-    """Normalize one source and persist a minimal semantic chunk hierarchy."""
+    """Normalize one source and persist a minimal semantic chunk hierarchy.
+
+    Every publication that actually executes also leaves its provenance behind:
+    the immutable `PrimarySource` the File is bound to, one `ProcessingRun` for
+    the single comparison scope it covered, and the `SourceState` that run
+    produced, all in the publishing transaction. An idempotent replay executes
+    nothing — it publishes no hierarchy and re-derives no source — so it appends
+    no second run and no second state; the evidence of the execution that did
+    the work stays the answer.
+    """
 
     def __init__(
         self,
@@ -284,6 +333,8 @@ class RuntimeIngestionBoundary:
                 filename=request.source_metadata.filename,
                 content_sha256=request.source_metadata.content_sha256,
                 chunking_strategy=resolved_strategy,
+                media_type=request.source_metadata.media_type,
+                byte_length=request.source_metadata.byte_length,
             )
         except ChunkerError as exc:
             return self._record_failed(
@@ -335,6 +386,8 @@ class RuntimeIngestionBoundary:
         filename: str | None,
         content_sha256: str,
         chunking_strategy: str,
+        media_type: str | None = None,
+        byte_length: int | None = None,
     ) -> dict[str, Any]:
         prepared = await asyncio.to_thread(
             self._prepare_persistence,
@@ -347,6 +400,8 @@ class RuntimeIngestionBoundary:
             filename=filename,
             content_sha256=content_sha256,
             chunking_strategy=chunking_strategy,
+            media_type=media_type,
+            byte_length=byte_length,
         )
         if isinstance(prepared, Mapping):
             return dict(prepared)
@@ -380,6 +435,8 @@ class RuntimeIngestionBoundary:
         filename: str | None,
         content_sha256: str,
         chunking_strategy: str,
+        media_type: str | None = None,
+        byte_length: int | None = None,
     ) -> dict[str, Any] | _PersistencePlan:
         document_id = requested_document_id
         source_version = _source_version_number(source_version_id)
@@ -485,6 +542,8 @@ class RuntimeIngestionBoundary:
                 body_sha256=body_sha256,
                 file_id=file_id,
                 doc_meta=doc_meta,
+                media_type=media_type,
+                byte_length=byte_length,
             )
         finally:
             engine.dispose()
@@ -495,14 +554,38 @@ class RuntimeIngestionBoundary:
         paragraph_chunks: Sequence[RuntimeChunk],
         sentence_chunks: Sequence[RuntimeChunk],
     ) -> dict[str, Any]:
+        """Publish one hierarchy and the provenance that makes it accountable.
+
+        One transaction writes three things that may never disagree: the
+        immutable `PrimarySource` the File is bound to, the Document, Chapter,
+        Paragraph and SemanticChunk hierarchy derived from it, and the
+        `ProcessingRun` plus `SourceState` evidence that says which original was
+        consumed, under which deterministic configuration, and whether the
+        normalized source survived the round trip. Because it is one
+        transaction, a hierarchy without its run, or a run naming a hierarchy
+        that was rolled back, is unrepresentable.
+
+        The round-trip verdict is measured, not assumed: the normalized source
+        is compared against the same scope read back through the reconstruction
+        rule ``source_file_reconstruct`` applies, so ``status = 'succeeded'``
+        (which the database only accepts on equal hashes) is earned. A
+        non-match is recorded truthfully as a non-successful run carrying both
+        hashes and the first differing byte offset; turning that verdict into a
+        controlled integrity error for the caller belongs to the diagnostics
+        step, not to this one, so publication semantics are unchanged here.
+        """
+
         if not paragraph_chunks:
             raise ValueError("chunker returned no paragraph chunks")
         if not sentence_chunks:
             raise ValueError("chunker returned no sentence chunks")
         document_id = prepared.document_id
+        run_id = uuid4()
+        run_started_at = datetime.now(timezone.utc)
         engine = create_engine(self._database_url, pool_pre_ping=True)
         try:
             with engine.begin() as connection:
+                primary_source_id = _resolve_primary_source(connection, prepared)
                 _mark_existing_hierarchy_deleted(connection, document_id)
                 connection.execute(
                     text(
@@ -511,15 +594,19 @@ class RuntimeIngestionBoundary:
                     ),
                     {"document_id": document_id},
                 )
+                # `primary_source_id` is required and unique: a File states which
+                # immutable original it represents, or it does not exist. The
+                # conflict branch deliberately leaves the column alone, because a
+                # File never swaps the original it was accepted with.
                 connection.execute(
                     text(
                         "INSERT INTO files "
-                        "(id, owner_id, path, name, media_type, byte_length, char_count, "
-                        "checksum_algorithm, content_sha256, body_sha256, needs_revectorize, "
-                        "needs_rechunk, is_deleted, deleted_at, block_meta) "
-                        "VALUES (:id, NULL, :path, :name, 'text/plain', NULL, :char_count, "
-                        "'sha256', :content_sha256, :body_sha256, TRUE, FALSE, FALSE, NULL, "
-                        "CAST(:block_meta AS jsonb)) "
+                        "(id, owner_id, primary_source_id, path, name, media_type, byte_length, "
+                        "char_count, checksum_algorithm, content_sha256, body_sha256, "
+                        "needs_revectorize, needs_rechunk, is_deleted, deleted_at, block_meta) "
+                        "VALUES (:id, NULL, :primary_source_id, :path, :name, 'text/plain', NULL, "
+                        ":char_count, 'sha256', :content_sha256, :body_sha256, TRUE, FALSE, FALSE, "
+                        "NULL, CAST(:block_meta AS jsonb)) "
                         "ON CONFLICT (id) DO UPDATE SET "
                         "path = EXCLUDED.path, "
                         "name = EXCLUDED.name, "
@@ -536,6 +623,7 @@ class RuntimeIngestionBoundary:
                     ),
                     {
                         "id": prepared.file_id,
+                        "primary_source_id": primary_source_id,
                         "path": prepared.filename or prepared.source_name or str(prepared.file_id),
                         "name": prepared.source_name or prepared.filename or str(prepared.file_id),
                         "char_count": prepared.length,
@@ -760,6 +848,38 @@ class RuntimeIngestionBoundary:
                                 ),
                                 {"chunk_uuid": chunk_id, "ordinal": tag_ordinal, "tag_value": tag_value},
                             )
+                reconstructed = _reconstructed_scope_text(connection, document_id)
+                reconstruction_sha256 = hashlib.sha256(
+                    reconstructed.encode("utf-8")
+                ).hexdigest()
+                integrity_outcome, first_difference_offset = _integrity_verdict(
+                    prepared.text_value, reconstructed
+                )
+                run_status = "succeeded" if integrity_outcome == "match" else "failed"
+                _insert_processing_run(
+                    connection,
+                    prepared=prepared,
+                    run_id=run_id,
+                    primary_source_id=primary_source_id,
+                    chapter_id=chapter_id,
+                    status=run_status,
+                    source_sha256=prepared.body_sha256,
+                    reconstruction_sha256=reconstruction_sha256,
+                    integrity_outcome=integrity_outcome,
+                    first_difference_offset=first_difference_offset,
+                    started_at=run_started_at,
+                    completed_at=datetime.now(timezone.utc),
+                )
+                assertion_id = _append_source_state(
+                    connection,
+                    prepared=prepared,
+                    run_id=run_id,
+                    primary_source_id=primary_source_id,
+                    reconstruction_sha256=reconstruction_sha256,
+                    chapter_ids=chapter_ids,
+                    paragraph_count=len(paragraph_ids),
+                    chunk_count=len(chunk_ids),
+                )
             return {
                 "idempotent": False,
                 "document_id": str(document_id),
@@ -770,6 +890,11 @@ class RuntimeIngestionBoundary:
                 "chunk_ids": tuple(chunk_ids),
                 "chunking_strategy": prepared.chunking_strategy,
                 "chunker": "svo",
+                "primary_source_id": str(primary_source_id),
+                "processing_run_id": str(run_id),
+                "processing_run_status": run_status,
+                "integrity_outcome": integrity_outcome,
+                "source_state_assertion_id": str(assertion_id),
             }
         finally:
             engine.dispose()
@@ -1039,6 +1164,364 @@ def _load_document_file_state(connection: Any, document_id: UUID) -> dict[str, A
         "file_needs_revectorize": bool(row["file_needs_revectorize"]),
         "file_needs_rechunk": bool(row["file_needs_rechunk"]),
     }
+
+
+def _run_kind(command: str) -> str:
+    """Name the allowlisted execution kind one ingestion command performs."""
+
+    return RUN_KIND_BY_COMMAND.get(command, DEFAULT_RUN_KIND)
+
+
+def _run_actor() -> str:
+    """Return on whose behalf this run executed; deployments may name themselves."""
+
+    return os.getenv(RUN_ACTOR_ENV, "").strip() or DEFAULT_RUN_ACTOR
+
+
+def _normalization_parameters(prepared: _PersistencePlan) -> dict[str, Any]:
+    """State the complete parameter set the run's normalization profile applied.
+
+    Completeness is the point: together with the profile ID and version these
+    values determine the normalized source, so a later execution can tell
+    whether it ran under the same configuration or a different one.
+    """
+
+    return {
+        "chunking_strategy": prepared.chunking_strategy,
+        "chunker": "svo",
+        "paragraph_and_sentence_units": True,
+        "text_encoding": NORMALIZED_SOURCE_ENCODING,
+        "checksum_algorithm": "sha256",
+        "comparison_scope": COMPARISON_SCOPE,
+        "reconstruction_separators": dict(RECONSTRUCTION_SEPARATORS),
+        "normalized_source_version_id": prepared.normalized_source_version_id,
+    }
+
+
+def _configuration_hash(command: str, parameters: Mapping[str, Any]) -> str:
+    """Hash the deterministic configuration: same inputs, same digest, always."""
+
+    payload = {
+        "normalization_profile_id": NORMALIZATION_PROFILE_ID,
+        "normalization_profile_version": NORMALIZATION_PROFILE_VERSION,
+        "run_kind": _run_kind(command),
+        "comparison_scope": COMPARISON_SCOPE,
+        "parameters": parameters,
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _source_locator(prepared: _PersistencePlan) -> str:
+    """Name where the original came from; never empty, so the original is findable."""
+
+    return (
+        prepared.filename
+        or prepared.source_name
+        or f"doc-store:document:{prepared.document_id}:{prepared.source_version_id}"
+    )[:2048]
+
+
+def _resolve_primary_source(connection: Any, prepared: _PersistencePlan) -> UUID:
+    """Return the immutable original this File is bound to, creating it once.
+
+    ``files.primary_source_id`` is required and unique, so the File row cannot
+    be written before its original exists. A File that already names one keeps
+    it: an original is immutable, and re-ingesting the same File is not a reason
+    to mint a second original for the same bytes. Only when no binding exists
+    yet is one created, from the original's own recorded facts — locator, media
+    type, byte length and the SHA-256 of the *original* bytes, never of the
+    normalized rendering, which belongs to the run instead.
+    """
+
+    existing = connection.execute(
+        text("SELECT primary_source_id FROM files WHERE id = :file_id"),
+        {"file_id": prepared.file_id},
+    ).scalar_one_or_none()
+    if existing is not None:
+        return UUID(str(existing))
+
+    source_id = _stable_uuid4(
+        f"doc-store:primary-source:{prepared.file_id}:{prepared.content_sha256}"
+    )
+    provenance = {
+        "captured_by": "doc_store_server.ingestion.runtime_boundary",
+        "ingestion_command": prepared.command,
+        "operation_id": prepared.operation_id,
+        "document_id": str(prepared.document_id),
+        "file_id": str(prepared.file_id),
+        "source_version_id": prepared.source_version_id,
+        "filename": prepared.filename,
+        "source_name": prepared.source_name,
+    }
+    connection.execute(
+        text(
+            "INSERT INTO primary_sources "
+            "(id, source_locator, media_type, recorded_encoding, byte_length, "
+            "checksum_algorithm, original_sha256, provenance, created_at) "
+            "VALUES (:id, :source_locator, :media_type, :recorded_encoding, :byte_length, "
+            "'sha256', :original_sha256, CAST(:provenance AS jsonb), now()) "
+            "ON CONFLICT (id) DO NOTHING"
+        ),
+        {
+            "id": source_id,
+            "source_locator": _source_locator(prepared),
+            "media_type": prepared.media_type,
+            "recorded_encoding": NORMALIZED_SOURCE_ENCODING,
+            "byte_length": prepared.byte_length,
+            "original_sha256": prepared.content_sha256,
+            "provenance": json.dumps(provenance),
+        },
+    )
+    return source_id
+
+
+def _reconstructed_scope_text(connection: Any, document_id: UUID) -> str:
+    """Read the compared scope back exactly as ``source_file_reconstruct`` would.
+
+    The round trip is only evidence if it is measured against the reconstruction
+    callers actually get, so this mirrors that service: current, non-deleted
+    chunk payloads in chapter, paragraph and chunk order, joined by a space
+    inside a paragraph and a blank line between paragraphs.
+    """
+
+    rows = connection.execute(
+        text(
+            "SELECT sc.paragraph_id::text AS paragraph_id, sct.text AS text "
+            "FROM semantic_chunks AS sc "
+            "JOIN semantic_chunk_texts AS sct ON sct.chunk_uuid = sc.id "
+            "JOIN paragraphs AS p ON p.id = sc.paragraph_id "
+            "JOIN chapters AS c ON c.id = sc.chapter_id "
+            "JOIN documents AS d ON d.id = sc.document_id "
+            "WHERE sc.document_id = :document_id "
+            "AND d.deleted_at IS NULL AND c.deleted_at IS NULL "
+            "AND p.deleted_at IS NULL AND sc.deleted_at IS NULL "
+            "AND NOT d.is_deleted AND NOT c.is_deleted "
+            "AND NOT p.is_deleted AND NOT sc.is_deleted "
+            "ORDER BY c.order_index ASC, p.order_index ASC, sc.order_index ASC, sc.id ASC"
+        ),
+        {"document_id": document_id},
+    ).mappings().all()
+    pieces: list[str] = []
+    previous_paragraph: str | None = None
+    for row in rows:
+        paragraph_id = str(row["paragraph_id"])
+        if previous_paragraph is None:
+            separator = ""
+        elif paragraph_id == previous_paragraph:
+            separator = RECONSTRUCTION_SEPARATORS["within_paragraph"]
+        else:
+            separator = RECONSTRUCTION_SEPARATORS["between_paragraphs"]
+        pieces.append(f"{separator}{row['text']}")
+        previous_paragraph = paragraph_id
+    return "".join(pieces)
+
+
+def _integrity_verdict(source_text: str, reconstructed_text: str) -> tuple[str, int | None]:
+    """Compare the normalized source with its reconstruction and say where they part.
+
+    Returns the allowlisted outcome and the byte offset that supports it: no
+    offset for a match, the first differing byte for a mismatch, and the length
+    boundary when one value is a strict prefix of the other.
+    """
+
+    if source_text == reconstructed_text:
+        return "match", None
+    source_bytes = source_text.encode("utf-8")
+    reconstructed_bytes = reconstructed_text.encode("utf-8")
+    shared = min(len(source_bytes), len(reconstructed_bytes))
+    offset = 0
+    while offset < shared and source_bytes[offset] == reconstructed_bytes[offset]:
+        offset += 1
+    if offset == shared:
+        return "length_boundary", shared
+    return "mismatch", offset
+
+
+def _insert_processing_run(
+    connection: Any,
+    *,
+    prepared: _PersistencePlan,
+    run_id: UUID,
+    primary_source_id: UUID,
+    chapter_id: UUID,
+    status: str,
+    source_sha256: str,
+    reconstruction_sha256: str,
+    integrity_outcome: str,
+    first_difference_offset: int | None,
+    started_at: datetime,
+    completed_at: datetime,
+) -> None:
+    """Record one immutable execution over exactly one comparison scope.
+
+    The row is written once, at the end of the execution it describes, because
+    the database refuses to let a run's audit identity drift and refuses any
+    change once it is terminal. ``chunk_id`` stays null: the scope is a whole
+    document and its chunks are reachable through ``document_id``; naming the
+    chunk a mismatch falls in is SourceSpan diagnostics, which this boundary
+    does not own. For the same reason a non-match records the hashes and the
+    offset but leaves the diagnostic authorization and redaction policy unset
+    rather than inventing a release decision.
+    """
+
+    parameters = _normalization_parameters(prepared)
+    connection.execute(
+        text(
+            "INSERT INTO processing_runs "
+            "(run_id, primary_source_id, run_kind, comparison_scope, actor, status, "
+            "configuration_hash, normalization_profile_id, normalization_profile_version, "
+            "normalization_parameters, source_encoding, reconstructed_encoding, "
+            "checksum_algorithm, source_sha256, reconstruction_sha256, integrity_outcome, "
+            "first_difference_offset, document_id, chapter_id, chunk_id, operation_id, "
+            "processing_trace_id, started_at, completed_at, created_at) "
+            "VALUES (:run_id, :primary_source_id, :run_kind, :comparison_scope, :actor, :status, "
+            ":configuration_hash, :profile_id, :profile_version, "
+            "CAST(:parameters AS jsonb), :source_encoding, :reconstructed_encoding, "
+            "'sha256', :source_sha256, :reconstruction_sha256, :integrity_outcome, "
+            ":first_difference_offset, :document_id, :chapter_id, NULL, "
+            "CAST(:operation_id AS uuid), CAST(:operation_id AS uuid), "
+            "CAST(:started_at AS timestamptz), CAST(:completed_at AS timestamptz), now())"
+        ),
+        {
+            "run_id": run_id,
+            "primary_source_id": primary_source_id,
+            "run_kind": _run_kind(prepared.command),
+            "comparison_scope": COMPARISON_SCOPE,
+            "actor": _run_actor(),
+            "status": status,
+            "configuration_hash": _configuration_hash(prepared.command, parameters),
+            "profile_id": NORMALIZATION_PROFILE_ID,
+            "profile_version": NORMALIZATION_PROFILE_VERSION,
+            "parameters": json.dumps(parameters, sort_keys=True),
+            "source_encoding": NORMALIZED_SOURCE_ENCODING,
+            "reconstructed_encoding": NORMALIZED_SOURCE_ENCODING,
+            "source_sha256": source_sha256,
+            "reconstruction_sha256": reconstruction_sha256,
+            "integrity_outcome": integrity_outcome,
+            "first_difference_offset": first_difference_offset,
+            "document_id": prepared.document_id,
+            "chapter_id": chapter_id,
+            "operation_id": prepared.operation_id,
+            "started_at": started_at,
+            "completed_at": completed_at,
+        },
+    )
+
+
+def _append_source_state(
+    connection: Any,
+    *,
+    prepared: _PersistencePlan,
+    run_id: UUID,
+    primary_source_id: UUID,
+    reconstruction_sha256: str,
+    chapter_ids: Sequence[str],
+    paragraph_count: int,
+    chunk_count: int,
+) -> UUID:
+    """Append the document's source state as one assertion, never as a rewrite.
+
+    The state is a payload of the shared ``TemporalAssertion`` identity, so the
+    assertion UUID *is* the source-version identity a caller cites when asking
+    for an as-of state. A republish appends a successor that supersedes the
+    accepted state instead of editing it, which is what keeps every earlier
+    known time still resolving to what was true then. The registry row is locked
+    first so concurrent publications of one document keep a monotonic revision
+    order.
+    """
+
+    document_id = prepared.document_id
+    registered = connection.execute(
+        text("SELECT entity_id FROM entity_uuid_registry WHERE entity_id = :object_id FOR UPDATE"),
+        {"object_id": document_id},
+    ).scalar_one_or_none()
+    if registered is None:
+        raise ValueError(f"document {document_id} is not a registered object")
+
+    prior = connection.execute(
+        text(
+            "SELECT a.assertion_id FROM temporal_assertions AS a "
+            "WHERE a.object_id = :object_id AND a.payload_family = :payload_family "
+            "AND a.assertion_kind <> 'deletion' "
+            "AND NOT EXISTS (SELECT 1 FROM temporal_assertions AS s "
+            "WHERE s.supersedes_assertion_id = a.assertion_id) "
+            "ORDER BY a.revision_no DESC LIMIT 1"
+        ),
+        {"object_id": document_id, "payload_family": SOURCE_STATE_PAYLOAD_FAMILY},
+    ).scalar_one_or_none()
+
+    assertion_id = uuid4()
+    connection.execute(
+        text(
+            "INSERT INTO temporal_assertions "
+            "(assertion_id, object_id, payload_family, assertion_kind, revision_no, "
+            "supersedes_assertion_id, effective_from, effective_until, recorded_at, "
+            "accepted_by, accepted_via, acceptance_operation_id, acceptance_comment) "
+            "SELECT CAST(:assertion_id AS uuid), :object_id, :payload_family, :assertion_kind, "
+            "COALESCE(MAX(revision_no), 0) + 1, CAST(:supersedes AS uuid), "
+            "now(), NULL, now(), :accepted_by, :accepted_via, "
+            "CAST(:operation_id AS uuid), NULL "
+            "FROM temporal_assertions WHERE object_id = :object_id"
+        ),
+        {
+            "assertion_id": assertion_id,
+            "object_id": document_id,
+            "payload_family": SOURCE_STATE_PAYLOAD_FAMILY,
+            "assertion_kind": "payload" if prior is None else "supersession",
+            "supersedes": prior,
+            "accepted_by": _run_actor(),
+            "accepted_via": prepared.command,
+            "operation_id": prepared.operation_id,
+        },
+    )
+
+    locator = f"doc-store:source_file_reconstruct?document_id={document_id}"
+    manifest = {
+        "restoration": {
+            "command": "source_file_reconstruct",
+            "selector": {"document_id": str(document_id)},
+            "separators": dict(RECONSTRUCTION_SEPARATORS),
+        },
+        "normalization": {
+            "profile_id": NORMALIZATION_PROFILE_ID,
+            "profile_version": NORMALIZATION_PROFILE_VERSION,
+            "parameters": _normalization_parameters(prepared),
+        },
+        "hierarchy": {
+            "chapter_ids": list(chapter_ids),
+            "paragraph_count": paragraph_count,
+            "chunk_count": chunk_count,
+        },
+        "source": {
+            "source_version_id": prepared.source_version_id,
+            "normalized_source_version_id": prepared.normalized_source_version_id,
+            "char_count": prepared.length,
+        },
+    }
+    connection.execute(
+        text(
+            "INSERT INTO source_states "
+            "(assertion_id, primary_source_id, produced_by_run_id, manifest, "
+            "reconstruction_locator, checksum_algorithm, restoration_sha256, "
+            "reconstructed_sha256, recorded_encoding, comparison_scope) "
+            "VALUES (:assertion_id, :primary_source_id, :produced_by_run_id, "
+            "CAST(:manifest AS jsonb), :reconstruction_locator, 'sha256', "
+            ":restoration_sha256, :reconstructed_sha256, :recorded_encoding, :comparison_scope)"
+        ),
+        {
+            "assertion_id": assertion_id,
+            "primary_source_id": primary_source_id,
+            "produced_by_run_id": run_id,
+            "manifest": json.dumps(manifest, sort_keys=True),
+            "reconstruction_locator": locator[:2048],
+            "restoration_sha256": prepared.body_sha256,
+            "reconstructed_sha256": reconstruction_sha256,
+            "recorded_encoding": NORMALIZED_SOURCE_ENCODING,
+            "comparison_scope": COMPARISON_SCOPE,
+        },
+    )
+    return assertion_id
 
 
 def _sentence_chunks_for_paragraph(
