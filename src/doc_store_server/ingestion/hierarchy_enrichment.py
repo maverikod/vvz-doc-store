@@ -48,8 +48,37 @@ class ChapterInput:
 
 
 @dataclass(frozen=True, slots=True)
+class HierarchyProvenance:
+    """Everything one produced hierarchy object can be traced back through.
+
+    The source upload and version say *which content* the object came from; the
+    source-state assertion and the producing run say *which restorable state*
+    and *which auditable execution* produced it.  Keeping the four together per
+    object is what makes provenance resolvable from any single reference,
+    instead of only from the aggregate as a whole.
+    """
+
+    source_upload_id: UUID
+    source_version: str | int
+    source_state_assertion_id: UUID | None = None
+    processing_run_id: UUID | None = None
+
+
+_NO_ENTITY_PROVENANCE: Mapping[UUID, HierarchyProvenance] = MappingProxyType({})
+"""Empty per-entity provenance, used only until a trace is actually built."""
+
+
+@dataclass(frozen=True, slots=True)
 class SourceVersionTrace:
-    """Immutable source traceability for every produced hierarchy entity."""
+    """Immutable source traceability for every produced hierarchy entity.
+
+    ``source_state_assertion_id`` is the appended ``SourceState`` assertion the
+    hierarchy restores from, and ``processing_run_id`` the single immutable
+    ``ProcessingRun`` that produced it.  Both are optional because a hierarchy
+    can be enriched before the publishing execution has stated its evidence, but
+    they are never independently optional: a source state without its producing
+    run is not resolvable provenance, so the pair is accepted or refused whole.
+    """
 
     source_upload_id: UUID
     source_version: str | int
@@ -58,6 +87,9 @@ class SourceVersionTrace:
     paragraph_ids: tuple[UUID, ...]
     chunk_ids: tuple[UUID, ...]
     entity_source: Mapping[UUID, tuple[UUID, str | int]]
+    source_state_assertion_id: UUID | None = None
+    processing_run_id: UUID | None = None
+    entity_provenance: Mapping[UUID, HierarchyProvenance] = _NO_ENTITY_PROVENANCE
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,14 +112,24 @@ def enrich_hierarchy(
     source_version: str | int,
     chapters: HierarchyInput,
     semantic_chunks: Sequence[SemanticChunk],
+    source_state_assertion_id: UUID | None = None,
+    processing_run_id: UUID | None = None,
 ) -> CanonicalIngestionAggregate:
     """Build and validate one canonical hierarchy from public chunks.
 
     ``chunk_indexes`` is explicit by design: silently assigning a chunk to a
     paragraph would make source ownership and traceability ambiguous.
+
+    ``source_state_assertion_id`` and ``processing_run_id`` name the restorable
+    source state and the producing execution behind the hierarchy.  They are
+    passed in rather than minted here: this boundary neither appends assertions
+    nor executes runs, so inventing either identity would claim evidence that
+    does not exist.  Supplied together, they are carried onto every produced
+    Document, Chapter, Paragraph and chunk reference.
     """
 
     _validate_source(source_upload_id, source_version)
+    _validate_provenance(source_state_assertion_id, processing_run_id)
     if not isinstance(semantic_chunks, Sequence) or isinstance(
         semantic_chunks, (str, bytes, bytearray)
     ):
@@ -154,15 +196,20 @@ def enrich_hierarchy(
         raise HierarchyEnrichmentError("every chunk must have exactly one ordered paragraph owner")
     produced = tuple(rebuilt_chunks)
     source = (source_upload_id, source_version)
-    entity_source = {
-        entity_id: source
-        for entity_id in (
-            (document.id,)
-            + tuple(chapter.id for chapter in built_chapters)
-            + tuple(paragraph.id for paragraph in built_paragraphs)
-            + tuple(UUID(str(chunk.uuid)) for chunk in produced)
-        )
-    }
+    provenance = HierarchyProvenance(
+        source_upload_id=source_upload_id,
+        source_version=source_version,
+        source_state_assertion_id=source_state_assertion_id,
+        processing_run_id=processing_run_id,
+    )
+    entity_ids = (
+        (document.id,)
+        + tuple(chapter.id for chapter in built_chapters)
+        + tuple(paragraph.id for paragraph in built_paragraphs)
+        + tuple(UUID(str(chunk.uuid)) for chunk in produced)
+    )
+    entity_source = {entity_id: source for entity_id in entity_ids}
+    entity_provenance = {entity_id: provenance for entity_id in entity_ids}
     trace = SourceVersionTrace(
         source_upload_id=source_upload_id,
         source_version=source_version,
@@ -171,6 +218,9 @@ def enrich_hierarchy(
         paragraph_ids=tuple(paragraph.id for paragraph in built_paragraphs),
         chunk_ids=tuple(UUID(str(chunk.uuid)) for chunk in produced),
         entity_source=MappingProxyType(entity_source),
+        source_state_assertion_id=source_state_assertion_id,
+        processing_run_id=processing_run_id,
+        entity_provenance=MappingProxyType(entity_provenance),
     )
     return CanonicalIngestionAggregate(
         document=document,
@@ -192,6 +242,30 @@ def _validate_source(source_upload_id: UUID, source_version: str | int) -> None:
         raise HierarchyEnrichmentError("source_version must be non-empty or positive")
 
 
+def _validate_provenance(
+    source_state_assertion_id: UUID | None,
+    processing_run_id: UUID | None,
+) -> None:
+    """Accept complete produced-by evidence, or none at all.
+
+    A half-stated pair cannot be resolved: a source state is produced by exactly
+    one run, and a run that produced no state restores nothing.
+    """
+
+    if (source_state_assertion_id is None) != (processing_run_id is None):
+        raise HierarchyEnrichmentError(
+            "source_state_assertion_id and processing_run_id must be given together"
+        )
+    for value, label in (
+        (source_state_assertion_id, "source_state_assertion_id"),
+        (processing_run_id, "processing_run_id"),
+    ):
+        if value is None:
+            continue
+        if not isinstance(value, UUID) or value.version != 4:
+            raise HierarchyEnrichmentError(f"{label} must be a UUID version 4 value")
+
+
 def _validate_range(start: int, end: int, label: str) -> None:
     if not isinstance(start, int) or not isinstance(end, int) or start < 0 or end <= start:
         raise HierarchyEnrichmentError(f"{label} range must satisfy 0 <= start < end")
@@ -201,6 +275,7 @@ __all__ = (
     "CanonicalIngestionAggregate",
     "ChapterInput",
     "HierarchyEnrichmentError",
+    "HierarchyProvenance",
     "ParagraphInput",
     "SourceVersionTrace",
     "enrich_hierarchy",
