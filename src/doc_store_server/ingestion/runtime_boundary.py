@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import os
@@ -17,6 +16,19 @@ from uuid import UUID, uuid4
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
 
+from doc_store_server.domain.semantic_chunk import deserialize_semantic_chunk
+# Publication is a mutual dependency now, and the repository already reaches
+# back here through the module object.  This side answers in kind: a
+# ``from ... import PublicationRepository`` would fail whenever the repository
+# is imported first, because it re-enters a runtime boundary that has not bound
+# the name yet.  The attribute form survives a partially initialized module.
+from doc_store_server.ingestion import publication_repository
+from doc_store_server.ingestion.hierarchy_enrichment import (
+    CanonicalIngestionAggregate, ChapterInput, ParagraphInput, enrich_hierarchy,
+)
+from doc_store_server.ingestion.persistence_plan import PersistencePlan
+from doc_store_server.ingestion.publication import PublicationFailure, RolledBackPublication, publish_document
+from doc_store_server.ingestion.publication_mapper import NormalizedRequestContext, PublicationMapper
 from doc_store_server.ingestion.svo_chunking import (
     ChunkerError,
     RuntimeChunk,
@@ -73,31 +85,6 @@ _INSTALLED_BOUNDARY: RuntimeIngestionBoundary | None = None
 _INSTALLED_BOUNDARY_URL: str | None = None
 _INSTALLED_CHUNKER: SvoRuntimeChunker | None = None
 _INSTALLED_CHUNKER_KEY: tuple[tuple[str, Any], ...] | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class _PersistencePlan:
-    document_id: UUID
-    source_version_id: str
-    normalized_source_version_id: str
-    operation_id: str
-    command: str
-    text_value: str
-    filename: str | None
-    content_sha256: str
-    chunking_strategy: str
-    source_version: int
-    title: str
-    source_name: str | None
-    length: int
-    body_sha256: str
-    file_id: UUID
-    doc_meta: Mapping[str, Any]
-    # Facts about the *original* bytes, retained so the immutable PrimarySource
-    # can be stated from what was actually received rather than guessed. Both are
-    # unknown on the rechunk path, where the File already names its original.
-    media_type: str | None = None
-    byte_length: int | None = None
 
 
 @dataclass(slots=True)
@@ -347,6 +334,8 @@ class RuntimeIngestionBoundary:
                     "context": exc.details,
                 },
             )
+        except _PublicationRolledBack as exc:
+            return self._record_failed(operation_id, document_id, started, exc.failure)
         except (SQLAlchemyError, OSError, ValueError) as exc:
             return self._record_failed(
                 operation_id,
@@ -374,530 +363,36 @@ class RuntimeIngestionBoundary:
         self._status.record(operation_id, snapshot)
         return {"status": status, **references}
 
-    async def _persist_source(
-        self,
-        *,
-        requested_document_id: UUID,
-        source_version_id: str,
-        normalized_source_version_id: str,
-        operation_id: str,
-        command: str,
-        text_value: str,
-        filename: str | None,
-        content_sha256: str,
-        chunking_strategy: str,
-        media_type: str | None = None,
-        byte_length: int | None = None,
-    ) -> dict[str, Any]:
-        prepared = await asyncio.to_thread(
-            self._prepare_persistence,
-            requested_document_id=requested_document_id,
-            source_version_id=source_version_id,
-            normalized_source_version_id=normalized_source_version_id,
-            operation_id=operation_id,
-            command=command,
-            text_value=text_value,
-            filename=filename,
-            content_sha256=content_sha256,
-            chunking_strategy=chunking_strategy,
-            media_type=media_type,
-            byte_length=byte_length,
-        )
-        if isinstance(prepared, Mapping):
-            return dict(prepared)
-        chunker = self._chunker or installed_svo_runtime_chunker()
-        paragraph_chunks = await chunker.chunk(
-            text=prepared.text_value,
-            strategy="paragraph",
-            source_id=str(prepared.document_id),
-        )
-        sentence_chunks = await _sentence_chunks_from_paragraph_batch(
-            chunker=chunker,
-            paragraph_chunks=paragraph_chunks,
-            source_id=str(prepared.document_id),
-        )
-        return await asyncio.to_thread(
-            self._persist_prepared_chunks,
-            prepared,
-            paragraph_chunks,
-            sentence_chunks,
-        )
+    async def _persist_source(self, **request: Any) -> dict[str, Any]:
+        """Publish one normalized source and return its canonical references.
 
-    def _prepare_persistence(
-        self,
-        *,
-        requested_document_id: UUID,
-        source_version_id: str,
-        normalized_source_version_id: str,
-        operation_id: str,
-        command: str,
-        text_value: str,
-        filename: str | None,
-        content_sha256: str,
-        chunking_strategy: str,
-        media_type: str | None = None,
-        byte_length: int | None = None,
-    ) -> dict[str, Any] | _PersistencePlan:
-        document_id = requested_document_id
-        source_version = _source_version_number(source_version_id)
-        title = _title(filename, text_value)
-        source_name = _source_name(filename)
-        length = len(text_value)
-        body_sha256 = hashlib.sha256(text_value.encode("utf-8")).hexdigest()
-        file_id = _stable_uuid4(f"doc-store:file:{document_id}:{body_sha256}:{filename or ''}")
-        doc_meta = {
-            "file_id": str(file_id),
-            "source_version_id": source_version_id,
-            "normalized_source_version_id": normalized_source_version_id,
-            "operation_id": operation_id,
-            "ingestion_command": command,
-            "chunking_strategy": chunking_strategy,
-            "checksum_algorithm": "sha256",
-            "content_sha256": content_sha256,
-            "source_sha256": body_sha256,
-            "file_sha256": body_sha256,
-            "body_sha256": body_sha256,
-        }
-        inferred = _source_properties(text_value, default_project="doc-store")
-        doc_meta.update(inferred)
-        engine = create_engine(self._database_url, pool_pre_ping=True)
-        try:
-            with engine.begin() as connection:
-                existing_state = _load_document_file_state(connection, document_id)
-                if (
-                    command != "document_chunk"
-                    and filename is not None
-                    and existing_state is not None
-                    and (
-                        existing_state["file_content_sha256"] == content_sha256
-                        or existing_state["file_body_sha256"] == body_sha256
-                    )
-                    and existing_state["file_needs_rechunk"] is False
-                    and existing_state["file_needs_revectorize"] is False
-                    and existing_state["document_needs_revectorize"] is False
-                ):
-                    return _existing_references(
-                        connection,
-                        document_id=document_id,
-                        source_version_id=source_version_id,
-                        source_version=source_version,
-                        chunking_strategy=chunking_strategy,
-                        idempotent_reason="file_checksum_match",
-                    )
-                existing = connection.execute(
-                    text(
-                        "SELECT id, block_meta->>'chunking_strategy' AS chunking_strategy FROM documents "
-                        "WHERE id = :document_id "
-                        "AND block_meta->>'source_version_id' = :source_version_id"
-                    ),
-                    {"document_id": document_id, "source_version_id": source_version_id},
-                ).mappings().one_or_none()
-                if existing is not None and command != "document_chunk":
-                    if (
-                        existing_state is not None
-                        and existing_state["file_needs_rechunk"] is False
-                        and existing_state["file_needs_revectorize"] is False
-                        and existing_state["document_needs_revectorize"] is False
-                    ):
-                        return _existing_references(
-                            connection,
-                            document_id=document_id,
-                            source_version_id=source_version_id,
-                            source_version=source_version,
-                            chunking_strategy=existing.get("chunking_strategy") or chunking_strategy,
-                            idempotent_reason="source_version_match",
-                        )
-                    if (
-                        existing_state is not None
-                        and existing_state["file_needs_rechunk"] is False
-                        and (
-                            existing_state["file_needs_revectorize"] is True
-                            or existing_state["document_needs_revectorize"] is True
-                        )
-                    ):
-                        return _existing_references(
-                            connection,
-                            document_id=document_id,
-                            source_version_id=source_version_id,
-                            source_version=source_version,
-                            chunking_strategy=existing.get("chunking_strategy") or chunking_strategy,
-                            idempotent=False,
-                            idempotent_reason="revectorization_pending",
-                        )
-
-            return _PersistencePlan(
-                document_id=document_id,
-                source_version_id=source_version_id,
-                normalized_source_version_id=normalized_source_version_id,
-                operation_id=operation_id,
-                command=command,
-                text_value=text_value,
-                filename=filename,
-                content_sha256=content_sha256,
-                chunking_strategy=chunking_strategy,
-                source_version=source_version,
-                title=title,
-                source_name=source_name,
-                length=length,
-                body_sha256=body_sha256,
-                file_id=file_id,
-                doc_meta=doc_meta,
-                media_type=media_type,
-                byte_length=byte_length,
-            )
-        finally:
-            engine.dispose()
-
-    def _persist_prepared_chunks(
-        self,
-        prepared: _PersistencePlan,
-        paragraph_chunks: Sequence[RuntimeChunk],
-        sentence_chunks: Sequence[RuntimeChunk],
-    ) -> dict[str, Any]:
-        """Publish one hierarchy and the provenance that makes it accountable.
-
-        One transaction writes three things that may never disagree: the
-        immutable `PrimarySource` the File is bound to, the Document, Chapter,
-        Paragraph and SemanticChunk hierarchy derived from it, and the
-        `ProcessingRun` plus `SourceState` evidence that says which original was
-        consumed, under which deterministic configuration, and whether the
-        normalized source survived the round trip. Because it is one
-        transaction, a hierarchy without its run, or a run naming a hierarchy
-        that was rolled back, is unrepresentable.
-
-        The round-trip verdict is measured, not assumed: the normalized source
-        is compared against the same scope read back through the reconstruction
-        rule ``source_file_reconstruct`` applies, so ``status = 'succeeded'``
-        (which the database only accepts on equal hashes) is earned. A
-        non-match is recorded truthfully as a non-successful run carrying both
-        hashes and the first differing byte offset; turning that verdict into a
-        controlled integrity error for the caller belongs to the diagnostics
-        step, not to this one, so publication semantics are unchanged here.
+        Every keyword is one field of the normalized request, forwarded verbatim to
+        ``PublicationMapper``: the boundary no longer decides what to write.  It produces
+        the chunk units, states them as one aggregate, and lets
+        ``publish_document`` decide replay, map once, and write once.
         """
 
-        if not paragraph_chunks:
-            raise ValueError("chunker returned no paragraph chunks")
-        if not sentence_chunks:
-            raise ValueError("chunker returned no sentence chunks")
-        document_id = prepared.document_id
-        run_id = uuid4()
-        run_started_at = datetime.now(timezone.utc)
-        engine = create_engine(self._database_url, pool_pre_ping=True)
-        try:
-            with engine.begin() as connection:
-                primary_source_id = _resolve_primary_source(connection, prepared)
-                _mark_existing_hierarchy_deleted(connection, document_id)
-                connection.execute(
-                    text(
-                        "UPDATE files SET is_deleted = TRUE, deleted_at = now(), updated_at = now() "
-                        "WHERE owner_id = :document_id OR id = (SELECT owner_id FROM documents WHERE id = :document_id)"
-                    ),
-                    {"document_id": document_id},
-                )
-                # `primary_source_id` is required and unique: a File states which
-                # immutable original it represents, or it does not exist. The
-                # conflict branch deliberately leaves the column alone, because a
-                # File never swaps the original it was accepted with.
-                connection.execute(
-                    text(
-                        "INSERT INTO files "
-                        "(id, owner_id, primary_source_id, path, name, media_type, byte_length, "
-                        "char_count, checksum_algorithm, content_sha256, body_sha256, "
-                        "needs_revectorize, needs_rechunk, is_deleted, deleted_at, block_meta) "
-                        "VALUES (:id, NULL, :primary_source_id, :path, :name, 'text/plain', NULL, "
-                        ":char_count, 'sha256', :content_sha256, :body_sha256, TRUE, FALSE, FALSE, "
-                        "NULL, CAST(:block_meta AS jsonb)) "
-                        "ON CONFLICT (id) DO UPDATE SET "
-                        "path = EXCLUDED.path, "
-                        "name = EXCLUDED.name, "
-                        "media_type = EXCLUDED.media_type, "
-                        "char_count = EXCLUDED.char_count, "
-                        "content_sha256 = EXCLUDED.content_sha256, "
-                        "body_sha256 = EXCLUDED.body_sha256, "
-                        "needs_revectorize = TRUE, "
-                        "needs_rechunk = FALSE, "
-                        "is_deleted = FALSE, "
-                        "deleted_at = NULL, "
-                        "updated_at = now(), "
-                        "block_meta = EXCLUDED.block_meta"
-                    ),
-                    {
-                        "id": prepared.file_id,
-                        "primary_source_id": primary_source_id,
-                        "path": prepared.filename or prepared.source_name or str(prepared.file_id),
-                        "name": prepared.source_name or prepared.filename or str(prepared.file_id),
-                        "char_count": prepared.length,
-                        "content_sha256": prepared.content_sha256,
-                        "body_sha256": prepared.body_sha256,
-                        "block_meta": json.dumps(dict(prepared.doc_meta)),
-                    },
-                )
-                connection.execute(
-                    text(
-                        "INSERT INTO documents "
-                        "(id, owner_id, source_upload_id, source_version, source_path, source_name, source_hash, "
-                        "checksum_algorithm, content_sha256, body_sha256, title, processing_status, "
-                        "processing_attempt, needs_revectorize, processing_trace_id, "
-                        "processing_started_at, processing_completed_at, block_meta) "
-                        "VALUES (:id, :owner_id, :source_upload_id, :source_version, :source_path, :source_name, "
-                        ":source_hash, 'sha256', :content_sha256, :body_sha256, :title, 'draft', "
-                        "1, TRUE, :trace_id, now(), NULL, "
-                        "CAST(:block_meta AS jsonb)) "
-                        "ON CONFLICT (id) DO UPDATE SET "
-                        "owner_id = EXCLUDED.owner_id, "
-                        "source_upload_id = EXCLUDED.source_upload_id, "
-                        "source_version = EXCLUDED.source_version, "
-                        "source_path = EXCLUDED.source_path, "
-                        "source_name = EXCLUDED.source_name, "
-                        "source_hash = EXCLUDED.source_hash, "
-                        "checksum_algorithm = EXCLUDED.checksum_algorithm, "
-                        "content_sha256 = EXCLUDED.content_sha256, "
-                        "body_sha256 = EXCLUDED.body_sha256, "
-                        "title = EXCLUDED.title, "
-                        "processing_status = 'draft', "
-                        "processing_attempt = documents.processing_attempt + 1, "
-                        "needs_revectorize = TRUE, "
-                        "processing_trace_id = EXCLUDED.processing_trace_id, "
-                        "processing_started_at = EXCLUDED.processing_started_at, "
-                        "processing_completed_at = EXCLUDED.processing_completed_at, "
-                        "updated_at = now(), "
-                        "deleted_at = NULL, "
-                        "block_meta = EXCLUDED.block_meta"
-                    ),
-                    {
-                        "id": document_id,
-                        "owner_id": prepared.file_id,
-                        "source_upload_id": document_id,
-                        "source_version": prepared.source_version,
-                        "source_path": prepared.filename,
-                        "source_name": prepared.source_name,
-                        "source_hash": prepared.body_sha256,
-                        "content_sha256": prepared.content_sha256,
-                        "body_sha256": prepared.body_sha256,
-                        "title": prepared.title,
-                        "trace_id": UUID(prepared.operation_id),
-                        "block_meta": json.dumps(dict(prepared.doc_meta)),
-                    },
-                )
-                chapter_id = uuid4()
-                chapter_ids = [str(chapter_id)]
-                paragraph_ids: list[str] = []
-                chunk_ids: list[str] = []
-                connection.execute(
-                    text(
-                        "INSERT INTO chapters "
-                        "(id, owner_id, document_id, order_index, heading, level, source_start, source_end, "
-                        "block_meta) "
-                        "VALUES (:id, :document_id, :document_id, 0, :heading, 1, 0, :source_end, "
-                        "CAST(:block_meta AS jsonb))"
-                    ),
-                    {
-                        "id": chapter_id,
-                        "document_id": document_id,
-                        "heading": prepared.title,
-                        "source_end": prepared.length,
-                        "block_meta": json.dumps(dict(prepared.doc_meta)),
-                    },
-                )
-                for order_index, paragraph_chunk in enumerate(paragraph_chunks):
-                    paragraph_text = paragraph_chunk.text
-                    source_start = paragraph_chunk.start
-                    source_end = paragraph_chunk.end
-                    paragraph_id = uuid4()
-                    chunk_features = _chunk_features(
-                        paragraph_text,
-                        source_name=prepared.source_name,
-                        chunking_strategy="paragraph",
-                    )
-                    chunk_features.update(_chunk_metadata_features(paragraph_chunk.metadata))
-                    paragraph_ids.append(str(paragraph_id))
-                    paragraph_meta = {
-                        **dict(prepared.doc_meta),
-                        **_source_properties(paragraph_text),
-                        **chunk_features,
-                        "paragraph_number": order_index + 1,
-                        "chunker": "svo",
-                    }
-                    connection.execute(
-                        text(
-                            "INSERT INTO paragraphs "
-                            "(id, owner_id, document_id, chapter_id, order_index, text, source_start, "
-                            "source_end, search_weight, block_meta) "
-                            "VALUES (:id, :chapter_id, :document_id, :chapter_id, :order_index, :body, "
-                            ":source_start, :source_end, 1, CAST(:block_meta AS jsonb))"
-                        ),
-                        {
-                            "id": paragraph_id,
-                            "document_id": document_id,
-                            "chapter_id": chapter_id,
-                            "order_index": order_index,
-                            "body": paragraph_text,
-                            "source_start": source_start,
-                            "source_end": source_end,
-                            "block_meta": json.dumps(paragraph_meta),
-                        },
-                    )
-                    for sentence_chunk in _sentence_chunks_for_paragraph(
-                        paragraph_chunk,
-                        sentence_chunks,
-                    ):
-                        sentence_text = sentence_chunk.text
-                        chunk_id = sentence_chunk.uuid
-                        sentence_features = _chunk_features(
-                            sentence_text,
-                            source_name=prepared.source_name,
-                            chunking_strategy="sentence",
-                        )
-                        sentence_features.update(_chunk_metadata_features(sentence_chunk.metadata))
-                        sentence_features["block_type"] = "sentence"
-                        classifier_values = _semantic_classifier_values(sentence_features)
-                        dictionary_ids = _semantic_dictionary_ids(connection, classifier_values)
-                        chunk_ids.append(str(chunk_id))
-                        chunk_meta = {
-                            **paragraph_meta,
-                            **sentence_features,
-                            "unit_type": "sentence",
-                            "chapter_id": str(chapter_id),
-                            "paragraph_id": str(paragraph_id),
-                            "source_name": prepared.source_name,
-                            "svo_chunk": dict(sentence_chunk.metadata),
-                            **classifier_values,
-                        }
-                        connection.execute(
-                            text(
-                                "INSERT INTO semantic_chunks "
-                                "(id, owner_id, document_id, paragraph_id, chapter_id, order_index, text, "
-                                "source_start, source_end, char_count, chunk_type, chunk_type_id, "
-                                "role_id, status_id, block_type_id, language_id, category_id, "
-                                "search_weight, block_meta) "
-                                "VALUES (:id, :paragraph_id, :document_id, :paragraph_id, :chapter_id, "
-                                ":order_index, '', :source_start, :source_end, :char_count, "
-                                ":chunk_type, :chunk_type_id, :role_id, :status_id, "
-                                ":block_type_id, :language_id, :category_id, 1, "
-                                "CAST(:block_meta AS jsonb))"
-                            ),
-                            {
-                                "id": chunk_id,
-                                "document_id": document_id,
-                                "paragraph_id": paragraph_id,
-                                "chapter_id": chapter_id,
-                                "order_index": sentence_chunk.ordinal,
-                                "source_start": sentence_chunk.start,
-                                "source_end": sentence_chunk.end,
-                                "char_count": len(sentence_text),
-                                "chunk_type": classifier_values["type"],
-                                "chunk_type_id": dictionary_ids["chunk_type_id"],
-                                "role_id": dictionary_ids["role_id"],
-                                "status_id": dictionary_ids["status_id"],
-                                "block_type_id": dictionary_ids["block_type_id"],
-                                "language_id": dictionary_ids["language_id"],
-                                "category_id": dictionary_ids["category_id"],
-                                "block_meta": json.dumps(chunk_meta),
-                            },
-                        )
-                        connection.execute(
-                            text(
-                                "INSERT INTO semantic_chunk_texts "
-                                "(chunk_uuid, text, text_sha256, char_count, block_meta) "
-                                "VALUES (:chunk_uuid, :body, :text_sha256, :char_count, "
-                                "CAST(:block_meta AS jsonb))"
-                            ),
-                            {
-                                "chunk_uuid": chunk_id,
-                                "body": sentence_text,
-                                "text_sha256": hashlib.sha256(sentence_text.encode("utf-8")).hexdigest(),
-                                "char_count": len(sentence_text),
-                                "block_meta": json.dumps(chunk_meta),
-                            },
-                        )
-                        _insert_semantic_chunk_initial_version(
-                            connection,
-                            chunk_id,
-                            text_value=sentence_text,
-                            text_sha256=hashlib.sha256(sentence_text.encode("utf-8")).hexdigest(),
-                            char_count=len(sentence_text),
-                            block_meta=json.dumps(chunk_meta),
-                        )
-                        _upsert_semantic_chunk_classifier_assignments(
-                            connection,
-                            chunk_id,
-                            dictionary_ids,
-                        )
-                        _insert_semantic_chunk_default_metrics(connection, chunk_id)
-                        for token_kind in ("tokens", "bm25_tokens"):
-                            for token_ordinal, token_value in enumerate(sentence_features[token_kind]):
-                                connection.execute(
-                                    text(
-                                        "INSERT INTO semantic_chunk_tokens "
-                                        "(chunk_uuid, token_kind, ordinal, token_value) "
-                                        "VALUES (:chunk_uuid, :token_kind, :ordinal, :token_value)"
-                                    ),
-                                    {
-                                        "chunk_uuid": chunk_id,
-                                        "token_kind": token_kind,
-                                        "ordinal": token_ordinal,
-                                        "token_value": token_value,
-                                    },
-                                )
-                        for tag_ordinal, tag_value in enumerate(sentence_features["tags"]):
-                            connection.execute(
-                                text(
-                                    "INSERT INTO semantic_chunk_tags "
-                                    "(chunk_uuid, ordinal, tag_value) "
-                                    "VALUES (:chunk_uuid, :ordinal, :tag_value)"
-                                ),
-                                {"chunk_uuid": chunk_id, "ordinal": tag_ordinal, "tag_value": tag_value},
-                            )
-                reconstructed = _reconstructed_scope_text(connection, document_id)
-                reconstruction_sha256 = hashlib.sha256(
-                    reconstructed.encode("utf-8")
-                ).hexdigest()
-                integrity_outcome, first_difference_offset = _integrity_verdict(
-                    prepared.text_value, reconstructed
-                )
-                run_status = "succeeded" if integrity_outcome == "match" else "failed"
-                _insert_processing_run(
-                    connection,
-                    prepared=prepared,
-                    run_id=run_id,
-                    primary_source_id=primary_source_id,
-                    chapter_id=chapter_id,
-                    status=run_status,
-                    source_sha256=prepared.body_sha256,
-                    reconstruction_sha256=reconstruction_sha256,
-                    integrity_outcome=integrity_outcome,
-                    first_difference_offset=first_difference_offset,
-                    started_at=run_started_at,
-                    completed_at=datetime.now(timezone.utc),
-                )
-                assertion_id = _append_source_state(
-                    connection,
-                    prepared=prepared,
-                    run_id=run_id,
-                    primary_source_id=primary_source_id,
-                    reconstruction_sha256=reconstruction_sha256,
-                    chapter_ids=chapter_ids,
-                    paragraph_count=len(paragraph_ids),
-                    chunk_count=len(chunk_ids),
-                )
-            return {
-                "idempotent": False,
-                "document_id": str(document_id),
-                "source_version_id": prepared.source_version_id,
-                "source_version": prepared.source_version,
-                "chapter_ids": tuple(chapter_ids),
-                "paragraph_ids": tuple(paragraph_ids),
-                "chunk_ids": tuple(chunk_ids),
-                "chunking_strategy": prepared.chunking_strategy,
-                "chunker": "svo",
-                "primary_source_id": str(primary_source_id),
-                "processing_run_id": str(run_id),
-                "processing_run_status": run_status,
-                "integrity_outcome": integrity_outcome,
-                "source_state_assertion_id": str(assertion_id),
-            }
-        finally:
-            engine.dispose()
+        mapper = PublicationMapper(**request)
+        context = mapper.context
+        chunker = self._chunker or installed_svo_runtime_chunker()
+        source_id = str(context.requested_document_id)
+        paragraph_chunks = await chunker.chunk(
+            text=context.text_value, strategy="paragraph", source_id=source_id
+        )
+        sentence_chunks = await _sentence_chunks_from_paragraph_batch(
+            chunker=chunker, paragraph_chunks=paragraph_chunks, source_id=source_id
+        )
+        aggregate = _canonical_aggregate(context, paragraph_chunks, sentence_chunks)
+        bound = _BoundPublicationRepository(
+            publication_repository.PublicationRepository(
+                self._database_url or "", chunker=self._chunker
+            ),
+            mapper.map(aggregate), paragraph_chunks, sentence_chunks,
+        )
+        outcome = await publish_document(aggregate, mapper, bound)
+        if isinstance(outcome, RolledBackPublication):
+            raise _PublicationRolledBack(outcome.failure)
+        return dict(outcome.references)
 
     def _resolve_chunking_strategy(
         self,
@@ -995,6 +490,8 @@ class RuntimeIngestionBoundary:
                     "context": exc.details,
                 },
             )
+        except _PublicationRolledBack as exc:
+            return self._record_failed(operation_id, document_id, started, exc.failure)
         except (SQLAlchemyError, OSError, ValueError) as exc:
             return self._record_failed(
                 operation_id,
@@ -1121,6 +618,90 @@ class RuntimeIngestionBoundary:
             )
 
 
+class _PublicationRolledBack(ValueError):
+    """A rolled-back publication carrying the failure record it becomes.
+
+    ``publish_document`` answers a failed publication with a value rather than an
+    exception, while both ingestion entry points already turn a raised persistence
+    error into one ``PERSISTENCE_FAILED`` record.  Re-raising keeps that single
+    path, carrying the originating error type and message so the record stays the
+    one callers already saw.
+    """
+
+    def __init__(self, failure: PublicationFailure) -> None:
+        super().__init__(failure.message)
+        self.failure: dict[str, Any] = {
+            "code": "PERSISTENCE_FAILED",
+            "message": failure.message,
+            "type": failure.error_type,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class _BoundPublicationRepository:
+    """The repository with this request's plan and chunk units already bound.
+
+    ``PublicationRepositoryProtocol`` names one argument per call, and the repository
+    accepts two defaulted extras only the boundary can supply: the mapped plan,
+    without which the replay lookup has no incoming checksums, filename or command
+    to recognise a ``file_checksum_match`` by, and the chunk units, which no
+    ``PersistencePlan`` field carries.  Binding them here keeps the protocol call
+    sites single-argument rather than widening the contract.
+    """
+
+    repository: Any
+    plan: PersistencePlan
+    paragraph_chunks: Sequence[RuntimeChunk]
+    sentence_chunks: Sequence[RuntimeChunk]
+
+    async def find_committed_version(
+        self, source_upload_id: UUID, source_version: str | int
+    ) -> dict[str, Any] | None:
+        return await self.repository.find_committed_version(
+            source_upload_id, source_version, plan=self.plan
+        )
+
+    async def publish_transaction(self, payload: PersistencePlan) -> dict[str, Any]:
+        return await self.repository.publish_transaction(
+            payload, self.paragraph_chunks, self.sentence_chunks
+        )
+
+
+def _canonical_aggregate(
+    context: NormalizedRequestContext,
+    paragraph_chunks: Sequence[RuntimeChunk], sentence_chunks: Sequence[RuntimeChunk],
+) -> CanonicalIngestionAggregate:
+    """State the produced units as one validated canonical ingestion hierarchy.
+
+    ``source_version`` is the request's own opaque ``source_version_id``, not the
+    integer ``documents.source_version`` stores: an aggregate says which source
+    version was received, and folding it into a storage number is the mapper's
+    decision.  The repository folds the same string the same way, so both halves
+    agree on the identity while the aggregate stays honest about what it was given.
+    """
+
+    document_id = str(context.requested_document_id)
+    paragraphs: list[ParagraphInput] = []
+    chunks: list[Any] = []
+    for unit in paragraph_chunks:
+        owned = _sentence_chunks_for_paragraph(unit, sentence_chunks)
+        indexes = tuple(range(len(chunks), len(chunks) + len(owned)))
+        # Only body and range are carried, because enrichment rebuilds every chunk
+        # against the hierarchy it validates and discards whatever else is stated.
+        chunks.extend(
+            deserialize_semantic_chunk(
+                {"uuid": str(chunk.uuid), "source_id": document_id, "type": "DocBlock",
+                 "body": chunk.text, "text": chunk.text, "start": chunk.start, "end": chunk.end}
+            ) for chunk in owned
+        )
+        paragraphs.append(ParagraphInput(unit.text, unit.start, unit.end, indexes))
+    chapter = ChapterInput(tuple(paragraphs), paragraph_chunks[0].start, paragraph_chunks[-1].end)
+    return enrich_hierarchy(
+        source_upload_id=context.requested_document_id, chapters=(chapter,),
+        source_version=context.source_version_id, semantic_chunks=chunks,
+    )
+
+
 def _source_version_number(source_version_id: str) -> int:
     digest = hashlib.sha256(source_version_id.encode("utf-8")).hexdigest()
     return int(digest[:8], 16) % 2_147_483_646 + 1
@@ -1178,7 +759,7 @@ def _run_actor() -> str:
     return os.getenv(RUN_ACTOR_ENV, "").strip() or DEFAULT_RUN_ACTOR
 
 
-def _normalization_parameters(prepared: _PersistencePlan) -> dict[str, Any]:
+def _normalization_parameters(prepared: PersistencePlan) -> dict[str, Any]:
     """State the complete parameter set the run's normalization profile applied.
 
     Completeness is the point: together with the profile ID and version these
@@ -1212,7 +793,7 @@ def _configuration_hash(command: str, parameters: Mapping[str, Any]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def _source_locator(prepared: _PersistencePlan) -> str:
+def _source_locator(prepared: PersistencePlan) -> str:
     """Name where the original came from; never empty, so the original is findable."""
 
     return (
@@ -1222,7 +803,7 @@ def _source_locator(prepared: _PersistencePlan) -> str:
     )[:2048]
 
 
-def _resolve_primary_source(connection: Any, prepared: _PersistencePlan) -> UUID:
+def _resolve_primary_source(connection: Any, prepared: PersistencePlan) -> UUID:
     """Return the immutable original this File is bound to, creating it once.
 
     ``files.primary_source_id`` is required and unique, so the File row cannot
@@ -1341,7 +922,7 @@ def _integrity_verdict(source_text: str, reconstructed_text: str) -> tuple[str, 
 def _insert_processing_run(
     connection: Any,
     *,
-    prepared: _PersistencePlan,
+    prepared: PersistencePlan,
     run_id: UUID,
     primary_source_id: UUID,
     chapter_id: UUID,
@@ -1412,7 +993,7 @@ def _insert_processing_run(
 def _append_source_state(
     connection: Any,
     *,
-    prepared: _PersistencePlan,
+    prepared: PersistencePlan,
     run_id: UUID,
     primary_source_id: UUID,
     reconstruction_sha256: str,
@@ -1694,20 +1275,6 @@ def _clear_reprocessing_flags(connection: Any, document_id: UUID) -> None:
     )
 
 
-def _source_name(filename: str | None) -> str | None:
-    if not filename:
-        return None
-    return PurePosixPath(filename).name[:512]
-
-
-def _title(filename: str | None, text_value: str) -> str:
-    for line in text_value.splitlines():
-        stripped = line.strip().lstrip("#").strip()
-        if stripped:
-            return stripped[:1024]
-    return (_source_name(filename) or "Untitled document")[:1024]
-
-
 def _validated_chunking_strategy(value: str) -> str:
     if value not in CHUNKING_STRATEGIES:
         raise ValueError("chunking_strategy must be one of paragraph, sentence, semantic")
@@ -1806,10 +1373,6 @@ SEMANTIC_CLASSIFIER_DICTIONARIES = {
     "language": ("language_id", "languages"),
     "category": ("category_id", "categories"),
 }
-
-
-def _semantic_dictionary_defaults(connection: Any) -> dict[str, UUID]:
-    return _semantic_dictionary_ids(connection, SEMANTIC_CLASSIFIER_DEFAULTS)
 
 
 def _semantic_classifier_values(chunk_features: dict[str, Any]) -> dict[str, str]:
@@ -1978,10 +1541,6 @@ def _stable_uuid4(value: str) -> UUID:
     raw[6] = (raw[6] & 0x0F) | 0x40
     raw[8] = (raw[8] & 0x3F) | 0x80
     return UUID(bytes=bytes(raw))
-
-
-def _vector_literal(values: tuple[float, ...]) -> str:
-    return "[" + ",".join(f"{value:.8f}" for value in values) + "]"
 
 
 def _utc_now() -> str:
