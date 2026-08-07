@@ -298,6 +298,36 @@ class TemporalAssertion(Base):
     acceptance_comment: Mapped[str | None] = mapped_column(Text)
 
 
+class ContentAttachmentState(Base):
+    """Whether a ContentAttachment was active, said as one assertion payload.
+
+    This is the family payload table of `TemporalAssertion` for the
+    `content_attachment` family, keyed by the assertion UUID it hangs from. The
+    ORM mirrors the DDL migration `0018b_content_attachment_temporal_state`
+    materializes; the constraint names come from the module naming convention
+    and are byte-for-byte the ones that migration emits.
+
+    It deliberately holds no identity of its own, no revision counter, no
+    effective interval, no `recorded_at` or acceptance provenance, no
+    current-state pointer and no lifecycle columns: every temporal property of
+    an attachment state already belongs to the `temporal_assertions` row this
+    payload keys, and duplicating any of it here would be the second version
+    system the one-version rule forbids. The payload adds exactly one fact the
+    shared assertion cannot express — was the attachment active over that
+    interval — so creation, deactivation and restoration are all appended
+    assertions carrying their own state row rather than rewrites of this one.
+    """
+
+    __tablename__ = "content_attachment_states"
+
+    assertion_id: Mapped[UUID] = mapped_column(
+        UUID4,
+        ForeignKey("temporal_assertions.assertion_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False)
+
+
 class Project(EntityCRUDMixin, Base):
     """A first-class project grouping documents under one UUID identity."""
 
