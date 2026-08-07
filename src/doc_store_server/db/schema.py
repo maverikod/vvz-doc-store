@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from datetime import datetime
 from types import MappingProxyType
-from typing import Any
+from typing import Any, ClassVar
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
@@ -328,6 +328,22 @@ class ContentAttachmentState(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False)
 
 
+class AttachableObjectMixin:
+    """The exclusive endpoint role of the cross-content attachment graph.
+
+    A mapped class mixes this in to declare that its rows may stand at either
+    end of a directed ContentAttachment. `attachable_kind` is the object's
+    existing allowlisted registry kind from `REGISTRY_KIND_LOCATORS`, so an
+    endpoint is named by the one ObjectRegistry vocabulary and no parallel kind
+    vocabulary is introduced. The role is the declaration alone: the edge table,
+    its duplicate-edge and cycle rejection, and the temporal activity of an
+    attachment stay outside this mixin, the latter already being the appended
+    `TemporalAssertion` whose payload is `ContentAttachmentState`.
+    """
+
+    attachable_kind: ClassVar[str]
+
+
 class Project(EntityCRUDMixin, Base):
     """A first-class project grouping documents under one UUID identity."""
 
@@ -351,18 +367,38 @@ class Project(EntityCRUDMixin, Base):
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
-class File(EntityCRUDMixin, Base):
-    """A physical text file that may own, or be owned by, documents."""
+class File(AttachableObjectMixin, EntityCRUDMixin, Base):
+    """A physical text file that may own, or be owned by, documents.
+
+    `primary_source_id` is the exactly-one immutable source association: it is
+    required, so no File exists without an original, and unique, so no two Files
+    claim the same original. `ondelete="RESTRICT"` keeps the original
+    undeletable while a File still depends on it. The association lives here
+    rather than as a back-reference on `primary_sources` because only a required
+    column on this side can make "exactly one" unrepresentable to violate; the
+    reverse column would express "at most one" and would leave the two tables
+    mutually referencing each other.
+
+    The file's own bytes, archive placement and lifecycle columns are untouched
+    by this association, and the class carries no attachment edges: mixing in
+    `AttachableObjectMixin` declares the endpoint role only.
+    """
 
     __tablename__ = "files"
     __table_args__ = (
+        UniqueConstraint("primary_source_id", name="uq_files_primary_source_id"),
         Index("ix_files_owner_id", "owner_id"),
         Index("ix_files_body_sha256", "body_sha256"),
         Index("ix_files_lifecycle", "is_deleted", "deleted_at"),
     )
 
+    attachable_kind: ClassVar[str] = "file"
+
     id: Mapped[UUID] = mapped_column(UUID4, primary_key=True, default=uuid4)
     owner_id: Mapped[UUID | None] = mapped_column(UUID4)
+    primary_source_id: Mapped[UUID] = mapped_column(
+        UUID4, ForeignKey("primary_sources.id", ondelete="RESTRICT"), nullable=False
+    )
     path: Mapped[str] = mapped_column(String(2048), nullable=False)
     name: Mapped[str] = mapped_column(String(512), nullable=False)
     media_type: Mapped[str | None] = mapped_column(String(255))
@@ -383,9 +419,17 @@ class File(EntityCRUDMixin, Base):
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     block_meta: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
 
+    primary_source: Mapped[PrimarySource] = relationship(back_populates="file")
 
-class Document(EntityCRUDMixin, Base):
-    """A versioned source document and its ordered structural children."""
+
+class Document(AttachableObjectMixin, EntityCRUDMixin, Base):
+    """A versioned source document and its ordered structural children.
+
+    Mixing in `AttachableObjectMixin` declares the endpoint role only; the
+    document's canonical hierarchy, publication boundary and shared
+    id/name/owner identity are unchanged, and it keeps reaching its immutable
+    original through the `ProcessingRun` that ingested it.
+    """
 
     __tablename__ = "documents"
     __table_args__ = (
@@ -395,6 +439,8 @@ class Document(EntityCRUDMixin, Base):
         Index("ix_documents_body_sha256", "body_sha256"),
         Index("ix_documents_lifecycle", "processing_status", "deleted_at"),
     )
+
+    attachable_kind: ClassVar[str] = "document"
 
     id: Mapped[UUID] = mapped_column(UUID4, primary_key=True, default=uuid4)
     is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
@@ -432,6 +478,21 @@ class Document(EntityCRUDMixin, Base):
     semantic_chunks: Mapped[list[SemanticChunk]] = relationship(
         back_populates="document", cascade="all, delete-orphan"
     )
+
+
+ATTACHABLE_OBJECT_KINDS: tuple[str, ...] = (File.attachable_kind, Document.attachable_kind)
+"""Registry kinds declared here as permitted AttachableObject endpoints.
+
+Derived from the mapped classes that mix in `AttachableObjectMixin`, so the
+allowlist cannot drift from the declarations. Project is the remaining endpoint
+kind of the attachment graph and is added by the step that establishes its
+endpoint behaviour; nothing here consumes this tuple as a closed set.
+"""
+
+ATTACHABLE_OBJECT_KIND_LOCATORS: Mapping[str, str] = MappingProxyType(
+    {kind: REGISTRY_KIND_LOCATORS[kind] for kind in ATTACHABLE_OBJECT_KINDS}
+)
+"""Declared endpoint kinds paired with their existing concrete-table locators."""
 
 
 class Chapter(EntityCRUDMixin, Base):
@@ -919,15 +980,18 @@ class PrimarySource(EntityCRUDMixin, Base):
     a new UUID, and a change of *state* is an appended `TemporalAssertion`
     carrying a `SourceState` payload, not an edit here.
 
-    `file_id` is unique, so a `File` references at most one immutable original
-    and the association is expressed without adding a column to `files`. A
-    `Document` reaches its original through the `ProcessingRun` that ingested it,
-    which is the evidence chain PrimarySource -> ProcessingRun -> Document.
+    The File association is declared on `files.primary_source_id`, which is both
+    required and unique: exactly one immutable original per File, and no sharing
+    of one original between Files. It is held on that side alone so the
+    cardinality is a NOT NULL constraint rather than a convention, and so the
+    two tables do not reference each other in a cycle; `file` here is only the
+    reverse view of that single foreign key. A `Document` reaches its original
+    through the `ProcessingRun` that ingested it, which is the evidence chain
+    PrimarySource -> ProcessingRun -> Document.
     """
 
     __tablename__ = "primary_sources"
     __table_args__ = (
-        UniqueConstraint("file_id", name="uq_primary_sources_file_id"),
         CheckConstraint("original_sha256 <> ''", name="original_hash_present"),
         CheckConstraint("source_locator <> ''", name="source_locator_present"),
         CheckConstraint("recorded_encoding <> ''", name="recorded_encoding_present"),
@@ -936,9 +1000,6 @@ class PrimarySource(EntityCRUDMixin, Base):
     )
 
     id: Mapped[UUID] = mapped_column(UUID4, primary_key=True, default=uuid4)
-    file_id: Mapped[UUID | None] = mapped_column(
-        UUID4, ForeignKey("files.id", ondelete="RESTRICT")
-    )
     source_locator: Mapped[str] = mapped_column(String(2048), nullable=False)
     media_type: Mapped[str | None] = mapped_column(String(255))
     recorded_encoding: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -952,6 +1013,7 @@ class PrimarySource(EntityCRUDMixin, Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
+    file: Mapped[File | None] = relationship(back_populates="primary_source")
     processing_runs: Mapped[list[ProcessingRun]] = relationship(back_populates="primary_source")
     source_states: Mapped[list[SourceState]] = relationship(back_populates="primary_source")
 
@@ -1142,6 +1204,9 @@ class SourceState(Base):
 
 __all__ = (
     "ASSERTION_KINDS",
+    "ATTACHABLE_OBJECT_KINDS",
+    "ATTACHABLE_OBJECT_KIND_LOCATORS",
+    "AttachableObjectMixin",
     "Base",
     "BlockTypeDictionary",
     "CategoryDictionary",
