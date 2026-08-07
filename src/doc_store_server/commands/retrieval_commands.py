@@ -398,6 +398,16 @@ class _RetrievalCommand(Command):
         return {key: dict(value) for key, value in TEMPORAL_SCHEMA_PROPERTIES.items()}
 
     @classmethod
+    def temporal_parameter_docs(cls) -> dict[str, dict[str, Any]]:
+        """Return the documented form of the optional bitemporal inputs.
+
+        Same two parameters as :meth:`temporal_schema_properties`, carrying the
+        ``required: False`` marker the metadata contract uses.
+        """
+
+        return {key: dict(value) for key, value in TEMPORAL_PARAMETER_DOCS.items()}
+
+    @classmethod
     def metadata(cls) -> dict[str, Any]:
         return {
             "name": cls.name,
@@ -612,11 +622,13 @@ class DocumentGetCommand(_RetrievalCommand):
     schema_properties = {
         "document_id": {"type": "string", "description": "Document UUID4 identifier."},
         "source_version": {"type": "integer", "description": "Optional positive document source version."},
+        **_RetrievalCommand.temporal_schema_properties(),
     }
     required_fields = ("document_id",)
     parameter_docs = {
         "document_id": {"type": "string", "description": "Document UUID4 identifier.", "required": True},
         "source_version": {"type": "integer", "description": "Optional positive document source version.", "required": False},
+        **_RetrievalCommand.temporal_parameter_docs(),
     }
     return_contract = {
         "description": "Stable typed document retrieval envelope.",
@@ -654,10 +666,17 @@ class ChapterGetCommand(_RetrievalCommand):
     boundary_method = "get_chapter"
     descr = "Retrieve one typed chapter by UUID."
     detailed_description = "Validates a chapter UUID and optional positive source version, then delegates to the canonical retrieval boundary."
-    schema_properties = DocumentGetCommand.schema_properties | {"chapter_id": {"type": "string", "description": "Chapter UUID4 identifier."}}
-    schema_properties.pop("document_id")
+    schema_properties = {
+        "chapter_id": {"type": "string", "description": "Chapter UUID4 identifier."},
+        "source_version": dict(DocumentGetCommand.schema_properties["source_version"]),
+        **_RetrievalCommand.temporal_schema_properties(),
+    }
     required_fields = ("chapter_id",)
-    parameter_docs = {"chapter_id": {"type": "string", "description": "Chapter UUID4 identifier.", "required": True}, "source_version": DocumentGetCommand.parameter_docs["source_version"]}
+    parameter_docs = {
+        "chapter_id": {"type": "string", "description": "Chapter UUID4 identifier.", "required": True},
+        "source_version": dict(DocumentGetCommand.parameter_docs["source_version"]),
+        **_RetrievalCommand.temporal_parameter_docs(),
+    }
     return_contract = {"description": "Stable typed chapter retrieval envelope.", "data": {"value": "Chapter data."}}
     usage_examples = [{"chapter_id": "550e8400-e29b-41d4-a716-446655440000"}]
     best_practices = ["Use chapter identifiers returned by the canonical document hierarchy."]
@@ -684,10 +703,17 @@ class ParagraphGetCommand(_RetrievalCommand):
     boundary_method = "get_paragraph"
     descr = "Retrieve one typed paragraph by UUID."
     detailed_description = "Validates a paragraph UUID and optional positive source version, then delegates to the canonical retrieval boundary."
-    schema_properties = DocumentGetCommand.schema_properties | {"paragraph_id": {"type": "string", "description": "Paragraph UUID4 identifier."}}
-    schema_properties.pop("document_id")
+    schema_properties = {
+        "paragraph_id": {"type": "string", "description": "Paragraph UUID4 identifier."},
+        "source_version": dict(DocumentGetCommand.schema_properties["source_version"]),
+        **_RetrievalCommand.temporal_schema_properties(),
+    }
     required_fields = ("paragraph_id",)
-    parameter_docs = {"paragraph_id": {"type": "string", "description": "Paragraph UUID4 identifier.", "required": True}, "source_version": DocumentGetCommand.parameter_docs["source_version"]}
+    parameter_docs = {
+        "paragraph_id": {"type": "string", "description": "Paragraph UUID4 identifier.", "required": True},
+        "source_version": dict(DocumentGetCommand.parameter_docs["source_version"]),
+        **_RetrievalCommand.temporal_parameter_docs(),
+    }
     return_contract = {"description": "Stable typed paragraph retrieval envelope.", "data": {"value": "Paragraph data."}}
     usage_examples = [{"paragraph_id": "550e8400-e29b-41d4-a716-446655440000"}]
     best_practices = ["Use paragraph identifiers returned by the canonical chapter hierarchy."]
@@ -725,6 +751,7 @@ class ParagraphGetByNumberCommand(_RetrievalCommand):
             "description": "1-based paragraph number in canonical document source order.",
         },
         "source_version": {"type": "integer", "description": "Optional positive document source version."},
+        **_RetrievalCommand.temporal_schema_properties(),
     }
     required_fields = ("document_id", "paragraph_number")
     parameter_docs = {
@@ -734,7 +761,8 @@ class ParagraphGetByNumberCommand(_RetrievalCommand):
             "description": "1-based paragraph number in canonical document source order.",
             "required": True,
         },
-        "source_version": DocumentGetCommand.parameter_docs["source_version"],
+        "source_version": dict(DocumentGetCommand.parameter_docs["source_version"]),
+        **_RetrievalCommand.temporal_parameter_docs(),
     }
     return_contract = {
         "description": "Stable paragraph lookup envelope.",
