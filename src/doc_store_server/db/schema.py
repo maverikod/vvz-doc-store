@@ -865,6 +865,281 @@ class SemanticChunkCategoryAssignment(Base):
     category: Mapped[CategoryDictionary] = relationship()
 
 
+SOURCE_STATE_PAYLOAD_FAMILY = "source_state"
+"""`TemporalAssertion.payload_family` value whose payload table is `source_states`."""
+
+PROCESSING_RUN_KINDS: tuple[str, ...] = (
+    "document_create",
+    "document_update",
+    "file_ingest",
+    "integrity_recheck",
+)
+"""Ingestion paths and recheck kinds one immutable run may execute."""
+
+PROCESSING_RUN_STATUSES: tuple[str, ...] = (
+    "pending",
+    "running",
+    "succeeded",
+    "failed",
+    "aborted",
+)
+"""Terminal and in-flight states an auditable run may report."""
+
+INTEGRITY_OUTCOMES: tuple[str, ...] = (
+    "match",
+    "mismatch",
+    "length_boundary",
+)
+"""Round-trip verdicts: equal hashes, a first differing byte, or a strict prefix."""
+
+_PROCESSING_RUN_KIND_ALLOWLIST_SQL = "run_kind IN ({values})".format(
+    values=", ".join(f"'{kind}'" for kind in PROCESSING_RUN_KINDS)
+)
+_PROCESSING_RUN_STATUS_ALLOWLIST_SQL = "status IN ({values})".format(
+    values=", ".join(f"'{status}'" for status in PROCESSING_RUN_STATUSES)
+)
+_INTEGRITY_OUTCOME_ALLOWLIST_SQL = "integrity_outcome IS NULL OR integrity_outcome IN ({values})".format(
+    values=", ".join(f"'{outcome}'" for outcome in INTEGRITY_OUTCOMES)
+)
+
+
+class PrimarySource(EntityCRUDMixin, Base):
+    """Immutable original material: the authoritative bytes behind everything derived.
+
+    A row pins one original input by its byte locator and its original-byte
+    SHA-256, together with the encoding as recorded at capture time, the media
+    type and the free-form capture provenance. The hash is of the *original*
+    bytes, never of a normalized rendering, so normalization can never replace,
+    rewrite or weaken original-byte preservation: a normalized hash lives on the
+    `ProcessingRun` that computed it and on the `SourceState` it produced.
+
+    The row is immutable by construction, which is why it carries neither the
+    `updated_at`/`is_deleted`/`deleted_at` lifecycle triple of the mutable
+    content tables nor any revision counter: a correction is a new original with
+    a new UUID, and a change of *state* is an appended `TemporalAssertion`
+    carrying a `SourceState` payload, not an edit here.
+
+    `file_id` is unique, so a `File` references at most one immutable original
+    and the association is expressed without adding a column to `files`. A
+    `Document` reaches its original through the `ProcessingRun` that ingested it,
+    which is the evidence chain PrimarySource -> ProcessingRun -> Document.
+    """
+
+    __tablename__ = "primary_sources"
+    __table_args__ = (
+        UniqueConstraint("file_id", name="uq_primary_sources_file_id"),
+        CheckConstraint("original_sha256 <> ''", name="original_hash_present"),
+        CheckConstraint("source_locator <> ''", name="source_locator_present"),
+        CheckConstraint("recorded_encoding <> ''", name="recorded_encoding_present"),
+        CheckConstraint("byte_length IS NULL OR byte_length >= 0", name="byte_length_nonnegative"),
+        Index("ix_primary_sources_original_sha256", "original_sha256"),
+    )
+
+    id: Mapped[UUID] = mapped_column(UUID4, primary_key=True, default=uuid4)
+    file_id: Mapped[UUID | None] = mapped_column(
+        UUID4, ForeignKey("files.id", ondelete="RESTRICT")
+    )
+    source_locator: Mapped[str] = mapped_column(String(2048), nullable=False)
+    media_type: Mapped[str | None] = mapped_column(String(255))
+    recorded_encoding: Mapped[str] = mapped_column(String(64), nullable=False)
+    byte_length: Mapped[int | None] = mapped_column(BigInteger)
+    checksum_algorithm: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="sha256", server_default="sha256"
+    )
+    original_sha256: Mapped[str] = mapped_column(String(128), nullable=False)
+    provenance: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    processing_runs: Mapped[list[ProcessingRun]] = relationship(back_populates="primary_source")
+    source_states: Mapped[list[SourceState]] = relationship(back_populates="primary_source")
+
+
+class ProcessingRun(EntityCRUDMixin, Base):
+    """One immutable auditable execution over exactly one recorded comparison scope.
+
+    A run is the evidence that a derived object exists lawfully: it names its
+    input `PrimarySource`, the deterministic configuration that produced the
+    outputs (`configuration_hash` plus the immutable normalization profile ID,
+    version and complete parameter set), the actor, the status and the start and
+    completion instants, and the typed object references — document, chapter and
+    chunk — the execution produced or rechecked.
+
+    Round-trip integrity is declared here rather than left to callers.
+    `source_sha256` is the hash of the normalized Markdown or LaTeX source and
+    `reconstruction_sha256` the hash of the same normalized scope as rebuilt by
+    reconstruction; `run_succeeds_only_on_equal_hashes` makes a `succeeded`
+    status unrepresentable unless both are present, equal and the outcome is
+    `match`. A non-match must carry its controlled diagnostic instead: both
+    hashes, and either the first differing byte offset or the strict-prefix
+    length boundary, alongside the authorization decision and redaction policy
+    under which any context may be released.
+
+    `mismatch_span_id` names the SourceSpan diagnostic the run produced. It is
+    deliberately an unconstrained UUID: the span table belongs to a later step of
+    this branch, and a foreign key is added when that table exists rather than
+    forward-declaring one here.
+
+    Like `PrimarySource` the row is immutable once terminal and therefore carries
+    no lifecycle triple and no revision counter; `operation_id` and
+    `processing_trace_id` reuse the existing runtime correlation boundaries
+    instead of introducing new ones.
+    """
+
+    __tablename__ = "processing_runs"
+    __table_args__ = (
+        CheckConstraint(_PROCESSING_RUN_KIND_ALLOWLIST_SQL, name="run_kind_allowlisted"),
+        CheckConstraint(_PROCESSING_RUN_STATUS_ALLOWLIST_SQL, name="status_allowlisted"),
+        CheckConstraint(_INTEGRITY_OUTCOME_ALLOWLIST_SQL, name="integrity_outcome_allowlisted"),
+        CheckConstraint("actor <> ''", name="actor_present"),
+        CheckConstraint("comparison_scope <> ''", name="comparison_scope_present"),
+        CheckConstraint("configuration_hash <> ''", name="configuration_hash_present"),
+        CheckConstraint(
+            "normalization_profile_id <> '' AND normalization_profile_version <> ''",
+            name="normalization_profile_identified",
+        ),
+        CheckConstraint(
+            "status <> 'succeeded' OR ("
+            "integrity_outcome = 'match'"
+            " AND source_sha256 IS NOT NULL"
+            " AND reconstruction_sha256 IS NOT NULL"
+            " AND source_sha256 = reconstruction_sha256)",
+            name="run_succeeds_only_on_equal_hashes",
+        ),
+        CheckConstraint(
+            "integrity_outcome IS NULL OR integrity_outcome = 'match' OR ("
+            "source_sha256 IS NOT NULL"
+            " AND reconstruction_sha256 IS NOT NULL"
+            " AND (first_difference_offset IS NOT NULL OR mismatch_span_id IS NOT NULL))",
+            name="non_match_carries_difference_evidence",
+        ),
+        CheckConstraint(
+            "first_difference_offset IS NULL OR first_difference_offset >= 0",
+            name="first_difference_offset_nonnegative",
+        ),
+        CheckConstraint(
+            "completed_at IS NULL OR (started_at IS NOT NULL AND completed_at >= started_at)",
+            name="run_interval_ordered",
+        ),
+        Index("ix_processing_runs_primary_source", "primary_source_id", "created_at"),
+        Index("ix_processing_runs_document", "document_id", "created_at"),
+        Index("ix_processing_runs_status", "status", "created_at"),
+        Index("ix_processing_runs_configuration_hash", "configuration_hash"),
+        Index("ix_processing_runs_operation_id", "operation_id"),
+    )
+
+    run_id: Mapped[UUID] = mapped_column(UUID4, primary_key=True, default=uuid4)
+    primary_source_id: Mapped[UUID] = mapped_column(
+        UUID4, ForeignKey("primary_sources.id", ondelete="RESTRICT"), nullable=False
+    )
+    run_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    comparison_scope: Mapped[str] = mapped_column(String(64), nullable=False)
+    actor: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="pending", server_default="pending"
+    )
+    configuration_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    normalization_profile_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    normalization_profile_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    normalization_parameters: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )
+    source_encoding: Mapped[str | None] = mapped_column(String(64))
+    reconstructed_encoding: Mapped[str | None] = mapped_column(String(64))
+    checksum_algorithm: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="sha256", server_default="sha256"
+    )
+    source_sha256: Mapped[str | None] = mapped_column(String(128))
+    reconstruction_sha256: Mapped[str | None] = mapped_column(String(128))
+    integrity_outcome: Mapped[str | None] = mapped_column(String(32))
+    first_difference_offset: Mapped[int | None] = mapped_column(BigInteger)
+    mismatch_span_id: Mapped[UUID | None] = mapped_column(UUID4)
+    diagnostic_authorization: Mapped[str | None] = mapped_column(String(32))
+    redaction_policy: Mapped[str | None] = mapped_column(String(64))
+    document_id: Mapped[UUID | None] = mapped_column(
+        UUID4, ForeignKey("documents.id", ondelete="SET NULL")
+    )
+    chapter_id: Mapped[UUID | None] = mapped_column(
+        UUID4, ForeignKey("chapters.id", ondelete="SET NULL")
+    )
+    chunk_id: Mapped[UUID | None] = mapped_column(
+        UUID4, ForeignKey("semantic_chunks.id", ondelete="SET NULL")
+    )
+    operation_id: Mapped[UUID | None] = mapped_column(UUID4)
+    processing_trace_id: Mapped[UUID | None] = mapped_column(UUID4)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    primary_source: Mapped[PrimarySource] = relationship(back_populates="processing_runs")
+    source_states: Mapped[list[SourceState]] = relationship(back_populates="produced_by_run")
+
+
+class SourceState(Base):
+    """A lossless restoration state of a PrimarySource, said as one assertion payload.
+
+    This is the family payload table of `TemporalAssertion` for the
+    `source_state` family, keyed by the assertion UUID it hangs from exactly as
+    `ContentAttachmentState` is. That assertion UUID *is* the source-version
+    identity a caller cites when asking for an as-of state, so this table needs
+    no identity, no revision counter, no effective interval, no `recorded_at`,
+    no acceptance provenance and no current-state pointer: every temporal
+    property already belongs to the `temporal_assertions` row, and repeating any
+    of it here would be the second version system the one-version rule forbids.
+    The assertion's `object_id` names the registered content object whose source
+    state this is, while `primary_source_id` pins the immutable original the
+    state restores.
+
+    The payload adds exactly the facts the shared assertion cannot express: a
+    lossless reconstruction `manifest` or `reconstruction_locator` and the
+    `restoration_sha256` that a restoration must reproduce, the reconstructed
+    hash actually observed, the encoding the reconstruction retains, and the
+    comparison scope it covers. Restoration therefore appends a new assertion
+    carrying its own state row rather than rewriting this one.
+    """
+
+    __tablename__ = "source_states"
+    __table_args__ = (
+        CheckConstraint("restoration_sha256 <> ''", name="restoration_hash_present"),
+        CheckConstraint("recorded_encoding <> ''", name="recorded_encoding_present"),
+        CheckConstraint("comparison_scope <> ''", name="comparison_scope_present"),
+        CheckConstraint(
+            "manifest <> '{}'::jsonb OR reconstruction_locator IS NOT NULL",
+            name="lossless_manifest_or_locator",
+        ),
+        Index("ix_source_states_primary_source", "primary_source_id"),
+        Index("ix_source_states_produced_by_run", "produced_by_run_id"),
+        Index("ix_source_states_restoration_sha256", "restoration_sha256"),
+    )
+
+    assertion_id: Mapped[UUID] = mapped_column(
+        UUID4,
+        ForeignKey("temporal_assertions.assertion_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    primary_source_id: Mapped[UUID] = mapped_column(
+        UUID4, ForeignKey("primary_sources.id", ondelete="RESTRICT"), nullable=False
+    )
+    produced_by_run_id: Mapped[UUID] = mapped_column(
+        UUID4, ForeignKey("processing_runs.run_id", ondelete="RESTRICT"), nullable=False
+    )
+    manifest: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    reconstruction_locator: Mapped[str | None] = mapped_column(String(2048))
+    checksum_algorithm: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="sha256", server_default="sha256"
+    )
+    restoration_sha256: Mapped[str] = mapped_column(String(128), nullable=False)
+    reconstructed_sha256: Mapped[str | None] = mapped_column(String(128))
+    recorded_encoding: Mapped[str] = mapped_column(String(64), nullable=False)
+    comparison_scope: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    primary_source: Mapped[PrimarySource] = relationship(back_populates="source_states")
+    produced_by_run: Mapped[ProcessingRun] = relationship(back_populates="source_states")
+
+
 __all__ = (
     "ASSERTION_KINDS",
     "Base",
@@ -879,12 +1154,18 @@ __all__ = (
     "EntityCRUDMixin",
     "EntityUuidRegistry",
     "File",
+    "INTEGRITY_OUTCOMES",
     "LanguageDictionary",
+    "PROCESSING_RUN_KINDS",
+    "PROCESSING_RUN_STATUSES",
     "Paragraph",
+    "PrimarySource",
+    "ProcessingRun",
     "Project",
     "REGISTRY_KINDS",
     "REGISTRY_KIND_LOCATORS",
     "REGISTRY_TABLE_LOCATORS",
+    "SOURCE_STATE_PAYLOAD_FAMILY",
     "SemanticChunk",
     "SemanticChunkBlockTypeAssignment",
     "SemanticChunkCategoryAssignment",
@@ -895,6 +1176,7 @@ __all__ = (
     "SemanticChunkVersion",
     "SemanticChunkCurrent",
     "SemanticChunkTypeAssignment",
+    "SourceState",
     "TemporalAssertion",
     "metadata",
 )
