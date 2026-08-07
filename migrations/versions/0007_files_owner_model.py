@@ -99,8 +99,7 @@ def upgrade() -> None:
         """
         INSERT INTO entity_uuid_registry (entity_table, entity_id)
         SELECT 'files', id FROM files
-        ON CONFLICT (entity_id) DO UPDATE
-            SET entity_table = EXCLUDED.entity_table
+        ON CONFLICT (entity_id) DO NOTHING
         """
     )
     op.execute(
