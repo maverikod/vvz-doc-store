@@ -26,8 +26,14 @@ from doc_store_server.ingestion import publication_repository
 from doc_store_server.ingestion.hierarchy_enrichment import (
     CanonicalIngestionAggregate, ChapterInput, ParagraphInput, enrich_hierarchy,
 )
+from doc_store_server.ingestion.integrity_diagnostics import IntegrityRefused, SourceSpanDiagnostic
 from doc_store_server.ingestion.persistence_plan import PersistencePlan
-from doc_store_server.ingestion.publication import PublicationFailure, RolledBackPublication, publish_document
+from doc_store_server.ingestion.publication import (
+    IntegrityRefusedPublication,
+    PublicationFailure,
+    RolledBackPublication,
+    publish_document,
+)
 from doc_store_server.ingestion.publication_mapper import NormalizedRequestContext, PublicationMapper
 from doc_store_server.ingestion.svo_chunking import (
     ChunkerError,
@@ -62,6 +68,20 @@ COMPARISON_SCOPE = "document_normalized_source"
 
 DEFAULT_RUN_ACTOR = "doc-store:ingestion-runtime-boundary"
 RUN_ACTOR_ENV = "DOC_STORE_RUN_ACTOR"
+
+DIAGNOSTIC_CONTEXT_LIMIT = 64
+"""Characters of source a refusal may disclose on each side of its locator.
+
+``build_integrity_diagnostic`` bounds each side by whatever limit its caller
+passes, so the bound is only as tight as this boundary makes it. It is therefore
+fixed here as policy and never taken from a request: a caller who could widen it
+could read the source out of a document by refusing repeatedly. Sixty-four
+characters is enough to see where the normalized source and its reconstruction
+part company and far too little to reconstitute the document from the answer.
+Unlike the processed-text log preview, which is deliberately tunable through
+``DOC_STORE_TEXT_LOG_PREVIEW_CHARS``, this bound answers to no environment
+variable either.
+"""
 
 RUN_KIND_BY_COMMAND: Mapping[str, str] = {
     "document_create": "document_create",
@@ -370,6 +390,17 @@ class RuntimeIngestionBoundary:
         ``PublicationMapper``: the boundary no longer decides what to write.  It produces
         the chunk units, states them as one aggregate, and lets
         ``publish_document`` decide replay, map once, and write once.
+
+        Two of the four outcomes are non-publications, and they are recognised
+        separately because they say different things.  An
+        ``IntegrityRefusedPublication`` is the ``{0o1l}`` verdict: the round trip
+        did not match, so there is no successful ingestion and no reference
+        dictionary to return, only the controlled error the requirement
+        prescribes.  Re-raising it as ``_PublicationRolledBack`` is what makes it
+        reach ``_record_failed`` from both ingestion entry points, so ``__call__``
+        and ``_rechunk_existing`` alike answer ``status: rolled_back`` with a
+        ``SOURCE_INTEGRITY_MISMATCH`` failure instead of the success-shaped
+        references a match returns.
         """
 
         mapper = PublicationMapper(**request)
@@ -390,6 +421,14 @@ class RuntimeIngestionBoundary:
             mapper.map(aggregate), paragraph_chunks, sentence_chunks,
         )
         outcome = await publish_document(aggregate, mapper, bound)
+        if isinstance(outcome, IntegrityRefusedPublication):
+            raise _PublicationRolledBack(
+                IntegrityRefused(
+                    outcome.diagnostic,
+                    source_sha256=outcome.source_sha256,
+                    reconstruction_sha256=outcome.reconstruction_sha256,
+                ).controlled_error
+            )
         if isinstance(outcome, RolledBackPublication):
             raise _PublicationRolledBack(outcome.failure)
         return dict(outcome.references)
@@ -619,22 +658,37 @@ class RuntimeIngestionBoundary:
 
 
 class _PublicationRolledBack(ValueError):
-    """A rolled-back publication carrying the failure record it becomes.
+    """A publication that produced no version, carrying the record it becomes.
 
-    ``publish_document`` answers a failed publication with a value rather than an
+    ``publish_document`` answers a non-publication with a value rather than an
     exception, while both ingestion entry points already turn a raised persistence
     error into one ``PERSISTENCE_FAILED`` record.  Re-raising keeps that single
     path, carrying the originating error type and message so the record stays the
     one callers already saw.
+
+    A controlled ``{0o1l}`` refusal travels the same path but not as the same
+    record.  It arrives already shaped by ``IntegrityRefused.controlled_error``
+    and is carried verbatim, because a refusal is a verdict with its own code and
+    its own required context -- both hashes, the offset or length boundary, the
+    bounded redacted context and the hierarchy identifiers -- and flattening it
+    into ``PERSISTENCE_FAILED`` would discard exactly what the requirement says
+    the caller must be told.  The exception type is shared only so that both
+    entry points keep one ``except`` clause; what the caller is told stays
+    different.
     """
 
-    def __init__(self, failure: PublicationFailure) -> None:
-        super().__init__(failure.message)
-        self.failure: dict[str, Any] = {
-            "code": "PERSISTENCE_FAILED",
-            "message": failure.message,
-            "type": failure.error_type,
-        }
+    def __init__(self, failure: PublicationFailure | Mapping[str, Any]) -> None:
+        record: dict[str, Any] = (
+            dict(failure)
+            if isinstance(failure, Mapping)
+            else {
+                "code": "PERSISTENCE_FAILED",
+                "message": failure.message,
+                "type": failure.error_type,
+            }
+        )
+        super().__init__(str(record.get("message") or ""))
+        self.failure: dict[str, Any] = record
 
 
 @dataclass(frozen=True, slots=True)
@@ -933,17 +987,29 @@ def _insert_processing_run(
     first_difference_offset: int | None,
     started_at: datetime,
     completed_at: datetime,
+    chunk_id: UUID | None = None,
+    mismatch_span_id: UUID | None = None,
+    diagnostic_authorization: str | None = None,
+    redaction_policy: str | None = None,
 ) -> None:
     """Record one immutable execution over exactly one comparison scope.
 
     The row is written once, at the end of the execution it describes, because
     the database refuses to let a run's audit identity drift and refuses any
-    change once it is terminal. ``chunk_id`` stays null: the scope is a whole
-    document and its chunks are reachable through ``document_id``; naming the
-    chunk a mismatch falls in is SourceSpan diagnostics, which this boundary
-    does not own. For the same reason a non-match records the hashes and the
-    offset but leaves the diagnostic authorization and redaction policy unset
-    rather than inventing a release decision.
+    change once it is terminal.
+
+    A matching run and a refused run alike record whatever identifiers are valid
+    at write time, and that is why ``chunk_id``, ``mismatch_span_id``,
+    ``diagnostic_authorization`` and ``redaction_policy`` are optional rather
+    than demanded: a match locates no chunk, cites no span and releases no
+    context, so it passes none of them, while a caller that has them passes them
+    and they are written rather than hardcoded away. A refused run leaves
+    ``document_id``, ``chapter_id`` and ``chunk_id`` null, because migration 0019
+    makes all three ``SET NULL`` foreign keys into a hierarchy the refusal rolled
+    back and there is no row left for them to cite; the Document, Chapter and
+    SemanticChunk identifiers ``{0o1l}`` demands travel on the SourceSpan
+    instead, whose own columns carry no such reference and so survive the
+    rollback.
     """
 
     parameters = _normalization_parameters(prepared)
@@ -954,13 +1020,15 @@ def _insert_processing_run(
             "configuration_hash, normalization_profile_id, normalization_profile_version, "
             "normalization_parameters, source_encoding, reconstructed_encoding, "
             "checksum_algorithm, source_sha256, reconstruction_sha256, integrity_outcome, "
-            "first_difference_offset, document_id, chapter_id, chunk_id, operation_id, "
+            "first_difference_offset, mismatch_span_id, diagnostic_authorization, "
+            "redaction_policy, document_id, chapter_id, chunk_id, operation_id, "
             "processing_trace_id, started_at, completed_at, created_at) "
             "VALUES (:run_id, :primary_source_id, :run_kind, :comparison_scope, :actor, :status, "
             ":configuration_hash, :profile_id, :profile_version, "
             "CAST(:parameters AS jsonb), :source_encoding, :reconstructed_encoding, "
             "'sha256', :source_sha256, :reconstruction_sha256, :integrity_outcome, "
-            ":first_difference_offset, :document_id, :chapter_id, NULL, "
+            ":first_difference_offset, :mismatch_span_id, :diagnostic_authorization, "
+            ":redaction_policy, :document_id, :chapter_id, :chunk_id, "
             "CAST(:operation_id AS uuid), CAST(:operation_id AS uuid), "
             "CAST(:started_at AS timestamptz), CAST(:completed_at AS timestamptz), now())"
         ),
@@ -981,11 +1049,77 @@ def _insert_processing_run(
             "reconstruction_sha256": reconstruction_sha256,
             "integrity_outcome": integrity_outcome,
             "first_difference_offset": first_difference_offset,
+            "mismatch_span_id": mismatch_span_id,
+            "diagnostic_authorization": diagnostic_authorization,
+            "redaction_policy": redaction_policy,
             "document_id": prepared.document_id,
             "chapter_id": chapter_id,
+            "chunk_id": chunk_id,
             "operation_id": prepared.operation_id,
             "started_at": started_at,
             "completed_at": completed_at,
+        },
+    )
+
+
+def _insert_source_span(
+    connection: Any,
+    *,
+    diagnostic: SourceSpanDiagnostic,
+    run_id: UUID,
+) -> None:
+    """Store one controlled diagnostic as the span that outlives what it described.
+
+    The value is written exactly as ``build_integrity_diagnostic`` produced it:
+    the window it examined, the one difference locator it set, the already
+    bounded and already redacted context, the authority and policy under which
+    that context was released, and the Document, Chapter and SemanticChunk
+    identifiers. Nothing is recomputed and nothing is widened here, because the
+    disclosure decision was made where it could be tested without a database.
+
+    ``produced_by_run_id`` is the only real reference the row carries and it is
+    ``RESTRICT``, so the run must already exist when this executes. Every other
+    identifier is an unconstrained UUID on purpose: a refusal rolls its hierarchy
+    back, and a diagnostic that could only name rows which still exist would say
+    nothing about the publication that was refused.
+    """
+
+    bounding_box = diagnostic.bounding_box
+    connection.execute(
+        text(
+            "INSERT INTO source_spans "
+            "(span_id, produced_by_run_id, source_state_assertion_id, document_id, "
+            "chapter_id, chunk_id, character_start, character_end, byte_offset, "
+            "length_boundary, context_before, context_after, authorization_decision, "
+            "redaction_policy, redaction_applied, page, bounding_box, fragment_sha256, "
+            "created_at) "
+            "VALUES (:span_id, :produced_by_run_id, :source_state_assertion_id, :document_id, "
+            ":chapter_id, :chunk_id, :character_start, :character_end, :byte_offset, "
+            ":length_boundary, :context_before, :context_after, :authorization_decision, "
+            ":redaction_policy, :redaction_applied, :page, CAST(:bounding_box AS jsonb), "
+            ":fragment_sha256, now())"
+        ),
+        {
+            "span_id": diagnostic.span_id,
+            "produced_by_run_id": run_id,
+            "source_state_assertion_id": diagnostic.source_state_assertion_id,
+            "document_id": diagnostic.document_id,
+            "chapter_id": diagnostic.chapter_id,
+            "chunk_id": diagnostic.chunk_id,
+            "character_start": diagnostic.character_start,
+            "character_end": diagnostic.character_end,
+            "byte_offset": diagnostic.byte_offset,
+            "length_boundary": diagnostic.length_boundary,
+            "context_before": diagnostic.context_before,
+            "context_after": diagnostic.context_after,
+            "authorization_decision": diagnostic.authorization_decision,
+            "redaction_policy": diagnostic.redaction_policy,
+            "redaction_applied": diagnostic.redaction_applied,
+            "page": diagnostic.page,
+            "bounding_box": (
+                None if bounding_box is None else json.dumps(dict(bounding_box), sort_keys=True)
+            ),
+            "fragment_sha256": diagnostic.fragment_sha256,
         },
     )
 
