@@ -510,35 +510,31 @@ class PublicationRepository:
                 # (3) The refusal evidence, committed after the rollback so that
                 # what was refused, and where, remains on the record.
                 diagnostic = refused.diagnostic
-                with engine.begin() as connection:
-                    runtime_boundary._insert_processing_run(
-                        connection,
-                        prepared=payload,
+                evidence_recorded = True
+                try:
+                    self._record_refusal_evidence(
+                        engine,
+                        payload=payload,
+                        refused=refused,
                         run_id=run_id,
                         primary_source_id=primary_source_id,
-                        status="failed",
-                        source_sha256=payload.body_sha256,
-                        reconstruction_sha256=refused.reconstruction_sha256,
-                        integrity_outcome=refused.integrity_outcome,
-                        first_difference_offset=refused.first_difference_offset,
-                        started_at=run_started_at,
-                        completed_at=datetime.now(timezone.utc),
-                        mismatch_span_id=diagnostic.span_id,
-                        diagnostic_authorization=diagnostic.authorization_decision,
-                        redaction_policy=diagnostic.redaction_policy,
-                        document_id=None,
-                        chapter_id=None,
-                        chunk_id=None,
+                        run_started_at=run_started_at,
                     )
-                    runtime_boundary._insert_source_span(
-                        connection,
-                        diagnostic=diagnostic,
-                        run_id=run_id,
-                    )
+                except Exception:
+                    # The evidence transaction can fail on its own, and if it
+                    # does the failed run rolls back together with its span, so
+                    # nothing anywhere records that a mismatch was measured.
+                    # Losing the evidence must not also lose the diagnosis: the
+                    # refusal is still raised, so the caller receives
+                    # SOURCE_INTEGRITY_MISMATCH rather than a generic storage
+                    # failure indistinguishable from a crash. Whether the
+                    # evidence itself should be made durable is bug 1d359231.
+                    evidence_recorded = False
                 raise integrity_diagnostics.IntegrityRefused(
                     diagnostic,
                     source_sha256=payload.body_sha256,
                     reconstruction_sha256=refused.reconstruction_sha256,
+                    evidence_recorded=evidence_recorded,
                 ) from None
             return {
                 "idempotent": False,
@@ -558,6 +554,45 @@ class PublicationRepository:
             }
         finally:
             engine.dispose()
+
+    @staticmethod
+    def _record_refusal_evidence(
+        engine: Engine,
+        *,
+        payload: PersistencePlan,
+        refused: "_RefusedRoundTrip",
+        run_id: UUID,
+        primary_source_id: UUID,
+        run_started_at: datetime,
+    ) -> None:
+        """Commit the failed run and its span so they outlive the rollback."""
+
+        diagnostic = refused.diagnostic
+        with engine.begin() as connection:
+            runtime_boundary._insert_processing_run(
+                connection,
+                prepared=payload,
+                run_id=run_id,
+                primary_source_id=primary_source_id,
+                status="failed",
+                source_sha256=payload.body_sha256,
+                reconstruction_sha256=refused.reconstruction_sha256,
+                integrity_outcome=refused.integrity_outcome,
+                first_difference_offset=refused.first_difference_offset,
+                started_at=run_started_at,
+                completed_at=datetime.now(timezone.utc),
+                mismatch_span_id=diagnostic.span_id,
+                diagnostic_authorization=diagnostic.authorization_decision,
+                redaction_policy=diagnostic.redaction_policy,
+                document_id=None,
+                chapter_id=None,
+                chunk_id=None,
+            )
+            runtime_boundary._insert_source_span(
+                connection,
+                diagnostic=diagnostic,
+                run_id=run_id,
+            )
 
     def _engine(self) -> Engine:
         return create_engine(self._database_url, pool_pre_ping=True)

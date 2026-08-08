@@ -259,10 +259,22 @@ class IntegrityRefused(Exception):
         *,
         source_sha256: str,
         reconstruction_sha256: str,
+        evidence_recorded: bool = True,
     ) -> None:
         self.diagnostic = diagnostic
         self.source_sha256 = source_sha256
         self.reconstruction_sha256 = reconstruction_sha256
+        self.evidence_recorded = evidence_recorded
+        """Whether the failed run and its span were durably committed.
+
+        The refusal itself is a measurement, and it stands whether or not the
+        transaction that records it succeeded. Losing the evidence must not also
+        lose the diagnosis, so the caller is still told SOURCE_INTEGRITY_MISMATCH
+        and told, in the same breath, that this particular refusal left no audit
+        row behind. Defaults to True because every path that commits the
+        evidence before raising is the ordinary one.
+        """
+
         super().__init__(_refusal_message(diagnostic))
 
     @property
@@ -295,6 +307,11 @@ class IntegrityRefused(Exception):
                 "document_id": _identifier(diagnostic.document_id),
                 "chapter_id": _identifier(diagnostic.chapter_id),
                 "chunk_id": _identifier(diagnostic.chunk_id),
+                # The span_id above names a row that exists only when this is
+                # true. A caller told the refusal was measured, and then unable
+                # to find the span, would otherwise have to guess whether it was
+                # deleted or never written.
+                "evidence_recorded": self.evidence_recorded,
             },
         }
 

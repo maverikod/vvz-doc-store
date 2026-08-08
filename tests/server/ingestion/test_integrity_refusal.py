@@ -630,12 +630,19 @@ def test_publish_document_answers_a_refusal_with_its_own_typed_outcome(
 def test_a_failure_inside_the_refusal_evidence_transaction_is_an_ordinary_rollback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The third block is not privileged: if it fails, that is a plain failure.
+    """Superseded: losing the evidence no longer loses the diagnosis.
 
-    The refusal is only reported as a refusal once its evidence is committed. A
-    storage error while writing that evidence therefore surfaces as an ordinary
-    ``RolledBackPublication``, and --- worth stating rather than assuming --- the
-    failed run goes down with the span, so no evidence at all survives that case.
+    This case originally recorded that a storage error while writing the
+    evidence surfaced as an ordinary ``RolledBackPublication``, indistinguishable
+    from a crash, so nothing anywhere said a mismatch had been measured. That
+    was filed as bug 1d359231 and is now narrowed: the refusal is a measurement
+    and stands whether or not the transaction recording it succeeded, so the
+    caller still receives ``IntegrityRefusedPublication``.
+
+    What is *not* fixed, and is still the open half of that bug, is durability:
+    the failed run genuinely does go down with the span, so no audit row
+    survives. The refusal therefore says so, through ``evidence_recorded``, and
+    this test pins both halves --- the diagnosis survives, the evidence does not.
     """
 
     connection = _FakeConnection(reconstruction=LOSSY_TEXT, fail_on="INSERT INTO source_spans")
@@ -645,13 +652,15 @@ def test_a_failure_inside_the_refusal_evidence_transaction_is_an_ordinary_rollba
         publish_document(_minimal_hierarchy(DOCUMENT_ID), _Mapper(), _repository())
     )
 
-    assert isinstance(outcome, RolledBackPublication)
-    assert not isinstance(outcome, IntegrityRefusedPublication)
-    assert outcome.status == "rolled_back"
+    assert isinstance(outcome, IntegrityRefusedPublication)
+    assert not isinstance(outcome, RolledBackPublication)
     assert outcome.references is None
     assert outcome.canonical_version_refs is None
-    assert outcome.failure.stage == "repository_transaction"
-    assert outcome.failure.error_type == "RuntimeError"
+
+    # The diagnosis survived and names itself honestly as unrecorded.
+    assert outcome.diagnostic is not None
+    assert outcome.evidence_recorded is False
+
     # The original still stands; the hierarchy and the evidence both rolled back.
     assert engine.block_with("INSERT INTO primary_sources").outcome == "commit"
     assert engine.block_with("INSERT INTO documents").outcome == "rollback"
