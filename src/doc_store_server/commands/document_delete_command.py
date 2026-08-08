@@ -33,10 +33,24 @@ class DocumentDeleteCommand(Command):
     use_queue = False
 
     document_service: ClassVar[CanonicalDocumentService | None] = None
-    outcomes: ClassVar[tuple[str, ...]] = (
+    #: What the canonical service itself may report. Anything else from it is a
+    #: contract violation, not an outcome.
+    service_outcomes: ClassVar[tuple[str, ...]] = (
         "deleted",
         "already_absent",
         "conflict",
+    )
+
+    #: Every outcome this command can put on the wire, which is a strictly wider
+    #: set: ``_failure`` projects its error code into the outcome, so the
+    #: response could always carry ``invalid_params`` or ``service_unavailable``
+    #: while the declared enum listed only the three service outcomes. The
+    #: declaration described less than the command returned; it now describes
+    #: exactly what it returns.
+    outcomes: ClassVar[tuple[str, ...]] = service_outcomes + (
+        "invalid_params",
+        "service_unavailable",
+        "delete_failed",
     )
 
     @classmethod
@@ -111,9 +125,13 @@ class DocumentDeleteCommand(Command):
                     "Provide UUID4 document_id and non-empty version_token only; remove unknown fields."
                 ),
                 "CONFLICT": (
-                    "The version token is stale or the canonical service could "
-                    "not establish a deletion precondition; refresh the document "
+                    "The supplied version token is stale; refresh the document "
                     "and retry with its current token."
+                ),
+                "DELETE_FAILED": (
+                    "The deletion itself failed and the message names the cause; "
+                    "this is not a stale token and retrying with a different one "
+                    "will not help."
                 ),
                 "SERVICE_UNAVAILABLE": (
                     "The canonical document service is unavailable; retry after "
@@ -182,14 +200,19 @@ class DocumentDeleteCommand(Command):
             if inspect.isawaitable(result):
                 result = await result
             outcome = self._outcome(result)
-        except Exception:
+        except Exception as exc:
+            # A raised exception is a failure of the deletion, not evidence that
+            # the precondition was stale. Reporting every one of them as CONFLICT
+            # told operators to refresh a token that was already current, and hid
+            # a database-level refusal behind advice that could not work. The
+            # cause is named instead, so the failure can be acted on.
             return self._failure(
                 document_id,
-                "CONFLICT",
-                "Document deletion could not establish its required precondition.",
+                "DELETE_FAILED",
+                f"Document deletion failed: {type(exc).__name__}: {exc}",
             )
 
-        if outcome not in self.outcomes:
+        if outcome not in self.service_outcomes:
             return self._failure(
                 document_id,
                 "CONFLICT",

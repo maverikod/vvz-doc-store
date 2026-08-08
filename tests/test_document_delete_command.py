@@ -71,14 +71,10 @@ def test_already_absent_is_idempotent_success() -> None:
     assert service.calls == [(DOCUMENT_ID, VERSION_TOKEN)]
 
 
-@pytest.mark.parametrize(
-    ("response", "error"),
-    [("conflict", None), (None, RuntimeError("stale precondition"))],
-)
-def test_stale_or_missing_precondition_is_stable_conflict(
-    response: Any, error: Exception | None
-) -> None:
-    service = RecordingCanonicalService(response=response, error=error)
+def test_a_stale_precondition_is_a_stable_conflict() -> None:
+    """A service that reports conflict is reported as conflict, unchanged."""
+
+    service = RecordingCanonicalService(response="conflict", error=None)
 
     result = _run(
         DocumentDeleteCommand(),
@@ -87,14 +83,62 @@ def test_stale_or_missing_precondition_is_stable_conflict(
         context={"canonical_document_service": service},
     )
 
-    expected = {
+    assert result.to_dict() == {
         "success": False,
         "data": {"outcome": "conflict", "document_id": DOCUMENT_ID},
     }
-    if error is not None:
-        expected["error"] = "Document deletion could not establish its required precondition."
-    assert result.to_dict() == expected
     assert service.calls == [(DOCUMENT_ID, "stale-token")]
+
+
+def test_a_raised_failure_names_its_cause_instead_of_claiming_a_conflict() -> None:
+    """Superseded: this case used to assert that any exception became conflict.
+
+    That was the defect, not the contract. It told operators the token was stale
+    and to retry with a current one, while the real cause was a database-level
+    refusal that no token could satisfy -- migration 0019's own SET NULL foreign
+    key colliding with its immutability trigger. The failure now carries the
+    exception type and message so it can be acted on.
+    """
+
+    service = RecordingCanonicalService(
+        response=None, error=RuntimeError("document delete failed")
+    )
+
+    result = _run(
+        DocumentDeleteCommand(),
+        document_id=DOCUMENT_ID,
+        version_token="current-token",
+        context={"canonical_document_service": service},
+    )
+
+    payload = result.to_dict()
+    assert payload["success"] is False
+    assert payload["data"] == {"outcome": "delete_failed", "document_id": DOCUMENT_ID}
+    assert "RuntimeError" in payload["error"]
+    assert "document delete failed" in payload["error"]
+    assert "precondition" not in payload["error"]
+    assert service.calls == [(DOCUMENT_ID, "current-token")]
+
+
+def test_every_outcome_the_command_can_return_is_declared() -> None:
+    """The declared enum used to describe less than the command returns.
+
+    ``_failure`` projects its error code into the outcome, so ``invalid_params``
+    and ``service_unavailable`` were already reachable while the schema listed
+    only the three service outcomes.
+    """
+
+    declared = DocumentDeleteCommand.metadata()["return_value"]["schema"]
+    enum = declared["properties"]["outcome"]["enum"]
+    assert set(DocumentDeleteCommand.service_outcomes) <= set(enum)
+    for reachable in ("invalid_params", "service_unavailable", "delete_failed"):
+        assert reachable in enum, reachable
+    # The inverse: what the service itself may report stays exactly three.
+    assert DocumentDeleteCommand.service_outcomes == (
+        "deleted",
+        "already_absent",
+        "conflict",
+    )
 
 
 def test_missing_service_is_a_stable_unavailable_result() -> None:
@@ -192,11 +236,25 @@ def test_schema_and_metadata_are_complete_and_strict() -> None:
     assert metadata["parameters"] == schema["properties"]
     assert metadata["return_value"]["schema"]["additionalProperties"] is False
     assert metadata["return_value"]["schema"]["required"] == ["outcome", "document_id"]
+    # Superseded: this pinned the declared enum to the three outcomes the
+    # canonical service may report, but the command's own _failure projects its
+    # error code into the outcome, so invalid_params and service_unavailable
+    # were already reachable and undeclared. The declaration now covers every
+    # outcome that can reach the wire; what the service itself may report is a
+    # separate, still-exactly-three vocabulary asserted below.
     assert set(metadata["return_value"]["schema"]["properties"]["outcome"]["enum"]) == {
         "deleted",
         "already_absent",
         "conflict",
+        "invalid_params",
+        "service_unavailable",
+        "delete_failed",
     }
+    assert DocumentDeleteCommand.service_outcomes == (
+        "deleted",
+        "already_absent",
+        "conflict",
+    )
     assert {"INVALID_PARAMS", "CONFLICT", "SERVICE_UNAVAILABLE"} <= set(
         metadata["error_cases"]
     )
