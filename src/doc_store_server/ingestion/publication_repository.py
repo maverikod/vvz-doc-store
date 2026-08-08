@@ -16,10 +16,21 @@ transaction; deciding "nothing to do" must not be able to change anything.
 ``PrimarySource`` binding, the File and Document rows, the Chapter, Paragraph
 and SemanticChunk hierarchy with its texts, versions, classifier assignments,
 metrics, tokens and tags, then the measured round-trip verdict, the immutable
-``ProcessingRun`` and the appended ``SourceState`` --- inside a single
-transaction block.  There is exactly one in this module, and that is the whole
-guarantee: a hierarchy without the run that produced it, or a run naming a
-hierarchy that was rolled back, is unrepresentable.
+``ProcessingRun`` and the appended ``SourceState``.
+
+It does so in three transactions, in an order that is dictated by what has to
+survive a refusal rather than by style.  An *evidence prologue* commits the
+immutable original alone, because the original's bytes were genuinely received
+whether or not the hierarchy publishes and because ``processing_runs`` names it
+under a ``RESTRICT`` foreign key --- a run written after a rollback would have no
+valid parent otherwise.  The *hierarchy transaction* then writes everything the
+publication makes visible and measures the round trip inside the same block: on
+a match it writes the run and appends the state and commits, so a hierarchy
+without the run that produced it, or a run naming a hierarchy that was rolled
+back, stays unrepresentable; on a non-match it commits nothing, so the
+incomplete version never becomes visible.  A *refusal-evidence transaction*
+finally records the failed run and its ``SourceSpan``, which is exactly the
+evidence that must outlive the rollback, and the refusal is raised.
 
 The SQL, the reference keys and the status values are the ones the runtime
 boundary already used; the module-level helpers that issue that SQL are
@@ -39,13 +50,64 @@ from uuid import UUID, uuid4
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
-from doc_store_server.ingestion import runtime_boundary
+from doc_store_server.ingestion import integrity_diagnostics, runtime_boundary
 from doc_store_server.ingestion.persistence_plan import PersistencePlan
 from doc_store_server.ingestion.svo_chunking import RuntimeChunk, SvoRuntimeChunker
 
 
 ReferenceMapping = dict[str, Any]
 """The canonical-version reference dictionary returned to ingestion callers."""
+
+DIAGNOSTIC_AUTHORIZATION = "owner"
+"""The authorization decision a refusal produced by ingestion is released under.
+
+Ingestion runs on behalf of whoever offered the bytes, so the one party entitled
+to see where their own source and its reconstruction part company is that
+submitter.  It is fixed here rather than taken from the request for the same
+reason ``runtime_boundary.DIAGNOSTIC_CONTEXT_LIMIT`` is: a caller who could name
+their own authorization could grant themselves context.
+"""
+
+DIAGNOSTIC_REDACTION_POLICY = "redact_pii"
+"""The policy applied to the context a refusal discloses.
+
+The bounded window is taken from the source itself, so it is redacted before it
+is stored even though the authorization allows it to be seen at all; disclosure
+on an error path fails towards withholding.
+"""
+
+
+class _RefusedRoundTrip(Exception):
+    """Private signal that leaves the hierarchy block without committing it.
+
+    It never escapes ``_publish``.  Rolling a transaction back means raising out
+    of its context manager, but the caller must receive
+    ``integrity_diagnostics.IntegrityRefused`` and only after the refusal
+    evidence has been committed, so the two are deliberately different types:
+    this one carries the measured verdict across the rollback boundary, and the
+    public one is raised on the far side of it.
+    """
+
+    __slots__ = (
+        "diagnostic",
+        "integrity_outcome",
+        "first_difference_offset",
+        "reconstruction_sha256",
+    )
+
+    def __init__(
+        self,
+        diagnostic: integrity_diagnostics.SourceSpanDiagnostic,
+        *,
+        integrity_outcome: str,
+        first_difference_offset: int | None,
+        reconstruction_sha256: str,
+    ) -> None:
+        self.diagnostic = diagnostic
+        self.integrity_outcome = integrity_outcome
+        self.first_difference_offset = first_difference_offset
+        self.reconstruction_sha256 = reconstruction_sha256
+        super().__init__("the measured round trip did not match")
 
 
 class PublicationRepository:
@@ -292,23 +354,40 @@ class PublicationRepository:
         paragraph_chunks: Sequence[RuntimeChunk],
         sentence_chunks: Sequence[RuntimeChunk],
     ) -> ReferenceMapping:
-        """Publish one hierarchy and the provenance that makes it accountable.
+        """Publish one hierarchy, or refuse it and keep the evidence of refusing.
 
-        One transaction writes three things that may never disagree: the
-        immutable ``PrimarySource`` the File is bound to, the Document,
-        Chapter, Paragraph and SemanticChunk hierarchy derived from it, and the
-        ``ProcessingRun`` plus ``SourceState`` evidence that says which
-        original was consumed, under which deterministic configuration, and
-        whether the normalized source survived the round trip.
+        Three transactions run in a fixed order, and which of them commits is
+        the whole of the publication semantics.
 
-        The round-trip verdict is measured, not assumed: the normalized source
-        is compared against the same scope read back through the reconstruction
-        rule ``source_file_reconstruct`` applies, so ``status = 'succeeded'``
-        (which the database only accepts on equal hashes) is earned.  A
-        non-match is recorded truthfully as a non-successful run carrying both
-        hashes and the first differing byte offset; turning that verdict into a
-        controlled integrity error for the caller belongs to the diagnostics
-        step, so publication semantics are unchanged here.
+        The first commits the immutable ``PrimarySource`` alone.  It is not a
+        stylistic split: ``processing_runs.primary_source_id`` is ``NOT NULL``
+        under a ``RESTRICT`` foreign key, so a failed run written after the
+        hierarchy has been rolled back would have no valid parent unless the
+        original is already committed.  It is also the truthful record --- the
+        original's bytes were received whether or not anything is published ---
+        and it is replay-safe, because ``_resolve_primary_source`` mints a
+        stable UUID and inserts ``ON CONFLICT (id) DO NOTHING``.
+
+        The second writes everything the publication makes visible: the File and
+        Document rows, the Chapter, Paragraph and SemanticChunk hierarchy, and
+        then the measured verdict.  The verdict is measured, not assumed: the
+        normalized source is compared against the same scope read back through
+        the reconstruction rule ``source_file_reconstruct`` applies, so
+        ``status = 'succeeded'`` (which the database only accepts on equal
+        hashes) is earned.  On a match the ``ProcessingRun`` and the appended
+        ``SourceState`` are written inside this same block, so the successful
+        path keeps its atomicity exactly as before.  On a mismatch or a strict
+        prefix nothing here commits: the block is left by raising, the whole
+        hierarchy is rolled back, and the incomplete version never becomes
+        visible under ``{xmpp}``.
+
+        The third runs only after such a refusal and writes the failed run and
+        its ``SourceSpan``, which is the audit evidence that has to outlive the
+        rollback.  That run leaves ``document_id``, ``chapter_id`` and
+        ``chunk_id`` null, because migration 0019 declares all three as
+        ``SET NULL`` foreign keys into rows the rollback has just removed; the
+        identifiers ``{0o1l}`` demands ride on the ``SourceSpan``, whose own
+        columns carry no such reference, and on the raised refusal.
         """
 
         if not paragraph_chunks:
@@ -322,72 +401,145 @@ class PublicationRepository:
         chapter_ids = [str(chapter_id)]
         paragraph_ids: list[str] = []
         chunk_ids: list[str] = []
+        chunk_spans: list[tuple[UUID, int]] = []
         engine = self._engine()
         try:
+            # (1) The evidence prologue: the original is committed on its own so
+            # that a refused run still has the parent its foreign key demands.
             with engine.begin() as connection:
                 primary_source_id = runtime_boundary._resolve_primary_source(connection, payload)
-                runtime_boundary._mark_existing_hierarchy_deleted(connection, document_id)
-                _retire_previous_files(connection, document_id)
-                _write_file(connection, payload, primary_source_id)
-                _write_document(connection, payload)
-                _write_chapter(connection, payload, chapter_id)
-                for order_index, paragraph_chunk in enumerate(paragraph_chunks):
-                    paragraph_id = uuid4()
-                    paragraph_ids.append(str(paragraph_id))
-                    paragraph_meta = _write_paragraph(
-                        connection,
-                        payload,
-                        paragraph_chunk=paragraph_chunk,
-                        paragraph_id=paragraph_id,
-                        chapter_id=chapter_id,
-                        order_index=order_index,
-                    )
-                    for sentence_chunk in runtime_boundary._sentence_chunks_for_paragraph(
-                        paragraph_chunk,
-                        sentence_chunks,
-                    ):
-                        chunk_ids.append(
-                            str(
-                                _write_semantic_chunk(
-                                    connection,
-                                    payload,
-                                    sentence_chunk=sentence_chunk,
-                                    paragraph_id=paragraph_id,
-                                    chapter_id=chapter_id,
-                                    paragraph_meta=paragraph_meta,
-                                )
-                            )
+            try:
+                # (2) The hierarchy, and the verdict measured over it.
+                with engine.begin() as connection:
+                    runtime_boundary._mark_existing_hierarchy_deleted(connection, document_id)
+                    _retire_previous_files(connection, document_id)
+                    _write_file(connection, payload, primary_source_id)
+                    _write_document(connection, payload)
+                    _write_chapter(connection, payload, chapter_id)
+                    reconstruction_length = 0
+                    previous_paragraph_id: UUID | None = None
+                    for order_index, paragraph_chunk in enumerate(paragraph_chunks):
+                        paragraph_id = uuid4()
+                        paragraph_ids.append(str(paragraph_id))
+                        paragraph_meta = _write_paragraph(
+                            connection,
+                            payload,
+                            paragraph_chunk=paragraph_chunk,
+                            paragraph_id=paragraph_id,
+                            chapter_id=chapter_id,
+                            order_index=order_index,
                         )
-                reconstructed = runtime_boundary._reconstructed_scope_text(connection, document_id)
-                reconstruction_sha256 = hashlib.sha256(reconstructed.encode("utf-8")).hexdigest()
-                integrity_outcome, first_difference_offset = runtime_boundary._integrity_verdict(
-                    payload.text_value, reconstructed
-                )
-                run_status = "succeeded" if integrity_outcome == "match" else "failed"
-                runtime_boundary._insert_processing_run(
-                    connection,
-                    prepared=payload,
-                    run_id=run_id,
-                    primary_source_id=primary_source_id,
-                    chapter_id=chapter_id,
-                    status=run_status,
+                        for sentence_chunk in runtime_boundary._sentence_chunks_for_paragraph(
+                            paragraph_chunk,
+                            sentence_chunks,
+                        ):
+                            written_chunk_id = _write_semantic_chunk(
+                                connection,
+                                payload,
+                                sentence_chunk=sentence_chunk,
+                                paragraph_id=paragraph_id,
+                                chapter_id=chapter_id,
+                                paragraph_meta=paragraph_meta,
+                            )
+                            chunk_ids.append(str(written_chunk_id))
+                            # The payload is accumulated exactly as the
+                            # reconstruction will join it, so a byte offset into
+                            # the comparison can later be attributed to a chunk
+                            # without reading anything back.
+                            reconstruction_length += len(
+                                _reconstruction_separator(
+                                    previous_paragraph_id, paragraph_id
+                                ).encode("utf-8")
+                            )
+                            reconstruction_length += len(sentence_chunk.text.encode("utf-8"))
+                            chunk_spans.append((written_chunk_id, reconstruction_length))
+                            previous_paragraph_id = paragraph_id
+                    reconstructed = runtime_boundary._reconstructed_scope_text(
+                        connection, document_id
+                    )
+                    reconstruction_sha256 = hashlib.sha256(
+                        reconstructed.encode("utf-8")
+                    ).hexdigest()
+                    integrity_outcome, first_difference_offset = (
+                        runtime_boundary._integrity_verdict(payload.text_value, reconstructed)
+                    )
+                    if integrity_outcome != integrity_diagnostics.MATCHING_OUTCOME:
+                        raise _RefusedRoundTrip(
+                            integrity_diagnostics.build_integrity_diagnostic(
+                                source_text=payload.text_value,
+                                reconstructed_text=reconstructed,
+                                integrity_outcome=integrity_outcome,
+                                first_difference_offset=first_difference_offset,
+                                document_id=document_id,
+                                chapter_id=chapter_id,
+                                chunk_id=_chunk_at_offset(chunk_spans, first_difference_offset),
+                                authorization=DIAGNOSTIC_AUTHORIZATION,
+                                redaction_policy=DIAGNOSTIC_REDACTION_POLICY,
+                                context_limit=runtime_boundary.DIAGNOSTIC_CONTEXT_LIMIT,
+                            ),
+                            integrity_outcome=integrity_outcome,
+                            first_difference_offset=first_difference_offset,
+                            reconstruction_sha256=reconstruction_sha256,
+                        )
+                    run_status = "succeeded"
+                    runtime_boundary._insert_processing_run(
+                        connection,
+                        prepared=payload,
+                        run_id=run_id,
+                        primary_source_id=primary_source_id,
+                        chapter_id=chapter_id,
+                        status=run_status,
+                        source_sha256=payload.body_sha256,
+                        reconstruction_sha256=reconstruction_sha256,
+                        integrity_outcome=integrity_outcome,
+                        first_difference_offset=first_difference_offset,
+                        started_at=run_started_at,
+                        completed_at=datetime.now(timezone.utc),
+                    )
+                    assertion_id = runtime_boundary._append_source_state(
+                        connection,
+                        prepared=payload,
+                        run_id=run_id,
+                        primary_source_id=primary_source_id,
+                        reconstruction_sha256=reconstruction_sha256,
+                        chapter_ids=chapter_ids,
+                        paragraph_count=len(paragraph_ids),
+                        chunk_count=len(chunk_ids),
+                    )
+            except _RefusedRoundTrip as refused:
+                # (3) The refusal evidence, committed after the rollback so that
+                # what was refused, and where, remains on the record.
+                diagnostic = refused.diagnostic
+                with engine.begin() as connection:
+                    runtime_boundary._insert_processing_run(
+                        connection,
+                        prepared=payload,
+                        run_id=run_id,
+                        primary_source_id=primary_source_id,
+                        status="failed",
+                        source_sha256=payload.body_sha256,
+                        reconstruction_sha256=refused.reconstruction_sha256,
+                        integrity_outcome=refused.integrity_outcome,
+                        first_difference_offset=refused.first_difference_offset,
+                        started_at=run_started_at,
+                        completed_at=datetime.now(timezone.utc),
+                        mismatch_span_id=diagnostic.span_id,
+                        diagnostic_authorization=diagnostic.authorization_decision,
+                        redaction_policy=diagnostic.redaction_policy,
+                        document_id=None,
+                        chapter_id=None,
+                        chunk_id=None,
+                    )
+                    runtime_boundary._insert_source_span(
+                        connection,
+                        diagnostic=diagnostic,
+                        run_id=run_id,
+                    )
+                raise integrity_diagnostics.IntegrityRefused(
+                    diagnostic,
                     source_sha256=payload.body_sha256,
-                    reconstruction_sha256=reconstruction_sha256,
-                    integrity_outcome=integrity_outcome,
-                    first_difference_offset=first_difference_offset,
-                    started_at=run_started_at,
-                    completed_at=datetime.now(timezone.utc),
-                )
-                assertion_id = runtime_boundary._append_source_state(
-                    connection,
-                    prepared=payload,
-                    run_id=run_id,
-                    primary_source_id=primary_source_id,
-                    reconstruction_sha256=reconstruction_sha256,
-                    chapter_ids=chapter_ids,
-                    paragraph_count=len(paragraph_ids),
-                    chunk_count=len(chunk_ids),
-                )
+                    reconstruction_sha256=refused.reconstruction_sha256,
+                ) from None
             return {
                 "idempotent": False,
                 "document_id": str(document_id),
@@ -409,6 +561,49 @@ class PublicationRepository:
 
     def _engine(self) -> Engine:
         return create_engine(self._database_url, pool_pre_ping=True)
+
+
+def _reconstruction_separator(
+    previous_paragraph_id: UUID | None,
+    paragraph_id: UUID,
+) -> str:
+    """Return the separator the reconstruction puts before the next payload.
+
+    The rule is ``_reconstructed_scope_text``'s own: nothing before the first
+    payload, a space between payloads of one paragraph, and a blank line between
+    paragraphs.  The separators themselves come from the runtime boundary, so
+    there is still exactly one definition of them.
+    """
+
+    if previous_paragraph_id is None:
+        return ""
+    if previous_paragraph_id == paragraph_id:
+        return runtime_boundary.RECONSTRUCTION_SEPARATORS["within_paragraph"]
+    return runtime_boundary.RECONSTRUCTION_SEPARATORS["between_paragraphs"]
+
+
+def _chunk_at_offset(
+    chunk_spans: Sequence[tuple[UUID, int]],
+    first_difference_offset: int | None,
+) -> UUID | None:
+    """Name the chunk the first differing byte offset falls in.
+
+    ``chunk_spans`` pairs each written chunk with the byte position at which its
+    payload ends in the reconstruction, accumulated in the order the
+    reconstruction joins them, so the first span reaching past the offset is the
+    chunk that contains it.  Bytes belonging to a separator are attributed to the
+    payload that follows them, and an offset at or past the end --- which is what
+    a strict-prefix length boundary produces when the reconstruction is the
+    shorter text --- is attributed to the last chunk written, because that is
+    where the reconstruction stopped.
+    """
+
+    if not chunk_spans or first_difference_offset is None:
+        return None
+    for chunk_id, payload_end in chunk_spans:
+        if first_difference_offset < payload_end:
+            return chunk_id
+    return chunk_spans[-1][0]
 
 
 def _version_number(source_version: str | int) -> int:
