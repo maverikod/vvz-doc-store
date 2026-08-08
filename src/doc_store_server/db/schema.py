@@ -1202,6 +1202,80 @@ class SourceState(Base):
     produced_by_run: Mapped[ProcessingRun] = relationship(back_populates="source_states")
 
 
+class SourceSpan(Base):
+    """One independently referenceable bounded diagnostic about one source region.
+
+    This is the carrier a refused round trip needs. When the normalized source
+    and the reconstructed scope disagree, ingestion is non-successful and the
+    hierarchy it had written rolls back, so the failed `ProcessingRun` survives
+    in a separate evidence transaction with its `document_id`, `chapter_id` and
+    `chunk_id` necessarily NULL — that is exactly what those `SET NULL` foreign
+    keys mean once their rows are gone. The Document, Chapter and SemanticChunk
+    identifiers the controlled integrity error must still name are therefore
+    carried here instead, which is why `document_id`, `chapter_id` and
+    `chunk_id` are plain UUID columns with no foreign key: the span records what
+    it diagnosed, not rows that must continue to exist. `produced_by_run_id` is
+    the one real reference, and it is `RESTRICT` so a run cannot be deleted
+    while a diagnostic still cites it. `source_state_assertion_id` is likewise
+    unconstrained and nullable, because a refused publication accepted no
+    `SourceState` for the span to hang from.
+
+    The located region is said in whichever way the verdict supports: a
+    character range, and then either the first differing `byte_offset` or the
+    `length_boundary` at which one value proved a strict prefix of the other —
+    never both, which `exactly_one_difference_locator` enforces. `page` and
+    `bounding_box` add layout coordinates when the source has them, and
+    `fragment_sha256` pins the exact fragment.
+
+    Disclosure is not incidental. `context_before` and `context_after` may only
+    be released under the `authorization_decision` made for the caller and the
+    `redaction_policy` applied, with `redaction_applied` recording whether that
+    policy actually altered what is stored; all three are required, so a span
+    cannot exist without saying under what authority its context may be read.
+
+    Like the sibling provenance tables the row is immutable: no `updated_at`,
+    `is_deleted`, `deleted_at` or `revision_no`, because a correction is a new
+    span with a new UUID, never an edit of this one. The table is deliberately
+    absent from the entity UUID registry, exactly as `primary_sources` and
+    `processing_runs` are: a diagnostic is evidence about registered objects,
+    not itself a registered addressable object.
+    """
+
+    __tablename__ = "source_spans"
+    __table_args__ = (
+        CheckConstraint("authorization_decision <> ''", name="authorization_decision_present"),
+        CheckConstraint("redaction_policy <> ''", name="redaction_policy_present"),
+        CheckConstraint(
+            "(byte_offset IS NULL) <> (length_boundary IS NULL)",
+            name="exactly_one_difference_locator",
+        ),
+    )
+
+    span_id: Mapped[UUID] = mapped_column(UUID4, primary_key=True, default=uuid4)
+    produced_by_run_id: Mapped[UUID] = mapped_column(
+        UUID4, ForeignKey("processing_runs.run_id", ondelete="RESTRICT"), nullable=False
+    )
+    source_state_assertion_id: Mapped[UUID | None] = mapped_column(UUID4)
+    document_id: Mapped[UUID | None] = mapped_column(UUID4)
+    chapter_id: Mapped[UUID | None] = mapped_column(UUID4)
+    chunk_id: Mapped[UUID | None] = mapped_column(UUID4)
+    character_start: Mapped[int | None] = mapped_column(BigInteger)
+    character_end: Mapped[int | None] = mapped_column(BigInteger)
+    byte_offset: Mapped[int | None] = mapped_column(BigInteger)
+    length_boundary: Mapped[int | None] = mapped_column(BigInteger)
+    context_before: Mapped[str | None] = mapped_column(Text)
+    context_after: Mapped[str | None] = mapped_column(Text)
+    authorization_decision: Mapped[str] = mapped_column(String(32), nullable=False)
+    redaction_policy: Mapped[str] = mapped_column(String(64), nullable=False)
+    redaction_applied: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    page: Mapped[int | None] = mapped_column(Integer)
+    bounding_box: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    fragment_sha256: Mapped[str | None] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 __all__ = (
     "ASSERTION_KINDS",
     "ATTACHABLE_OBJECT_KINDS",
@@ -1241,6 +1315,7 @@ __all__ = (
     "SemanticChunkVersion",
     "SemanticChunkCurrent",
     "SemanticChunkTypeAssignment",
+    "SourceSpan",
     "SourceState",
     "TemporalAssertion",
     "metadata",
