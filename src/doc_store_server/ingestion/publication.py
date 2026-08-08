@@ -8,10 +8,11 @@ publication call, and turns failures into a typed result.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Generic, Protocol, TypeVar
+from typing import Generic, Literal, Protocol, TypeVar
 from uuid import UUID
 
 from .hierarchy_enrichment import CanonicalIngestionAggregate
+from .integrity_diagnostics import IntegrityRefused, SourceSpanDiagnostic
 
 
 PayloadT = TypeVar("PayloadT")
@@ -75,10 +76,43 @@ class RolledBackPublication:
         return None
 
 
+@dataclass(frozen=True, slots=True)
+class IntegrityRefusedPublication:
+    """A publication refused because its round trip did not match.
+
+    This is deliberately not a ``RolledBackPublication`` and not a subclass of
+    one.  A rollback reports that something went wrong -- a stage, an exception
+    type, a message -- whereas a refusal is a verdict the system reached on
+    purpose under ``{0o1l}``, and it carries what that requirement says the
+    caller must be told: both SHA-256 values, the first differing byte offset or
+    the strict-prefix length boundary, the bounded and redacted context released
+    under a named authorization, and the Document, Chapter and SemanticChunk
+    identifiers.  All of the latter live in ``diagnostic``.  Callers separate the
+    two cases with ``isinstance``, so subclassing would silently make a refusal
+    answer to the check for an incidental failure.
+
+    Like a rollback, it exposes no canonical version reference: the hierarchy the
+    refused publication would have made visible was rolled back, so there is
+    nothing to point at.
+    """
+
+    status: Literal["integrity_refused"]
+    identity: CanonicalVersionIdentity
+    diagnostic: SourceSpanDiagnostic
+    source_sha256: str
+    reconstruction_sha256: str
+    references: None = None
+
+    @property
+    def canonical_version_refs(self) -> None:
+        return None
+
+
 PublicationOutcome = (
     CommittedPublication[ReferenceT]
     | IdempotentReplay[ReferenceT]
     | RolledBackPublication
+    | IntegrityRefusedPublication
 )
 
 
@@ -116,6 +150,12 @@ async def publish_document(
 
     Identity lookup happens before mapping and mutation.  A non-replay follows
     one path only: map once, then call the repository's atomic transaction once.
+
+    A round trip the repository refused is reported as its own outcome rather
+    than as a rollback: ``IntegrityRefused`` already carries the controlled
+    ``{0o1l}`` payload, which the generic failure path would discard in favour of
+    a stage string.  Every other path -- the identity lookup, the replay branch
+    and genuine failures -- keeps its behaviour and its stage attribution.
     """
 
     identity = _identity(aggregate)
@@ -129,6 +169,14 @@ async def publish_document(
         payload = mapper.map(aggregate)
         references = await repository.publish_transaction(payload)
         return CommittedPublication("committed", identity, references)
+    except IntegrityRefused as refusal:
+        return IntegrityRefusedPublication(
+            "integrity_refused",
+            identity,
+            refusal.diagnostic,
+            refusal.source_sha256,
+            refusal.reconstruction_sha256,
+        )
     except Exception as error:
         stage = "identity_lookup"
         if "payload" in locals():
@@ -146,6 +194,7 @@ __all__ = (
     "CommittedOutcome",
     "CommittedPublication",
     "IdempotentReplay",
+    "IntegrityRefusedPublication",
     "PublicationFailure",
     "PublicationMapperProtocol",
     "PublicationOutcome",
