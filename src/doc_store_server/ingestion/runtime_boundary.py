@@ -10,7 +10,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Final
 from uuid import UUID, uuid4
 
 from sqlalchemy import create_engine, text
@@ -973,6 +973,15 @@ def _integrity_verdict(source_text: str, reconstructed_text: str) -> tuple[str, 
     return "mismatch", offset
 
 
+_DOCUMENT_FROM_PLAN: Final = object()
+"""Sentinel distinguishing "caller said nothing" from "caller said null".
+
+``document_id`` is nullable, and a refused run has to write it null on purpose,
+so ``None`` cannot also mean "take it from the plan" without making the two
+cases indistinguishable at the call site.
+"""
+
+
 def _insert_processing_run(
     connection: Any,
     *,
@@ -991,6 +1000,7 @@ def _insert_processing_run(
     mismatch_span_id: UUID | None = None,
     diagnostic_authorization: str | None = None,
     redaction_policy: str | None = None,
+    document_id: UUID | None | object = _DOCUMENT_FROM_PLAN,
 ) -> None:
     """Record one immutable execution over exactly one comparison scope.
 
@@ -1010,9 +1020,18 @@ def _insert_processing_run(
     SemanticChunk identifiers ``{0o1l}`` demands travel on the SourceSpan
     instead, whose own columns carry no such reference and so survive the
     rollback.
+
+    ``document_id`` therefore has to be overridable rather than read from the
+    plan: the plan always names a document, but on refusal that row was rolled
+    back with the hierarchy and the foreign key would reject a citation of it.
+    Omitting the argument keeps the plan's value, which is what a successful run
+    wants; passing ``None`` states the absence deliberately.
     """
 
     parameters = _normalization_parameters(prepared)
+    resolved_document_id = (
+        prepared.document_id if document_id is _DOCUMENT_FROM_PLAN else document_id
+    )
     connection.execute(
         text(
             "INSERT INTO processing_runs "
@@ -1052,7 +1071,7 @@ def _insert_processing_run(
             "mismatch_span_id": mismatch_span_id,
             "diagnostic_authorization": diagnostic_authorization,
             "redaction_policy": redaction_policy,
-            "document_id": prepared.document_id,
+            "document_id": resolved_document_id,
             "chapter_id": chapter_id,
             "chunk_id": chunk_id,
             "operation_id": prepared.operation_id,
