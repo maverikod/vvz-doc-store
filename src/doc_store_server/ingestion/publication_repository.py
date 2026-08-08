@@ -408,9 +408,16 @@ class PublicationRepository:
             # that a refused run still has the parent its foreign key demands.
             with engine.begin() as connection:
                 primary_source_id = runtime_boundary._resolve_primary_source(connection, payload)
-            try:
-                # (2) The hierarchy, and the verdict measured over it.
-                with engine.begin() as connection:
+            refusal: _RefusedRoundTrip | None = None
+            # (2) One transaction holding both possible endings. The hierarchy is
+            # written inside a savepoint, so a refusal can undo it and record the
+            # evidence *in the same transaction* that undid it. That is what makes
+            # the evidence durable: there is no longer a state where the hierarchy
+            # rolled back and the failed run did not survive, because the two
+            # commit or fail together.
+            with engine.begin() as connection:
+                hierarchy = connection.begin_nested()
+                try:
                     runtime_boundary._mark_existing_hierarchy_deleted(connection, document_id)
                     _retire_previous_files(connection, document_id)
                     _write_file(connection, payload, primary_source_id)
@@ -481,6 +488,24 @@ class PublicationRepository:
                             first_difference_offset=first_difference_offset,
                             reconstruction_sha256=reconstruction_sha256,
                         )
+                except _RefusedRoundTrip as refused:
+                    # Undo only the hierarchy. The savepoint is what makes this
+                    # possible without leaving the transaction: the incomplete
+                    # version never becomes visible under {xmpp}, and the
+                    # evidence written next is committed by the very transaction
+                    # that discarded it.
+                    hierarchy.rollback()
+                    self._write_refusal_evidence(
+                        connection,
+                        payload=payload,
+                        refused=refused,
+                        run_id=run_id,
+                        primary_source_id=primary_source_id,
+                        run_started_at=run_started_at,
+                    )
+                    refusal = refused
+                else:
+                    hierarchy.commit()
                     run_status = "succeeded"
                     runtime_boundary._insert_processing_run(
                         connection,
@@ -506,35 +531,14 @@ class PublicationRepository:
                         paragraph_count=len(paragraph_ids),
                         chunk_count=len(chunk_ids),
                     )
-            except _RefusedRoundTrip as refused:
-                # (3) The refusal evidence, committed after the rollback so that
-                # what was refused, and where, remains on the record.
-                diagnostic = refused.diagnostic
-                evidence_recorded = True
-                try:
-                    self._record_refusal_evidence(
-                        engine,
-                        payload=payload,
-                        refused=refused,
-                        run_id=run_id,
-                        primary_source_id=primary_source_id,
-                        run_started_at=run_started_at,
-                    )
-                except Exception:
-                    # The evidence transaction can fail on its own, and if it
-                    # does the failed run rolls back together with its span, so
-                    # nothing anywhere records that a mismatch was measured.
-                    # Losing the evidence must not also lose the diagnosis: the
-                    # refusal is still raised, so the caller receives
-                    # SOURCE_INTEGRITY_MISMATCH rather than a generic storage
-                    # failure indistinguishable from a crash. Whether the
-                    # evidence itself should be made durable is bug 1d359231.
-                    evidence_recorded = False
+
+            if refusal is not None:
+                # Raised only after the transaction above committed, so a caller
+                # that receives this refusal can rely on its evidence existing.
                 raise integrity_diagnostics.IntegrityRefused(
-                    diagnostic,
+                    refusal.diagnostic,
                     source_sha256=payload.body_sha256,
-                    reconstruction_sha256=refused.reconstruction_sha256,
-                    evidence_recorded=evidence_recorded,
+                    reconstruction_sha256=refusal.reconstruction_sha256,
                 ) from None
             return {
                 "idempotent": False,
@@ -556,8 +560,8 @@ class PublicationRepository:
             engine.dispose()
 
     @staticmethod
-    def _record_refusal_evidence(
-        engine: Engine,
+    def _write_refusal_evidence(
+        connection: Any,
         *,
         payload: PersistencePlan,
         refused: "_RefusedRoundTrip",
@@ -565,34 +569,41 @@ class PublicationRepository:
         primary_source_id: UUID,
         run_started_at: datetime,
     ) -> None:
-        """Commit the failed run and its span so they outlive the rollback."""
+        """Write the failed run and its span on the connection that discarded the hierarchy.
+
+        It takes a connection rather than an engine on purpose. Opening a second
+        transaction here is what used to make the evidence losable: the
+        hierarchy was already gone by then, so a failure while writing the
+        evidence left a measured mismatch with nothing on the record. Writing
+        into the same transaction means the discard and the record commit
+        together or not at all.
+        """
 
         diagnostic = refused.diagnostic
-        with engine.begin() as connection:
-            runtime_boundary._insert_processing_run(
-                connection,
-                prepared=payload,
-                run_id=run_id,
-                primary_source_id=primary_source_id,
-                status="failed",
-                source_sha256=payload.body_sha256,
-                reconstruction_sha256=refused.reconstruction_sha256,
-                integrity_outcome=refused.integrity_outcome,
-                first_difference_offset=refused.first_difference_offset,
-                started_at=run_started_at,
-                completed_at=datetime.now(timezone.utc),
-                mismatch_span_id=diagnostic.span_id,
-                diagnostic_authorization=diagnostic.authorization_decision,
-                redaction_policy=diagnostic.redaction_policy,
-                document_id=None,
-                chapter_id=None,
-                chunk_id=None,
-            )
-            runtime_boundary._insert_source_span(
-                connection,
-                diagnostic=diagnostic,
-                run_id=run_id,
-            )
+        runtime_boundary._insert_processing_run(
+            connection,
+            prepared=payload,
+            run_id=run_id,
+            primary_source_id=primary_source_id,
+            status="failed",
+            source_sha256=payload.body_sha256,
+            reconstruction_sha256=refused.reconstruction_sha256,
+            integrity_outcome=refused.integrity_outcome,
+            first_difference_offset=refused.first_difference_offset,
+            started_at=run_started_at,
+            completed_at=datetime.now(timezone.utc),
+            mismatch_span_id=diagnostic.span_id,
+            diagnostic_authorization=diagnostic.authorization_decision,
+            redaction_policy=diagnostic.redaction_policy,
+            document_id=None,
+            chapter_id=None,
+            chunk_id=None,
+        )
+        runtime_boundary._insert_source_span(
+            connection,
+            diagnostic=diagnostic,
+            run_id=run_id,
+        )
 
     def _engine(self) -> Engine:
         return create_engine(self._database_url, pool_pre_ping=True)

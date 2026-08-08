@@ -102,14 +102,6 @@ class IntegrityRefusedPublication:
     source_sha256: str
     reconstruction_sha256: str
     references: None = None
-    evidence_recorded: bool = True
-    """Whether the failed run and its ``SourceSpan`` were durably committed.
-
-    A refusal is a measurement and stands on its own, so it is reported even
-    when the transaction that records it failed.  ``diagnostic.span_id`` then
-    names a row that does not exist, and this flag is what stops a caller from
-    concluding the span was deleted rather than never written.
-    """
 
     @property
     def canonical_version_refs(self) -> None:
@@ -184,8 +176,6 @@ async def publish_document(
             refusal.diagnostic,
             refusal.source_sha256,
             refusal.reconstruction_sha256,
-            None,
-            refusal.evidence_recorded,
         )
     except Exception as error:
         stage = "identity_lookup"

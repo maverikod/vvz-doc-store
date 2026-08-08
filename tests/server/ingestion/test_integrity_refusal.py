@@ -276,15 +276,18 @@ def test_a_non_matching_round_trip_rolls_the_hierarchy_back_and_commits_the_fail
     with pytest.raises(integrity_diagnostics.IntegrityRefused) as refusal:
         _publish(connection)
 
-    # Three blocks: the original, the refused hierarchy, the refusal evidence.
-    assert engine.blocks == 3
-    assert engine.outcomes == ["commit", "rollback", "commit"]
+    # Superseded by the fix for bug 1d359231. The refusal used to be a third
+    # transaction opened after the hierarchy transaction was lost, which is
+    # exactly what made the evidence losable. The hierarchy is now discarded by
+    # a savepoint inside the transaction that records the refusal, so there are
+    # two blocks and both commit -- and the discard is asserted where it now
+    # lives, on the savepoint.
+    assert engine.blocks == 2
+    assert engine.outcomes == ["commit", "commit"]
     assert engine.disposed == 1
 
-    # The block that made the publication visible is the block that rolled back,
-    # and it is one block: the whole hierarchy shares its fate.
-    hierarchy = engine.block_with("INSERT INTO documents")
-    assert hierarchy.outcome == "rollback"
+    # The whole hierarchy shares one savepoint, and that savepoint rolled back.
+    assert [savepoint.outcome for savepoint in connection.savepoints] == ["rollback"]
     for statement in (
         "INSERT INTO documents",
         "INSERT INTO chapters",
@@ -293,13 +296,18 @@ def test_a_non_matching_round_trip_rolls_the_hierarchy_back_and_commits_the_fail
         "INSERT INTO semantic_chunk_texts ",
         "INSERT INTO files",
     ):
-        assert hierarchy.issued(statement), f"{statement!r} was not issued in the rolled-back block"
+        assert connection.issued(statement), f"{statement!r} was never issued"
+        assert connection.committed(statement) == [], (
+            f"{statement!r} survived a savepoint that rolled back"
+        )
 
-    # A separate, later block committed, and it is the one carrying the failed run.
+    # The failed run is not inside the discarded savepoint, so it persists --
+    # and it persists by the same commit that discarded the hierarchy, which is
+    # the whole point: the two can no longer disagree.
+    assert connection.committed("INSERT INTO processing_runs") != []
+    assert connection.committed("INSERT INTO source_spans") != []
     evidence = engine.block_with("INSERT INTO processing_runs")
     assert evidence.outcome == "commit"
-    assert evidence.index > hierarchy.index
-    assert hierarchy.issued("INSERT INTO processing_runs") == []
     run = evidence.one("INSERT INTO processing_runs")
     assert run["status"] == "failed"
     assert run["integrity_outcome"] == "mismatch"
@@ -500,8 +508,11 @@ def test_a_strict_prefix_is_refused_as_a_length_boundary_rather_than_a_mismatch(
     with pytest.raises(integrity_diagnostics.IntegrityRefused) as refusal:
         _publish(connection)
 
-    assert engine.outcomes == ["commit", "rollback", "commit"]
-    assert engine.block_with("INSERT INTO documents").outcome == "rollback"
+    # Superseded with the savepoint topology: two blocks, both committing, and
+    # the hierarchy discarded by the savepoint inside the second.
+    assert engine.outcomes == ["commit", "commit"]
+    assert [savepoint.outcome for savepoint in connection.savepoints] == ["rollback"]
+    assert connection.committed("INSERT INTO documents") == []
 
     evidence = engine.block_with("INSERT INTO processing_runs")
     run = evidence.one("INSERT INTO processing_runs")
@@ -630,19 +641,23 @@ def test_publish_document_answers_a_refusal_with_its_own_typed_outcome(
 def test_a_failure_inside_the_refusal_evidence_transaction_is_an_ordinary_rollback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Superseded: losing the evidence no longer loses the diagnosis.
+    """Bug 1d359231, closed: a refused publication with no record is unreachable.
 
-    This case originally recorded that a storage error while writing the
-    evidence surfaced as an ordinary ``RolledBackPublication``, indistinguishable
-    from a crash, so nothing anywhere said a mismatch had been measured. That
-    was filed as bug 1d359231 and is now narrowed: the refusal is a measurement
-    and stands whether or not the transaction recording it succeeded, so the
-    caller still receives ``IntegrityRefusedPublication``.
+    This case used to have three possible endings, and the bad one was reachable:
+    the hierarchy transaction was already lost by the time the evidence
+    transaction ran, so a storage error there left a measured mismatch with
+    nothing on the record and a caller who could not tell it from a crash.
 
-    What is *not* fixed, and is still the open half of that bug, is durability:
-    the failed run genuinely does go down with the span, so no audit row
-    survives. The refusal therefore says so, through ``evidence_recorded``, and
-    this test pins both halves --- the diagnosis survives, the evidence does not.
+    With the hierarchy discarded by a savepoint, the discard and the record are
+    the same transaction. A failure while writing the evidence therefore takes
+    the whole transaction with it: nothing is published *and* nothing is
+    recorded, which is the consistent reading -- the publication simply did not
+    happen. The caller gets an ordinary storage failure, which is honest,
+    because no refusal was ever committed.
+
+    What is gone is the third ending. There is no longer any interleaving in
+    which the hierarchy is discarded and its evidence is not, so a caller
+    holding an ``IntegrityRefusedPublication`` can rely on its span existing.
     """
 
     connection = _FakeConnection(reconstruction=LOSSY_TEXT, fail_on="INSERT INTO source_spans")
@@ -652,19 +667,23 @@ def test_a_failure_inside_the_refusal_evidence_transaction_is_an_ordinary_rollba
         publish_document(_minimal_hierarchy(DOCUMENT_ID), _Mapper(), _repository())
     )
 
-    assert isinstance(outcome, IntegrityRefusedPublication)
-    assert not isinstance(outcome, RolledBackPublication)
+    # No refusal is reported, because none was committed.
+    assert isinstance(outcome, RolledBackPublication)
+    assert not isinstance(outcome, IntegrityRefusedPublication)
     assert outcome.references is None
     assert outcome.canonical_version_refs is None
+    assert outcome.failure.stage == "repository_transaction"
 
-    # The diagnosis survived and names itself honestly as unrecorded.
-    assert outcome.diagnostic is not None
-    assert outcome.evidence_recorded is False
-
-    # The original still stands; the hierarchy and the evidence both rolled back.
+    # The original still stands on its own; everything else went down together.
+    # The run and the hierarchy were issued in the same block, and that block
+    # rolled back, so neither persists -- which is the property that matters and
+    # the one the old three-transaction shape could not provide.
     assert engine.block_with("INSERT INTO primary_sources").outcome == "commit"
-    assert engine.block_with("INSERT INTO documents").outcome == "rollback"
-    assert engine.block_with("INSERT INTO processing_runs").outcome == "rollback"
+    doomed = engine.block_with("INSERT INTO documents")
+    assert doomed.outcome == "rollback"
+    assert doomed.issued("INSERT INTO processing_runs"), (
+        "the run must share the block it can be lost with, not a later one"
+    )
 
 
 # ----------------------------------------------------------------------

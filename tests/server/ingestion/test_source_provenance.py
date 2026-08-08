@@ -268,11 +268,54 @@ class _FakeConnection:
         self._fail_on = fail_on
         self._chunk_paragraphs: dict[str, str] = {}
         self._chunk_texts: list[tuple[str, str]] = []
+        self.savepoints: list[_FakeSavepoint] = []
+
+    # -- savepoints ------------------------------------------------------
+
+    def begin_nested(self) -> "_FakeSavepoint":
+        """Open a SAVEPOINT, exactly as the real connection does.
+
+        Publication writes the hierarchy inside one so that a refusal can
+        discard it without leaving the transaction, which is what lets the
+        refusal evidence be committed by the same transaction that discarded
+        it. A fake that ignored savepoints would make that indistinguishable
+        from writing the hierarchy and keeping it.
+        """
+
+        savepoint = _FakeSavepoint(self, start=len(self.statements))
+        self.savepoints.append(savepoint)
+        return savepoint
 
     # -- recorded statements -------------------------------------------
 
     def issued(self, fragment: str) -> list[dict[str, Any]]:
+        """Every matching statement the connection was asked to run.
+
+        Includes statements a savepoint later discarded; use ``committed`` for
+        what the transaction would actually persist.
+        """
+
         return [params for sql, params in self.statements if fragment in sql]
+
+    def committed(self, fragment: str) -> list[dict[str, Any]]:
+        """Matching statements that survive every savepoint rollback.
+
+        Savepoints only. The connection does not know whether the enclosing
+        transaction committed, so a statement outside a rolled-back savepoint
+        appears here even if its whole block was later lost; ask the engine for
+        that. Use this to reason about what a savepoint discarded, not about
+        durability.
+        """
+
+        discarded = set()
+        for savepoint in self.savepoints:
+            if savepoint.outcome == "rollback":
+                discarded.update(range(savepoint.start, savepoint.end))
+        return [
+            params
+            for index, (sql, params) in enumerate(self.statements)
+            if fragment in sql and index not in discarded
+        ]
 
     def one(self, fragment: str) -> dict[str, Any]:
         matches = self.issued(fragment)
@@ -343,6 +386,27 @@ class _FakeConnection:
         # so a non-matching round trip can be observed end to end.
         paragraph_id = rows[0]["paragraph_id"] if rows else str(DOCUMENT_ID)
         return [{"paragraph_id": paragraph_id, "text": self._reconstruction}]
+
+
+class _FakeSavepoint:
+    """One SAVEPOINT, and whether it was released or rolled back to."""
+
+    def __init__(self, connection: _FakeConnection, *, start: int) -> None:
+        self._connection = connection
+        self.start = start
+        self.end: int | None = None
+        self.outcome: str | None = None
+
+    def _close(self, outcome: str) -> None:
+        assert self.outcome is None, "savepoint resolved twice"
+        self.end = len(self._connection.statements)
+        self.outcome = outcome
+
+    def rollback(self) -> None:
+        self._close("rollback")
+
+    def commit(self) -> None:
+        self._close("commit")
 
 
 class _FakeTransaction:
@@ -856,14 +920,21 @@ def test_a_non_matching_round_trip_is_recorded_truthfully_as_a_non_successful_ru
     assert refusal.value.source_sha256 == run["source_sha256"]
     assert refusal.value.reconstruction_sha256 == run["reconstruction_sha256"]
 
-    # Superseded by G-003/T-006/A-006: the run is still one durable audit record,
-    # but it is now committed by the refusal-evidence transaction *after* the
-    # hierarchy block has rolled back, so the outcomes are commit (the immutable
-    # original), rollback (the refused hierarchy), commit (the evidence). And the
-    # state is no longer appended at all on this path: a SourceState asserts a
-    # version that a reader could restore, and the refused version was rolled
-    # back, so asserting one would be a claim about rows that do not exist.
-    assert engine.outcomes == ["commit", "rollback", "commit"]
+    # Superseded twice. First by G-003/T-006/A-006, which made a mismatch a
+    # refusal. Then by the fix for bug 1d359231: the hierarchy is now discarded
+    # by a savepoint rather than by losing a whole transaction, so the evidence
+    # is written by the same transaction that discarded it and the outcomes are
+    # commit (the immutable original) and commit (the discard together with its
+    # record). What the discard did is asserted through the savepoint below,
+    # which is where the rollback now lives.
+    #
+    # The state is still not appended on this path: a SourceState asserts a
+    # version a reader could restore, and the refused version was discarded, so
+    # asserting one would be a claim about rows that do not exist.
+    assert engine.outcomes == ["commit", "commit"]
+    assert [savepoint.outcome for savepoint in connection.savepoints] == ["rollback"]
+    assert connection.committed("INSERT INTO documents") == []
+    assert connection.committed("INSERT INTO processing_runs") != []
     assert connection.issued("INSERT INTO source_states") == []
     assert connection.issued("INSERT INTO temporal_assertions") == []
 
