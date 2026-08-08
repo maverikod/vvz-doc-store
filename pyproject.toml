@@ -14,7 +14,7 @@ dependencies = [
   "pgvector>=0.5",
   "psycopg[binary]>=3.2",
   "sqlalchemy>=2.0",
-  "mcp-proxy-adapter>=8.10.19",
+  "mcp-proxy-adapter>=8.10.21",
   "svo-client",
   "embed-client",
   "chunk-metadata-adapter>=3.4.1",

@@ -24,7 +24,7 @@ classifiers = [
 ]
 dependencies = [
   "chunk-metadata-adapter>=3.4.1",
-  "mcp-proxy-adapter>=8.10.19",
+  "mcp-proxy-adapter>=8.10.21",
 ]
 
 [project.optional-dependencies]
