@@ -31,12 +31,20 @@ install -m 600 "${CURDIR}/mtls-certs/mtls_certificates/server/doc-store.key" \
     "${ST}/etc/doc-store/mtls/server.key"
 install -m 644 "${CURDIR}/mtls-certs/mtls_certificates/ca/ca.crt" \
     "${ST}/etc/doc-store/mtls/ca.crt"
-printf 'DOC_STORE_VERSION=%s\n' "$VERSION" > "${ST}/etc/doc-store/.env"
-chmod 644 "${ST}/etc/doc-store/.env"
+# /etc/doc-store/.env is deliberately NOT shipped. Everything in it --
+# DOC_STORE_VERSION, DOC_STORE_UID, DOC_STORE_GID -- is derived on the machine
+# it is installed on, and postinst writes all three. Shipping it made dpkg treat
+# it as a conffile (everything under /etc is auto-marked), while postinst
+# rewrote it on every install, so each upgrade raised a conffile prompt that a
+# non-interactive install cannot answer -- after the stack had already been
+# stopped. A generated file must not be packaged as configuration.
 
+# /var/doc-store/secrets/.env is not shipped for the same reason, and its
+# consequence was worse: because the package placed the template there, the file
+# always existed, so postinst's "generate secrets on first install" branch never
+# ran and the shipped placeholder password stayed live. The template is still
+# installed under /usr/share/doc, which is where postinst reads it from.
 install -d "${ST}/var/doc-store/secrets"
-install -m 640 "${CURDIR}/packaging/secrets.env.template" \
-    "${ST}/var/doc-store/secrets/.env"
 
 install -d "${ST}/usr/share/doc-store"
 if [[ -f "${CURDIR}/debian/doc-store-docker-image" ]]; then
