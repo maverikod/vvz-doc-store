@@ -43,6 +43,18 @@ transaction just inserted, so the round-trip verdict is derived rather than
 stubbed. What genuinely needs PostgreSQL --- plpgsql trigger dispatch,
 ``RAISE EXCEPTION`` SQLSTATEs, real referential actions --- is asserted against
 the emitted function bodies and DDL instead of skipped.
+
+Three assertions here were superseded by G-003/T-006/A-006, which turned a
+non-matching round trip into a refusal and split publication into an evidence
+prologue, a hierarchy transaction and a refusal-evidence transaction. Each is
+updated in place at its site with the reason recorded there, and nothing else in
+this module changed: publication no longer returns a reference dictionary for a
+mismatching round trip (it raises ``IntegrityRefused``, and appends no
+``SourceState``), and the two ``engine.blocks == 1`` counts became two blocks
+because the immutable original is now committed on its own before the hierarchy
+that may roll back. The behaviour that replaced the stale part --- the rolled
+back hierarchy, the committed failed run and its ``SourceSpan``, and the
+unchanged matching path --- is proved in ``test_integrity_refusal``.
 """
 
 from __future__ import annotations
@@ -80,7 +92,7 @@ from doc_store_server.db.schema import (
 )
 from doc_store_server.domain.models import Chapter, Document, Paragraph
 from doc_store_server.domain.semantic_chunk import ChunkSpec, build_semantic_chunks
-from doc_store_server.ingestion import runtime_boundary
+from doc_store_server.ingestion import integrity_diagnostics, runtime_boundary
 from doc_store_server.ingestion.hierarchy_enrichment import (
     ChapterInput,
     HierarchyEnrichmentError,
@@ -600,9 +612,14 @@ def test_publication_records_one_auditable_run_over_a_measured_matching_round_tr
 
     references = _publish(connection)
 
-    # One transaction, committed once, and the connection released.
-    assert engine.blocks == 1
-    assert engine.outcomes == ["commit"]
+    # Superseded by G-003/T-006/A-006: publication now opens an evidence prologue
+    # that commits the immutable original alone before the hierarchy block, so a
+    # matching publication runs two blocks rather than one. The claim this test
+    # makes is unchanged --- the hierarchy, the run and the state are one
+    # committed transaction --- and it is stated below over the block that holds
+    # them; only the count of blocks in the whole publication moved.
+    assert engine.blocks == 2
+    assert engine.outcomes == ["commit", "commit"]
     assert engine.disposed == 1
 
     run = connection.one("INSERT INTO processing_runs")
@@ -816,7 +833,14 @@ def test_a_non_matching_round_trip_is_recorded_truthfully_as_a_non_successful_ru
     connection = _FakeConnection(reconstruction=lossy)
     engine = _install_engine(monkeypatch, connection)
 
-    references = _publish(connection)
+    # Superseded by G-003/T-006/A-006: a non-matching round trip is now *refused*
+    # rather than published with a failed run attached, so publication raises
+    # ``IntegrityRefused`` instead of returning a reference dictionary. What this
+    # test asserts about the recorded run is unchanged and still holds; only the
+    # way the caller learns of it moved, and the refusal itself is proved in
+    # ``test_integrity_refusal``.
+    with pytest.raises(integrity_diagnostics.IntegrityRefused) as refusal:
+        _publish(connection)
 
     run = connection.one("INSERT INTO processing_runs")
     assert run["status"] == "failed"
@@ -825,20 +849,29 @@ def test_a_non_matching_round_trip_is_recorded_truthfully_as_a_non_successful_ru
     assert run["reconstruction_sha256"] == hashlib.sha256(lossy.encode("utf-8")).hexdigest()
     assert run["reconstruction_sha256"] != run["source_sha256"]
     assert run["first_difference_offset"] == len("First sentence. Second sent")
-    assert references["processing_run_status"] == "failed"
-    assert references["integrity_outcome"] == "mismatch"
+    # Superseded by G-003/T-006/A-006: there is no reference dictionary to read
+    # ``processing_run_status`` and ``integrity_outcome`` out of, because nothing
+    # was published. The same two facts are asserted on the run row above, and
+    # the caller receives them through the refusal instead.
+    assert refusal.value.source_sha256 == run["source_sha256"]
+    assert refusal.value.reconstruction_sha256 == run["reconstruction_sha256"]
 
-    # The run is still one durable audit record inside the same one transaction,
-    # and the state it produced records the reconstruction actually observed.
-    assert engine.outcomes == ["commit"]
-    state = connection.one("INSERT INTO source_states")
-    assert state["restoration_sha256"] == SOURCE_SHA256
-    assert state["reconstructed_sha256"] == run["reconstruction_sha256"]
+    # Superseded by G-003/T-006/A-006: the run is still one durable audit record,
+    # but it is now committed by the refusal-evidence transaction *after* the
+    # hierarchy block has rolled back, so the outcomes are commit (the immutable
+    # original), rollback (the refused hierarchy), commit (the evidence). And the
+    # state is no longer appended at all on this path: a SourceState asserts a
+    # version that a reader could restore, and the refused version was rolled
+    # back, so asserting one would be a claim about rows that do not exist.
+    assert engine.outcomes == ["commit", "rollback", "commit"]
+    assert connection.issued("INSERT INTO source_states") == []
+    assert connection.issued("INSERT INTO temporal_assertions") == []
 
     # A strict prefix is reported as a length boundary rather than a byte mismatch.
     truncated = _FakeConnection(reconstruction=FIRST_SENTENCE)
     _install_engine(monkeypatch, truncated)
-    _publish(truncated)
+    with pytest.raises(integrity_diagnostics.IntegrityRefused):
+        _publish(truncated)
     boundary_run = truncated.one("INSERT INTO processing_runs")
     assert boundary_run["integrity_outcome"] == "length_boundary"
     assert boundary_run["first_difference_offset"] == len(FIRST_SENTENCE)
@@ -1191,8 +1224,14 @@ def test_a_failed_publication_rolls_back_the_hierarchy_and_its_provenance_togeth
     engine = _install_engine(monkeypatch, early)
     with pytest.raises(RuntimeError, match="storage refused"):
         _publish(early)
-    assert engine.blocks == 1
-    assert engine.outcomes == ["rollback"]
+    # Superseded by G-003/T-006/A-006: the evidence prologue commits the
+    # immutable original before the hierarchy block is opened, so the failing
+    # publication now shows that commit ahead of its rollback. The claim is
+    # unchanged --- the block that writes the hierarchy and its provenance rolls
+    # back as one --- and the original is not part of what rolls back, because
+    # the bytes were genuinely received whether or not anything is published.
+    assert engine.blocks == 2
+    assert engine.outcomes == ["commit", "rollback"]
     assert engine.disposed == 1
     for table in ("processing_runs", "source_states", "temporal_assertions"):
         assert early.issued(f"INSERT INTO {table}") == []
@@ -1203,8 +1242,10 @@ def test_a_failed_publication_rolls_back_the_hierarchy_and_its_provenance_togeth
     late_engine = _install_engine(monkeypatch, late)
     with pytest.raises(ValueError, match="not a registered object"):
         _publish(late)
-    assert late_engine.blocks == 1
-    assert late_engine.outcomes == ["rollback"]
+    # Superseded for the same reason: prologue commit, then the hierarchy block
+    # rolls the whole publication back.
+    assert late_engine.blocks == 2
+    assert late_engine.outcomes == ["commit", "rollback"]
     assert late.issued("INSERT INTO documents") != []
     assert late.issued("INSERT INTO source_states") == []
 
