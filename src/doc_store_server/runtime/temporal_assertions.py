@@ -479,7 +479,21 @@ class TemporalAssertionService:
     ) -> dict[str, Any]:
         object_id = UUID(str(registry["entity_id"]))
         family = _payload_family(payload_family, registry)
-        prior = self._accepted_in_family(connection, object_id, family)
+        if effective_from is not None and not isinstance(effective_until, _Unset):
+            window = _interval(
+                effective_from,
+                effective_until,
+            )
+            prior = self._accepted_in_family_for_window(connection, object_id, family, window)
+        elif effective_from is not None:
+            prior = self._accepted_in_family_for_instant(
+                connection,
+                object_id,
+                family,
+                _instant(effective_from, "effective_from"),
+            )
+        else:
+            prior = self._accepted_in_family(connection, object_id, family)
         if prior is None:
             interval = _interval(
                 effective_from if effective_from is not None else _now(connection),
@@ -501,10 +515,11 @@ class TemporalAssertionService:
                 "left": None,
                 "right": None,
             }
-        window = _interval(
-            effective_from if effective_from is not None else prior["effective_from"],
-            prior["effective_until"] if isinstance(effective_until, _Unset) else effective_until,
-        )
+        if effective_from is None or isinstance(effective_until, _Unset):
+            window = _interval(
+                effective_from if effective_from is not None else prior["effective_from"],
+                prior["effective_until"] if isinstance(effective_until, _Unset) else effective_until,
+            )
         segments = self._split(
             connection,
             prior=prior,
@@ -743,12 +758,7 @@ class TemporalAssertionService:
         object_id: UUID,
         payload_family: str,
     ) -> Mapping[str, Any] | None:
-        rows = [
-            row
-            for row in self._accepted_rows(connection, object_id)
-            if str(row["payload_family"]) == payload_family
-            and str(row["assertion_kind"]) != "deletion"
-        ]
+        rows = self._accepted_payload_rows_in_family(connection, object_id, payload_family)
         if len(rows) > 1:
             raise TemporalAssertionError(
                 AMBIGUOUS_EFFECTIVE_INTERVAL,
@@ -760,6 +770,87 @@ class TemporalAssertionService:
                 },
             )
         return rows[0] if rows else None
+
+    def _accepted_in_family_for_window(
+        self,
+        connection: Connection,
+        object_id: UUID,
+        payload_family: str,
+        window: _Interval,
+    ) -> Mapping[str, Any] | None:
+        rows = self._accepted_payload_rows_in_family(connection, object_id, payload_family)
+        if not rows:
+            return None
+        overlapping = [
+            row
+            for row in rows
+            if _Interval(row["effective_from"], row["effective_until"]).overlaps(window)
+        ]
+        if len(overlapping) != 1:
+            raise TemporalAssertionError(
+                AMBIGUOUS_EFFECTIVE_INTERVAL,
+                "the deletion window must fit exactly one accepted assertion segment",
+                {
+                    "object_id": str(object_id),
+                    "payload_family": payload_family,
+                    "effective_from": _isoformat(window.start),
+                    "effective_until": _isoformat(window.until),
+                    "accepted_assertion_ids": [str(row["assertion_id"]) for row in overlapping],
+                },
+            )
+        prior = overlapping[0]
+        if not _contains_interval(_Interval(prior["effective_from"], prior["effective_until"]), window):
+            raise TemporalAssertionError(
+                DISJOINT_REPLACEMENT_WINDOW,
+                "the deletion window must be contained by one accepted assertion segment",
+                {
+                    "assertion_id": str(prior["assertion_id"]),
+                    "effective_from": _isoformat(window.start),
+                    "effective_until": _isoformat(window.until),
+                },
+            )
+        return prior
+
+    def _accepted_in_family_for_instant(
+        self,
+        connection: Connection,
+        object_id: UUID,
+        payload_family: str,
+        instant: datetime,
+    ) -> Mapping[str, Any] | None:
+        rows = self._accepted_payload_rows_in_family(connection, object_id, payload_family)
+        if not rows:
+            return None
+        containing = [
+            row
+            for row in rows
+            if _contains_instant(_Interval(row["effective_from"], row["effective_until"]), instant)
+        ]
+        if len(containing) != 1:
+            raise TemporalAssertionError(
+                AMBIGUOUS_EFFECTIVE_INTERVAL,
+                "the deletion start must fall inside exactly one accepted assertion segment",
+                {
+                    "object_id": str(object_id),
+                    "payload_family": payload_family,
+                    "effective_from": _isoformat(instant),
+                    "accepted_assertion_ids": [str(row["assertion_id"]) for row in containing],
+                },
+            )
+        return containing[0]
+
+    def _accepted_payload_rows_in_family(
+        self,
+        connection: Connection,
+        object_id: UUID,
+        payload_family: str,
+    ) -> list[Mapping[str, Any]]:
+        return [
+            row
+            for row in self._accepted_rows(connection, object_id)
+            if str(row["payload_family"]) == payload_family
+            and str(row["assertion_kind"]) != "deletion"
+        ]
 
     def _descendants(
         self,
@@ -911,6 +1002,20 @@ def _before(left: datetime | None, right: datetime | None) -> bool:
     if left is None:
         return False
     return left < right
+
+
+def _contains_interval(container: _Interval, contained: _Interval) -> bool:
+    if container.start > contained.start:
+        return False
+    if container.until is None:
+        return True
+    if contained.until is None:
+        return False
+    return contained.until <= container.until
+
+
+def _contains_instant(container: _Interval, instant: datetime) -> bool:
+    return container.start <= instant and _before(instant, container.until)
 
 
 def _earliest(left: datetime | None, right: datetime | None) -> datetime | None:

@@ -912,6 +912,130 @@ def test_visibility_survives_deletion_and_returns_after_restoration(store: _Stor
     assert refusal.value.code == "NOT_A_DELETION_ASSERTION"
 
 
+def test_soft_delete_explicit_exact_window_selects_one_segment_after_split(
+    store: _Store,
+) -> None:
+    """bug-8222f4fc: an explicit delete window resolves against its one segment."""
+
+    object_id = _document(store)
+    created = _created(store, object_id)
+    store.advance(days=1)
+    replaced = store.service.replace_interval(
+        assertion_id=created["assertion_id"],
+        effective_from=MARCH,
+        effective_until=MAY,
+        payload_copier=_copy_document_payload,
+        payload_writer=_write_document_payload("corrected"),
+    )
+
+    store.advance(days=1)
+    deleted = store.service.soft_delete(
+        object_ids=[object_id],
+        effective_from=MARCH,
+        effective_until=MAY,
+        payload_copier=_copy_document_payload,
+    )
+    target = deleted["targets"][0]
+
+    assert target["superseded_assertion_id"] == replaced["corrected"]["assertion_id"]
+    assert target["left"] is None
+    assert target["right"] is None
+    assert target["deletion"]["assertion_kind"] == "deletion"
+    assert target["deletion"]["effective_from"] == MARCH
+    assert target["deletion"]["effective_until"] == MAY
+
+    accepted = store.service.accepted(object_id=object_id)["items"]
+    assert [
+        (row["effective_from"], row["effective_until"], row["assertion_kind"])
+        for row in accepted
+    ] == [
+        (JANUARY, MARCH, "payload"),
+        (MARCH, MAY, "deletion"),
+        (MAY, None, "payload"),
+    ]
+    assert select_visible_assertion(store.history(object_id), _pair(APRIL, store.clock)) is None
+
+
+def test_soft_delete_explicit_contained_window_splits_selected_segment_only(
+    store: _Store,
+) -> None:
+    """bug-8222f4fc: a contained delete window reuses the existing split semantics."""
+
+    object_id = _document(store)
+    created = _created(store, object_id)
+    store.advance(days=1)
+    store.service.replace_interval(
+        assertion_id=created["assertion_id"],
+        effective_from=MARCH,
+        effective_until=MAY,
+        payload_copier=_copy_document_payload,
+        payload_writer=_write_document_payload("corrected"),
+    )
+
+    store.advance(days=1)
+    deleted = store.service.soft_delete(
+        object_ids=[object_id],
+        effective_from=APRIL,
+        effective_until=MAY,
+        payload_copier=_copy_document_payload,
+    )
+    target = deleted["targets"][0]
+
+    assert target["left"]["effective_from"] == MARCH
+    assert target["left"]["effective_until"] == APRIL
+    assert target["deletion"]["effective_from"] == APRIL
+    assert target["deletion"]["effective_until"] == MAY
+    assert target["right"] is None
+
+    accepted = store.service.accepted(object_id=object_id)["items"]
+    assert [
+        (row["effective_from"], row["effective_until"], row["assertion_kind"])
+        for row in accepted
+    ] == [
+        (JANUARY, MARCH, "payload"),
+        (MARCH, APRIL, "supersession"),
+        (APRIL, MAY, "deletion"),
+        (MAY, None, "payload"),
+    ]
+    bodies = {
+        row["assertion_id"]: row["body"] for row in store.query("SELECT * FROM document_payloads")
+    }
+    assert bodies[target["left"]["assertion_id"]] == "corrected"
+
+
+def test_soft_delete_rejects_multi_segment_window_without_partial_writes(
+    store: _Store,
+) -> None:
+    """bug-8222f4fc: crossing accepted segments remains ambiguous and atomic."""
+
+    object_id = _document(store)
+    created = _created(store, object_id)
+    store.advance(days=1)
+    store.service.replace_interval(
+        assertion_id=created["assertion_id"],
+        effective_from=MARCH,
+        effective_until=MAY,
+        payload_copier=_copy_document_payload,
+        payload_writer=_write_document_payload("corrected"),
+    )
+    before = store.history(object_id)
+
+    with pytest.raises(TemporalAssertionError) as refusal:
+        store.service.soft_delete(
+            object_ids=[object_id],
+            effective_from=FEBRUARY,
+            effective_until=APRIL,
+            payload_copier=_copy_document_payload,
+        )
+    assert refusal.value.code == AMBIGUOUS_EFFECTIVE_INTERVAL
+    assert store.history(object_id) == before
+
+    with pytest.raises(TemporalAssertionError) as no_window_refusal:
+        store.service.soft_delete(object_ids=[object_id], payload_copier=_copy_document_payload)
+    assert no_window_refusal.value.code == AMBIGUOUS_EFFECTIVE_INTERVAL
+    assert store.history(object_id) == before
+
+
 def test_soft_delete_takes_an_exact_list_with_optional_descendant_closure(store: _Store) -> None:
     """{tox8}/{DL01}: exactly the named UUIDs, plus the registered closure when asked."""
 

@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import subprocess
 import json
 import os
+import sys
 import tempfile
 import time
 import uuid
@@ -41,6 +43,16 @@ from mcp_proxy_adapter.client.jsonrpc_client.client import JsonRpcClient
 
 
 CHUNKING_STRATEGIES = ("paragraph", "sentence", "semantic")
+LOCAL_REGRESSION_CHECKS = {
+    "bug-8222f4fc-explicit-window-soft-delete": (
+        "tests/test_bitemporal_resolution.py::"
+        "test_soft_delete_explicit_exact_window_selects_one_segment_after_split",
+        "tests/test_bitemporal_resolution.py::"
+        "test_soft_delete_explicit_contained_window_splits_selected_segment_only",
+        "tests/test_bitemporal_resolution.py::"
+        "test_soft_delete_rejects_multi_segment_window_without_partial_writes",
+    ),
+}
 
 
 def _stable_uuid4(value: str) -> str:
@@ -1507,6 +1519,31 @@ async def _verify_hard_delete(client: DocStoreClient, *, document_id: str) -> li
 
 
 async def _run(args: argparse.Namespace) -> int:
+    if args.list_checks:
+        checks = sorted(
+            [
+                "bug-53a82705-markdown-exact-reconstruction",
+                *LOCAL_REGRESSION_CHECKS,
+            ]
+        )
+        print(json.dumps({"checks": checks}, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+    if args.only_check in LOCAL_REGRESSION_CHECKS:
+        nodeids = LOCAL_REGRESSION_CHECKS[args.only_check]
+        command = [sys.executable, "-m", "pytest", *nodeids]
+        completed = subprocess.run(command, capture_output=True, text=True, check=False)
+        summary = {
+            "status": "pass" if completed.returncode == 0 else "fail",
+            "check": args.only_check,
+            "command": command,
+            "returncode": completed.returncode,
+            "stdout": completed.stdout,
+            "stderr": completed.stderr,
+        }
+        print(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True))
+        return completed.returncode
+    if args.only_check == "bug-53a82705-markdown-exact-reconstruction":
+        args.only_markdown_integrity_regression = True
     adapter = JsonRpcClient(
         protocol=args.protocol,
         host=args.host,
@@ -1726,6 +1763,19 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--scope", default=os.getenv("DOC_STORE_VERIFY_SCOPE"))
     parser.add_argument("--run-id", default=os.getenv("DOC_STORE_VERIFY_RUN_ID"))
     parser.add_argument("--strict", action="store_true", help="Treat known retrieval warnings as failures.")
+    parser.add_argument(
+        "--list-checks",
+        action="store_true",
+        help="List named pipeline checks known to this script.",
+    )
+    parser.add_argument(
+        "--only-check",
+        choices=(
+            "bug-53a82705-markdown-exact-reconstruction",
+            *LOCAL_REGRESSION_CHECKS,
+        ),
+        help="Run one named pipeline check.",
+    )
     parser.add_argument(
         "--only-markdown-integrity-regression",
         action="store_true",
