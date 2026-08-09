@@ -1017,6 +1017,93 @@ async def _verify_text_reconstruction(
     return checks
 
 
+async def _verify_markdown_exact_reconstruction_regression(
+    client: DocStoreClient,
+    *,
+    tmpdir: Path,
+    run_id: str,
+) -> Check:
+    """Bug 53a82705: Markdown gaps and suffix must survive ingestion exactly."""
+
+    source = "# Title\n\n- alpha\n- beta\n\n```py\nprint(1)\n```\n"
+    document_id = str(uuid.uuid4())
+    source_version_id = f"{run_id}-bug-53a82705-v1"
+    path = tmpdir / "bug-53a82705-markdown.md"
+    path.write_text(source, encoding="utf-8")
+    try:
+        created = await client.create_document(
+            DocumentCreateRequest(
+                document_id=document_id,
+                source_version_id=source_version_id,
+                chunking_strategy="sentence",
+            ),
+            source_path=str(path),
+            filename=path.name,
+        )
+        if created.status not in {"completed", "idempotent"}:
+            return Check(
+                name="bug 53a82705 markdown exact reconstruction",
+                status="fail",
+                detail=json.dumps(
+                    {
+                        "created_status": created.status,
+                        "details": created.details,
+                    },
+                    ensure_ascii=False,
+                    default=str,
+                )[:700],
+                data={"document_id": document_id, "source_version_id": source_version_id},
+            )
+        reconstructed = await client.call(
+            "source_file_reconstruct",
+            {"document_id": document_id, "max_chars": 20_000},
+        )
+    except DocStoreClientError as exc:
+        code = getattr(exc.error, "code", "")
+        detail = json.dumps(
+            {
+                "code": code,
+                "message": getattr(exc.error, "message", str(exc)),
+                "details": getattr(exc.error, "details", None),
+            },
+            ensure_ascii=False,
+            default=str,
+        )[:700]
+        return Check(
+            name="bug 53a82705 markdown exact reconstruction",
+            status="fail",
+            detail=detail,
+            data={"document_id": document_id, "source_version_id": source_version_id},
+        )
+    except Exception as exc:
+        return Check(
+            name="bug 53a82705 markdown exact reconstruction",
+            status="fail",
+            detail=repr(exc),
+            data={"document_id": document_id, "source_version_id": source_version_id},
+        )
+    reconstructed_text = reconstructed.get("text") if isinstance(reconstructed, Mapping) else None
+    return Check(
+        name="bug 53a82705 markdown exact reconstruction",
+        status="pass"
+        if created.document_id == document_id
+        and created.status in {"completed", "idempotent"}
+        and reconstructed_text == source
+        else "fail",
+        detail=json.dumps(
+            {
+                "created_status": created.status,
+                "source_sha256": hashlib.sha256(source.encode("utf-8")).hexdigest(),
+                "reconstructed_sha256": hashlib.sha256(str(reconstructed_text or "").encode("utf-8")).hexdigest(),
+                "matched": reconstructed_text == source,
+            },
+            ensure_ascii=False,
+            default=str,
+        ),
+        data={"document_id": document_id, "source_version_id": source_version_id},
+    )
+
+
 async def _verify_lifecycle(
     client: DocStoreClient,
     *,
@@ -1499,6 +1586,35 @@ async def _run(args: argparse.Namespace) -> int:
         f"{len(commands)} command(s)",
         {"missing": sorted(required_commands - set(commands))},
     )
+    if args.only_markdown_integrity_regression:
+        with tempfile.TemporaryDirectory(prefix="doc-store-runtime-verify-") as temp_root:
+            all_checks.append(
+                await _verify_markdown_exact_reconstruction_regression(
+                    client,
+                    tmpdir=Path(temp_root),
+                    run_id=run_id,
+                )
+            )
+        failed = [check for check in all_checks if check.status == "fail"]
+        warnings = [check for check in all_checks if check.status == "warn"]
+        summary = {
+            "status": "fail" if failed else "pass",
+            "target": {
+                "protocol": args.protocol,
+                "host": args.host,
+                "port": args.port,
+                "websocket_session": args.use_websocket_session,
+            },
+            "run_id": run_id,
+            "project": args.project,
+            "scope": scope,
+            "checks": [check.__dict__ for check in all_checks],
+            "failed": len(failed),
+            "warnings": len(warnings),
+        }
+        print(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True, default=str))
+        return 1 if failed else 0
+
     all_checks.extend(await _verify_command_help_surface(client, commands))
     all_checks.extend(await _verify_metadata_paradigm(client))
     all_checks.extend(await _verify_info_sections(client))
@@ -1610,6 +1726,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--scope", default=os.getenv("DOC_STORE_VERIFY_SCOPE"))
     parser.add_argument("--run-id", default=os.getenv("DOC_STORE_VERIFY_RUN_ID"))
     parser.add_argument("--strict", action="store_true", help="Treat known retrieval warnings as failures.")
+    parser.add_argument(
+        "--only-markdown-integrity-regression",
+        action="store_true",
+        help="Run only the bug 53a82705 Markdown exact-reconstruction real-server check.",
+    )
     return parser
 
 

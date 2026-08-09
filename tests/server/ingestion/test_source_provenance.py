@@ -107,6 +107,7 @@ from doc_store_server.ingestion.publication import (
 )
 from doc_store_server.ingestion.publication_repository import PublicationRepository
 from doc_store_server.ingestion.svo_chunking import RuntimeChunk
+from doc_store_server.runtime.exact_reconstruction import EXACT_RECONSTRUCTION_KEY
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -267,7 +268,8 @@ class _FakeConnection:
         self._reconstruction = reconstruction
         self._fail_on = fail_on
         self._chunk_paragraphs: dict[str, str] = {}
-        self._chunk_texts: list[tuple[str, str]] = []
+        self._chunk_metas: dict[str, Mapping[str, Any]] = {}
+        self._chunk_texts: list[tuple[str, str, Mapping[str, Any]]] = []
         self.savepoints: list[_FakeSavepoint] = []
 
     # -- savepoints ------------------------------------------------------
@@ -343,9 +345,18 @@ class _FakeConnection:
     def _rows_for(self, sql: str, values: Mapping[str, Any]) -> list[dict[str, Any]]:
         if sql.startswith("INSERT INTO semantic_chunks "):
             self._chunk_paragraphs[str(values["id"])] = str(values["paragraph_id"])
+            block_meta = json.loads(str(values.get("block_meta") or "{}"))
+            self._chunk_metas[str(values["id"])] = block_meta if isinstance(block_meta, Mapping) else {}
             return []
         if sql.startswith("INSERT INTO semantic_chunk_texts "):
-            self._chunk_texts.append((str(values["chunk_uuid"]), str(values["body"])))
+            block_meta = json.loads(str(values.get("block_meta") or "{}"))
+            self._chunk_texts.append(
+                (
+                    str(values["chunk_uuid"]),
+                    str(values["body"]),
+                    block_meta if isinstance(block_meta, Mapping) else {},
+                )
+            )
             return []
         if sql.startswith("SELECT primary_source_id FROM files"):
             if self._existing_primary_source_id is None:
@@ -365,7 +376,7 @@ class _FakeConnection:
             return [dict(self._document_state)] if self._document_state else []
         if "FROM documents WHERE id = :document_id" in sql:
             return [dict(self._committed_document)] if self._committed_document else []
-        if sql.startswith("SELECT sc.paragraph_id::text"):
+        if sql.startswith("SELECT sc.paragraph_id::text") or sql.startswith("SELECT sc.id::text"):
             return self._reconstruction_rows()
         if re.match(r"SELECT id FROM \w+ WHERE descr", sql):
             return []
@@ -377,15 +388,29 @@ class _FakeConnection:
         """Rebuild the compared scope from the chunk payloads actually inserted."""
 
         rows = [
-            {"paragraph_id": self._chunk_paragraphs[chunk_id], "text": body}
-            for chunk_id, body in self._chunk_texts
+            {
+                "chunk_id": chunk_id,
+                "paragraph_id": self._chunk_paragraphs[chunk_id],
+                "text": body,
+                "chunk_block_meta": self._chunk_metas.get(chunk_id, {}),
+                "text_block_meta": text_meta,
+            }
+            for chunk_id, body, text_meta in self._chunk_texts
         ]
         if self._reconstruction is None:
             return rows
         # A deliberately lossy store: the whole scope is replaced by one payload
         # so a non-matching round trip can be observed end to end.
         paragraph_id = rows[0]["paragraph_id"] if rows else str(DOCUMENT_ID)
-        return [{"paragraph_id": paragraph_id, "text": self._reconstruction}]
+        return [
+            {
+                "chunk_id": "lossy-chunk",
+                "paragraph_id": paragraph_id,
+                "text": self._reconstruction,
+                "chunk_block_meta": {},
+                "text_block_meta": {},
+            }
+        ]
 
 
 class _FakeSavepoint:
@@ -736,6 +761,25 @@ def test_publication_records_one_auditable_run_over_a_measured_matching_round_tr
     assert run["status"] in PROCESSING_RUN_STATUSES
     assert run["first_difference_offset"] is None
     assert run["source_encoding"] == run["reconstructed_encoding"] == "utf-8"
+
+    public_chunk_meta = [
+        json.loads(params["block_meta"])
+        for params in connection.issued("INSERT INTO semantic_chunks ")
+    ]
+    internal_text_meta = [
+        json.loads(params["block_meta"])
+        for params in connection.issued("INSERT INTO semantic_chunk_texts ")
+    ]
+    assert all(EXACT_RECONSTRUCTION_KEY not in metadata for metadata in public_chunk_meta)
+    assert internal_text_meta[0][EXACT_RECONSTRUCTION_KEY] == {
+        "version": 1,
+        "gap_before": "",
+    }
+    assert internal_text_meta[1][EXACT_RECONSTRUCTION_KEY] == {
+        "version": 1,
+        "gap_before": " ",
+        "suffix_after": "",
+    }
 
     # Timestamps: ordered, and correlated with the request that caused them.
     assert run["started_at"] <= run["completed_at"]

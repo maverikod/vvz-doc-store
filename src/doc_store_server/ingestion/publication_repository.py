@@ -53,6 +53,12 @@ from sqlalchemy.engine import Engine
 from doc_store_server.ingestion import integrity_diagnostics, runtime_boundary
 from doc_store_server.ingestion.persistence_plan import PersistencePlan
 from doc_store_server.ingestion.svo_chunking import RuntimeChunk, SvoRuntimeChunker
+from doc_store_server.runtime.exact_reconstruction import (
+    ExactReconstructionInput,
+    ExactReconstructionPiece,
+    build_exact_reconstruction_pieces,
+    merge_piece_metadata,
+)
 
 
 ReferenceMapping = dict[str, Any]
@@ -394,6 +400,7 @@ class PublicationRepository:
             raise ValueError("chunker returned no paragraph chunks")
         if not sentence_chunks:
             raise ValueError("chunker returned no sentence chunks")
+        exact_sentence_plan = _exact_sentence_plan(payload, paragraph_chunks, sentence_chunks)
         document_id = payload.document_id
         run_id = uuid4()
         run_started_at = datetime.now(timezone.utc)
@@ -425,7 +432,7 @@ class PublicationRepository:
                     _write_chapter(connection, payload, chapter_id)
                     reconstruction_length = 0
                     previous_paragraph_id: UUID | None = None
-                    for order_index, paragraph_chunk in enumerate(paragraph_chunks):
+                    for order_index, (paragraph_chunk, paragraph_sentences) in enumerate(exact_sentence_plan):
                         paragraph_id = uuid4()
                         paragraph_ids.append(str(paragraph_id))
                         paragraph_meta = _write_paragraph(
@@ -436,10 +443,7 @@ class PublicationRepository:
                             chapter_id=chapter_id,
                             order_index=order_index,
                         )
-                        for sentence_chunk in runtime_boundary._sentence_chunks_for_paragraph(
-                            paragraph_chunk,
-                            sentence_chunks,
-                        ):
+                        for sentence_chunk, exact_piece in paragraph_sentences:
                             written_chunk_id = _write_semantic_chunk(
                                 connection,
                                 payload,
@@ -447,6 +451,7 @@ class PublicationRepository:
                                 paragraph_id=paragraph_id,
                                 chapter_id=chapter_id,
                                 paragraph_meta=paragraph_meta,
+                                exact_piece=exact_piece,
                             )
                             chunk_ids.append(str(written_chunk_id))
                             # The payload is accumulated exactly as the
@@ -607,6 +612,43 @@ class PublicationRepository:
 
     def _engine(self) -> Engine:
         return create_engine(self._database_url, pool_pre_ping=True)
+
+
+def _exact_sentence_plan(
+    payload: PersistencePlan,
+    paragraph_chunks: Sequence[RuntimeChunk],
+    sentence_chunks: Sequence[RuntimeChunk],
+) -> tuple[tuple[RuntimeChunk, tuple[tuple[RuntimeChunk, ExactReconstructionPiece], ...]], ...]:
+    grouped: list[tuple[RuntimeChunk, tuple[RuntimeChunk, ...]]] = []
+    ordered_sentences: list[RuntimeChunk] = []
+    for paragraph_chunk in paragraph_chunks:
+        paragraph_sentences = tuple(
+            runtime_boundary._sentence_chunks_for_paragraph(paragraph_chunk, sentence_chunks)
+        )
+        grouped.append((paragraph_chunk, paragraph_sentences))
+        ordered_sentences.extend(paragraph_sentences)
+    exact_pieces = build_exact_reconstruction_pieces(
+        payload.text_value,
+        tuple(
+            ExactReconstructionInput(
+                text=sentence.text,
+                source_start=sentence.start,
+                source_end=sentence.end,
+            )
+            for sentence in ordered_sentences
+        ),
+    )
+    piece_by_chunk_id = {
+        sentence.uuid: piece
+        for sentence, piece in zip(ordered_sentences, exact_pieces, strict=True)
+    }
+    return tuple(
+        (
+            paragraph_chunk,
+            tuple((sentence, piece_by_chunk_id[sentence.uuid]) for sentence in paragraph_sentences),
+        )
+        for paragraph_chunk, paragraph_sentences in grouped
+    )
 
 
 def _reconstruction_separator(
@@ -844,6 +886,7 @@ def _write_semantic_chunk(
     paragraph_id: UUID,
     chapter_id: UUID,
     paragraph_meta: Mapping[str, Any],
+    exact_piece: ExactReconstructionPiece,
 ) -> UUID:
     """Write one chunk with its text, version, classifiers, metrics and index rows."""
 
@@ -868,6 +911,7 @@ def _write_semantic_chunk(
         "svo_chunk": dict(sentence_chunk.metadata),
         **classifier_values,
     }
+    text_meta = merge_piece_metadata(chunk_meta, exact_piece)
     connection.execute(
         text(
             "INSERT INTO semantic_chunks "
@@ -902,6 +946,7 @@ def _write_semantic_chunk(
     )
     text_sha256 = hashlib.sha256(sentence_text.encode("utf-8")).hexdigest()
     chunk_meta_json = json.dumps(chunk_meta)
+    text_meta_json = json.dumps(text_meta)
     connection.execute(
         text(
             "INSERT INTO semantic_chunk_texts "
@@ -914,7 +959,7 @@ def _write_semantic_chunk(
             "body": sentence_text,
             "text_sha256": text_sha256,
             "char_count": len(sentence_text),
-            "block_meta": chunk_meta_json,
+            "block_meta": text_meta_json,
         },
     )
     runtime_boundary._insert_semantic_chunk_initial_version(

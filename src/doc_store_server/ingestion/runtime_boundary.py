@@ -40,6 +40,7 @@ from doc_store_server.ingestion.svo_chunking import (
     RuntimeChunk,
     SvoRuntimeChunker,
 )
+from doc_store_server.runtime.exact_reconstruction import select_exact_reconstruction_piece
 from doc_store_server.ingestion.source_normalizer import normalize_source
 from doc_store_server.runtime.ingestion_logs import (
     log_error_event,
@@ -922,7 +923,8 @@ def _reconstructed_scope_text(connection: Any, document_id: UUID) -> str:
 
     rows = connection.execute(
         text(
-            "SELECT sc.paragraph_id::text AS paragraph_id, sct.text AS text "
+            "SELECT sc.id::text AS chunk_id, sc.paragraph_id::text AS paragraph_id, "
+            "sct.text AS text, sc.block_meta AS chunk_block_meta, sct.block_meta AS text_block_meta "
             "FROM semantic_chunks AS sc "
             "JOIN semantic_chunk_texts AS sct ON sct.chunk_uuid = sc.id "
             "JOIN paragraphs AS p ON p.id = sc.paragraph_id "
@@ -939,9 +941,36 @@ def _reconstructed_scope_text(connection: Any, document_id: UUID) -> str:
     ).mappings().all()
     pieces: list[str] = []
     previous_paragraph: str | None = None
+    exact_by_chunk: dict[str, Any] = {}
+    legacy_rows = 0
+    suffix_rows = 0
+    for row in rows:
+        piece = select_exact_reconstruction_piece(
+            row["chunk_block_meta"] if isinstance(row["chunk_block_meta"], Mapping) else {},
+            row["text_block_meta"] if isinstance(row["text_block_meta"], Mapping) else {},
+        )
+        if piece is None:
+            legacy_rows += 1
+            continue
+        exact_by_chunk[str(row["chunk_id"])] = piece
+        if piece.suffix_after is not None:
+            suffix_rows += 1
+    if exact_by_chunk and legacy_rows:
+        raise ValueError("mixed legacy and exact reconstruction metadata")
+    if exact_by_chunk and len(exact_by_chunk) != len(rows):
+        raise ValueError("missing exact reconstruction metadata")
+    if exact_by_chunk and suffix_rows != 1:
+        raise ValueError("exact reconstruction requires one final suffix")
+    if exact_by_chunk:
+        final_piece = exact_by_chunk.get(str(rows[-1]["chunk_id"]))
+        if final_piece is None or final_piece.suffix_after is None:
+            raise ValueError("exact reconstruction suffix must be on the final row")
     for row in rows:
         paragraph_id = str(row["paragraph_id"])
-        if previous_paragraph is None:
+        exact_piece = exact_by_chunk.get(str(row["chunk_id"]))
+        if exact_piece is not None:
+            separator = exact_piece.gap_before
+        elif previous_paragraph is None:
             separator = ""
         elif paragraph_id == previous_paragraph:
             separator = RECONSTRUCTION_SEPARATORS["within_paragraph"]
@@ -949,6 +978,8 @@ def _reconstructed_scope_text(connection: Any, document_id: UUID) -> str:
             separator = RECONSTRUCTION_SEPARATORS["between_paragraphs"]
         pieces.append(f"{separator}{row['text']}")
         previous_paragraph = paragraph_id
+    if exact_by_chunk:
+        pieces.append(exact_by_chunk[str(rows[-1]["chunk_id"])].suffix_after or "")
     return "".join(pieces)
 
 
@@ -988,7 +1019,7 @@ def _insert_processing_run(
     prepared: PersistencePlan,
     run_id: UUID,
     primary_source_id: UUID,
-    chapter_id: UUID,
+    chapter_id: UUID | None,
     status: str,
     source_sha256: str,
     reconstruction_sha256: str,

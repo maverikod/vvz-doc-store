@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
@@ -13,6 +13,10 @@ from uuid import UUID
 from sqlalchemy import create_engine, text
 
 from doc_store_server.db.health import database_url_from_config
+from doc_store_server.runtime.exact_reconstruction import (
+    ExactReconstructionPiece,
+    select_exact_reconstruction_piece,
+)
 from doc_store_server.runtime.previews import chunk_preview
 
 
@@ -35,6 +39,8 @@ class _ChunkTextRow:
     source_name: str | None
     source_path: str | None
     file_id: str | None
+    chunk_block_meta: Mapping[str, Any]
+    text_block_meta: Mapping[str, Any]
 
 
 class TextReconstructionService:
@@ -194,7 +200,8 @@ class TextReconstructionService:
             "sc.chapter_id::text AS chapter_id, sc.document_id::text AS document_id, "
             "sc.order_index, p.order_index AS paragraph_order_index, sct.text, "
             "sc.source_start, sc.source_end, d.source_name, d.source_path, "
-            "COALESCE(sc.block_meta ->> 'file_id', d.owner_id::text, d.source_upload_id::text) AS file_id "
+            "COALESCE(sc.block_meta ->> 'file_id', d.owner_id::text, d.source_upload_id::text) AS file_id, "
+            "sc.block_meta AS chunk_block_meta, sct.block_meta AS text_block_meta "
             "FROM semantic_chunks AS sc "
             "JOIN semantic_chunk_texts AS sct ON sct.chunk_uuid = sc.id "
             "JOIN paragraphs AS p ON p.id = sc.paragraph_id "
@@ -221,6 +228,8 @@ class TextReconstructionService:
                         source_name=row["source_name"],
                         source_path=row["source_path"],
                         file_id=row["file_id"],
+                        chunk_block_meta=row["chunk_block_meta"] if isinstance(row["chunk_block_meta"], Mapping) else {},
+                        text_block_meta=row["text_block_meta"] if isinstance(row["text_block_meta"], Mapping) else {},
                     )
                     for row in connection.execute(text(sql), params).mappings()
                 )
@@ -244,14 +253,15 @@ class TextReconstructionService:
         range_map: list[dict[str, Any]] = []
         cursor = 0
         truncated = False
+        exact_pieces = _select_exact_pieces(row_tuple)
         previous_paragraph: str | None = None
         for row in row_tuple:
-            if previous_paragraph is None:
-                separator = ""
-            elif row.paragraph_id == previous_paragraph:
-                separator = " "
-            else:
-                separator = "\n\n"
+            exact_piece = exact_pieces.get(row.chunk_id)
+            separator = (
+                exact_piece.gap_before
+                if exact_piece is not None
+                else _legacy_separator(previous_paragraph, row.paragraph_id)
+            )
             candidate = f"{separator}{row.text}"
             available = max_chars - cursor if max_chars else len(candidate)
             if max_chars and available <= 0:
@@ -261,28 +271,42 @@ class TextReconstructionService:
             if len(emitted) < len(candidate):
                 truncated = True
             pieces.append(emitted)
-            text_start = cursor + len(separator) if emitted.startswith(separator) else cursor
-            text_end = cursor + len(emitted)
-            range_map.append(
-                {
-                    "chunk_id": row.chunk_id,
-                    "paragraph_id": row.paragraph_id,
-                    "chapter_id": row.chapter_id,
-                    "document_id": row.document_id,
-                    "file_id": row.file_id,
-                    "order_index": row.order_index,
-                    "paragraph_order_index": row.paragraph_order_index,
-                    "text_start": text_start,
-                    "text_end": text_end,
-                    "source_start": row.source_start,
-                    "source_end": row.source_end,
-                    "preview": chunk_preview(row.text),
-                }
-            )
+            emitted_separator_length = min(len(separator), len(emitted))
+            emitted_chunk_length = max(0, len(emitted) - len(separator))
+            if emitted_chunk_length:
+                text_start = cursor + emitted_separator_length
+                text_end = text_start + emitted_chunk_length
+                range_map.append(
+                    {
+                        "chunk_id": row.chunk_id,
+                        "paragraph_id": row.paragraph_id,
+                        "chapter_id": row.chapter_id,
+                        "document_id": row.document_id,
+                        "file_id": row.file_id,
+                        "order_index": row.order_index,
+                        "paragraph_order_index": row.paragraph_order_index,
+                        "text_start": text_start,
+                        "text_end": text_end,
+                        "source_start": row.source_start,
+                        "source_end": row.source_end,
+                        "preview": chunk_preview(row.text),
+                    }
+                )
             cursor += len(emitted)
             previous_paragraph = row.paragraph_id
             if truncated:
                 break
+        if exact_pieces and not truncated:
+            suffix = exact_pieces[row_tuple[-1].chunk_id].suffix_after or ""
+            available = max_chars - cursor if max_chars else len(suffix)
+            if max_chars and available <= 0:
+                truncated = bool(suffix)
+            else:
+                emitted_suffix = suffix[:available] if max_chars else suffix
+                if len(emitted_suffix) < len(suffix):
+                    truncated = True
+                pieces.append(emitted_suffix)
+                cursor += len(emitted_suffix)
         body = "".join(pieces)
         source_names = sorted({row.source_name for row in row_tuple if row.source_name})
         source_paths = sorted({row.source_path for row in row_tuple if row.source_path})
@@ -312,6 +336,44 @@ class TextReconstructionService:
             },
             "context": {"included": bool(include_context)},
         }
+
+
+def _legacy_separator(previous_paragraph: str | None, paragraph_id: str) -> str:
+    if previous_paragraph is None:
+        return ""
+    if paragraph_id == previous_paragraph:
+        return " "
+    return "\n\n"
+
+
+def _select_exact_pieces(
+    rows: Sequence[_ChunkTextRow],
+) -> dict[str, ExactReconstructionPiece]:
+    pieces: dict[str, ExactReconstructionPiece] = {}
+    legacy_rows = 0
+    suffix_rows = 0
+    for row in rows:
+        piece = select_exact_reconstruction_piece(row.chunk_block_meta, row.text_block_meta)
+        if piece is None:
+            legacy_rows += 1
+            continue
+        pieces[row.chunk_id] = piece
+        if piece.suffix_after is not None:
+            suffix_rows += 1
+    if pieces and legacy_rows:
+        raise ValueError("mixed legacy and exact reconstruction metadata")
+    if pieces and len(pieces) != len(rows):
+        raise ValueError("missing exact reconstruction metadata")
+    if pieces and suffix_rows != 1:
+        raise ValueError("exact reconstruction requires one final suffix")
+    if pieces and rows[-1].chunk_id not in pieces:
+        raise ValueError("exact reconstruction final row is missing metadata")
+    if pieces and pieces[rows[-1].chunk_id].suffix_after is None:
+        raise ValueError("exact reconstruction suffix must be on the final row")
+    for row in rows[:-1]:
+        if row.chunk_id in pieces and pieces[row.chunk_id].suffix_after is not None:
+            raise ValueError("exact reconstruction suffix must not appear before the final row")
+    return pieces
 
 
 def _add_uuid_filter(where: list[str], params: dict[str, Any], key: str, value: str | None, column: str) -> None:
