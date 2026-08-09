@@ -14,6 +14,7 @@ EXACT_RECONSTRUCTION_VERSION: Final[int] = 1
 @dataclass(frozen=True, slots=True)
 class ExactReconstructionPiece:
     gap_before: str
+    source_text: str | None = None
     suffix_after: str | None = None
 
 
@@ -30,6 +31,7 @@ def build_exact_reconstruction_pieces(
     *,
     scope_start: int = 0,
     scope_end: int | None = None,
+    allow_source_text_override: bool = False,
 ) -> tuple[ExactReconstructionPiece, ...]:
     """Derive exact gaps and final suffix from accepted source slices."""
 
@@ -46,14 +48,24 @@ def build_exact_reconstruction_pieces(
         end = int(chunk.source_end)
         if start < cursor or end < start or end > scope_end:
             raise ValueError("exact reconstruction source ranges must be monotonic and non-overlapping")
-        if source_text[start:end] != chunk.text:
-            raise ValueError("exact reconstruction source slice does not equal chunk text")
-        pieces.append(ExactReconstructionPiece(gap_before=source_text[cursor:start]))
+        chunk_source_text = source_text[start:end]
+        source_text_override = None
+        if chunk_source_text != chunk.text:
+            if not allow_source_text_override:
+                raise ValueError("exact reconstruction source slice does not equal chunk text")
+            source_text_override = chunk_source_text
+        pieces.append(
+            ExactReconstructionPiece(
+                gap_before=source_text[cursor:start],
+                source_text=source_text_override,
+            )
+        )
         cursor = end
     if not pieces:
         raise ValueError("exact reconstruction requires at least one chunk")
     pieces[-1] = ExactReconstructionPiece(
         gap_before=pieces[-1].gap_before,
+        source_text=pieces[-1].source_text,
         suffix_after=source_text[cursor:scope_end],
     )
     return tuple(pieces)
@@ -66,6 +78,8 @@ def metadata_for_piece(piece: ExactReconstructionPiece) -> dict[str, Any]:
         "version": EXACT_RECONSTRUCTION_VERSION,
         "gap_before": piece.gap_before,
     }
+    if piece.source_text is not None:
+        payload["source_text"] = piece.source_text
     if piece.suffix_after is not None:
         payload["suffix_after"] = piece.suffix_after
     return payload
@@ -108,7 +122,14 @@ def _parse_piece(value: Any) -> ExactReconstructionPiece:
     suffix_after = value.get("suffix_after")
     if suffix_after is not None and not isinstance(suffix_after, str):
         raise ValueError("exact reconstruction suffix_after must be a string")
-    return ExactReconstructionPiece(gap_before=gap_before, suffix_after=suffix_after)
+    source_text = value.get("source_text")
+    if source_text is not None and not isinstance(source_text, str):
+        raise ValueError("exact reconstruction source_text must be a string")
+    return ExactReconstructionPiece(
+        gap_before=gap_before,
+        source_text=source_text,
+        suffix_after=suffix_after,
+    )
 
 
 __all__ = [

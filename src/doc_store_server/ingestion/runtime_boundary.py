@@ -970,13 +970,17 @@ def _reconstructed_scope_text(connection: Any, document_id: UUID) -> str:
         exact_piece = exact_by_chunk.get(str(row["chunk_id"]))
         if exact_piece is not None:
             separator = exact_piece.gap_before
+            chunk_text = exact_piece.source_text if exact_piece.source_text is not None else str(row["text"])
         elif previous_paragraph is None:
             separator = ""
+            chunk_text = str(row["text"])
         elif paragraph_id == previous_paragraph:
             separator = RECONSTRUCTION_SEPARATORS["within_paragraph"]
+            chunk_text = str(row["text"])
         else:
             separator = RECONSTRUCTION_SEPARATORS["between_paragraphs"]
-        pieces.append(f"{separator}{row['text']}")
+            chunk_text = str(row["text"])
+        pieces.append(f"{separator}{chunk_text}")
         previous_paragraph = paragraph_id
     if exact_by_chunk:
         pieces.append(exact_by_chunk[str(rows[-1]["chunk_id"])].suffix_after or "")

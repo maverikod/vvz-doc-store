@@ -262,7 +262,12 @@ class TextReconstructionService:
                 if exact_piece is not None
                 else _legacy_separator(previous_paragraph, row.paragraph_id)
             )
-            candidate = f"{separator}{row.text}"
+            chunk_text = (
+                exact_piece.source_text
+                if exact_piece is not None and exact_piece.source_text is not None
+                else row.text
+            )
+            candidate = f"{separator}{chunk_text}"
             available = max_chars - cursor if max_chars else len(candidate)
             if max_chars and available <= 0:
                 truncated = True
@@ -289,7 +294,7 @@ class TextReconstructionService:
                         "text_end": text_end,
                         "source_start": row.source_start,
                         "source_end": row.source_end,
-                        "preview": chunk_preview(row.text),
+                        "preview": chunk_preview(chunk_text),
                     }
                 )
             cursor += len(emitted)

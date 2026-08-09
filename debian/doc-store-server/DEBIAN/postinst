@@ -55,19 +55,53 @@ create_layout() {
         chmod 0750 "${CONFIG_DIR}/mtls"
         chmod 0640 "${CONFIG_DIR}/mtls"/* 2>/dev/null || true
     fi
+    ensure_secrets
+    chown -R "$DOC_STORE_USER:$DOC_STORE_GROUP" "$DATA_DIR" "$LOG_DIR"
+    chown -R 999:999 "${DATA_DIR}/postgres/data" 2>/dev/null || true
+}
+
+cluster_is_initialised() {
+    [[ -f "${DATA_DIR}/postgres/data/PG_VERSION" ]]
+}
+
+ensure_secrets() {
+    # The secrets file is generated here, never shipped. Creating it and
+    # tightening it must happen on every install, not only when the file is
+    # absent: the package used to ship the template to this path, so the
+    # "absent" branch never ran and the placeholder password stayed live with
+    # world-readable permissions.
     if [[ ! -f "${SECRETS}/.env" ]]; then
         if [[ -f /usr/share/doc/doc-store-server/secrets.env.template ]]; then
             cp /usr/share/doc/doc-store-server/secrets.env.template "${SECRETS}/.env"
+        else
+            echo "doc-store: secrets template is missing; cannot generate ${SECRETS}/.env" >&2
+            return 0
         fi
-        if grep -q CHANGE_ME_APP "${SECRETS}/.env" 2>/dev/null; then
-            app_pw="$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)"
-            sed -i "s/CHANGE_ME_APP/${app_pw}/g" "${SECRETS}/.env"
-        fi
-        chown "$DOC_STORE_USER:$DOC_STORE_GROUP" "${SECRETS}/.env"
-        chmod 0640 "${SECRETS}/.env"
     fi
-    chown -R "$DOC_STORE_USER:$DOC_STORE_GROUP" "$DATA_DIR" "$LOG_DIR"
-    chown -R 999:999 "${DATA_DIR}/postgres/data" 2>/dev/null || true
+
+    # Ownership and mode are always safe to enforce and are what stops the
+    # database password from being readable by every user on the host.
+    chown "$DOC_STORE_USER:$DOC_STORE_GROUP" "${SECRETS}/.env"
+    chmod 0640 "${SECRETS}/.env"
+
+    grep -q CHANGE_ME_APP "${SECRETS}/.env" 2>/dev/null || return 0
+
+    # Replacing the placeholder is only correct while no cluster exists yet.
+    # PostgreSQL takes POSTGRES_PASSWORD from the environment on first
+    # initialisation and never again, so rewriting this file against a cluster
+    # that is already initialised would leave the role on the old password and
+    # the application unable to connect. That case needs a deliberate rotation
+    # -- ALTER ROLE and this file together -- so it is reported, not guessed.
+    if cluster_is_initialised; then
+        echo "doc-store: WARNING: ${SECRETS}/.env still contains the placeholder" >&2
+        echo "doc-store: password, and the database cluster is already initialised." >&2
+        echo "doc-store: Rotate it deliberately: ALTER ROLE the database user and" >&2
+        echo "doc-store: update this file together, then restart doc-store.service." >&2
+        return 0
+    fi
+
+    app_pw="$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)"
+    sed -i "s/CHANGE_ME_APP/${app_pw}/g" "${SECRETS}/.env"
 }
 
 create_user

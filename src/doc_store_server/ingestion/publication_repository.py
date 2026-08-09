@@ -463,7 +463,12 @@ class PublicationRepository:
                                     previous_paragraph_id, paragraph_id
                                 ).encode("utf-8")
                             )
-                            reconstruction_length += len(sentence_chunk.text.encode("utf-8"))
+                            reconstruction_text = (
+                                exact_piece.source_text
+                                if exact_piece.source_text is not None
+                                else sentence_chunk.text
+                            )
+                            reconstruction_length += len(reconstruction_text.encode("utf-8"))
                             chunk_spans.append((written_chunk_id, reconstruction_length))
                             previous_paragraph_id = paragraph_id
                     reconstructed = runtime_boundary._reconstructed_scope_text(
@@ -637,6 +642,7 @@ def _exact_sentence_plan(
             )
             for sentence in ordered_sentences
         ),
+        allow_source_text_override=True,
     )
     piece_by_chunk_id = {
         sentence.uuid: piece

@@ -181,6 +181,61 @@ def test_text_reconstruction_uses_exact_markdown_gaps_and_suffix() -> None:
     assert result["range_map"][2]["text_end"] == len("# Title\n\n- alpha\n- beta")
 
 
+def test_text_reconstruction_uses_exact_source_text_when_public_chunk_text_is_cleaned() -> None:
+    service = TextReconstructionService(None)
+    rows = (
+        _row(
+            "1",
+            paragraph_id="paragraph-1",
+            order_index=1,
+            paragraph_order_index=1,
+            text="Title",
+            exact={"version": 1, "gap_before": "", "source_text": "# Title"},
+        ),
+        _row(
+            "2",
+            paragraph_id="paragraph-2",
+            order_index=1,
+            paragraph_order_index=2,
+            text="alpha",
+            exact={"version": 1, "gap_before": "\n\n", "source_text": "- alpha"},
+        ),
+        _row(
+            "3",
+            paragraph_id="paragraph-2",
+            order_index=2,
+            paragraph_order_index=2,
+            text="beta",
+            exact={"version": 1, "gap_before": "\n", "source_text": "- beta"},
+        ),
+        _row(
+            "4",
+            paragraph_id="paragraph-3",
+            order_index=1,
+            paragraph_order_index=3,
+            text="print(1)",
+            exact={
+                "version": 1,
+                "gap_before": "\n\n",
+                "source_text": "```py\nprint(1)\n```",
+                "suffix_after": "\n",
+            },
+        ),
+    )
+
+    result = service._assemble(
+        rows,
+        entity="source_file",
+        selector={"document_id": "document-1"},
+        include_context=False,
+        max_chars=0,
+        limit=100,
+        offset=0,
+    )
+
+    assert result["text"] == "# Title\n\n- alpha\n- beta\n\n```py\nprint(1)\n```\n"
+
+
 def test_text_reconstruction_fails_closed_on_mixed_exact_and_legacy_metadata() -> None:
     service = TextReconstructionService(None)
     rows = (
