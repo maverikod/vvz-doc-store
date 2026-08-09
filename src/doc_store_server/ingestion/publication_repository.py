@@ -387,13 +387,16 @@ class PublicationRepository:
         hierarchy is rolled back, and the incomplete version never becomes
         visible under ``{xmpp}``.
 
-        The third runs only after such a refusal and writes the failed run and
-        its ``SourceSpan``, which is the audit evidence that has to outlive the
-        rollback.  That run leaves ``document_id``, ``chapter_id`` and
-        ``chunk_id`` null, because migration 0019 declares all three as
-        ``SET NULL`` foreign keys into rows the rollback has just removed; the
-        identifiers ``{0o1l}`` demands ride on the ``SourceSpan``, whose own
-        columns carry no such reference, and on the raised refusal.
+        The refusal evidence is written after the hierarchy savepoint is rolled
+        back: the failed run is part of the outer transaction and the
+        diagnostic ``SourceSpan`` is attempted inside its own savepoint.  A span
+        write failure therefore loses only the optional span row; the failed run
+        and the raised refusal remain durable evidence of the measured mismatch.
+        The failed run leaves ``document_id``, ``chapter_id`` and ``chunk_id``
+        null, because migration 0019 declares all three as ``SET NULL`` foreign
+        keys into rows the rollback has just removed; the identifiers ``{0o1l}``
+        demands ride on the ``SourceSpan`` when it is available and on the
+        raised refusal in all cases.
         """
 
         if not paragraph_chunks:
@@ -579,14 +582,19 @@ class PublicationRepository:
         primary_source_id: UUID,
         run_started_at: datetime,
     ) -> None:
-        """Write the failed run and its span on the connection that discarded the hierarchy.
+        """Write the failed run and best-effort span after discarding the hierarchy.
 
         It takes a connection rather than an engine on purpose. Opening a second
         transaction here is what used to make the evidence losable: the
         hierarchy was already gone by then, so a failure while writing the
-        evidence left a measured mismatch with nothing on the record. Writing
-        into the same transaction means the discard and the record commit
-        together or not at all.
+        evidence left a measured mismatch with nothing on the record.
+
+        The failed ``ProcessingRun`` is the durable refusal evidence and stays
+        outside the hierarchy savepoint.  The diagnostic ``SourceSpan`` enriches
+        that run, but it is intentionally isolated in its own savepoint: if span
+        storage fails, only the span attempt rolls back and the failed run still
+        commits.  If inserting the failed run itself fails, the exception is not
+        caught and the outer transaction rolls back normally.
         """
 
         diagnostic = refused.diagnostic
@@ -609,11 +617,17 @@ class PublicationRepository:
             chapter_id=None,
             chunk_id=None,
         )
-        runtime_boundary._insert_source_span(
-            connection,
-            diagnostic=diagnostic,
-            run_id=run_id,
-        )
+        span = connection.begin_nested()
+        try:
+            runtime_boundary._insert_source_span(
+                connection,
+                diagnostic=diagnostic,
+                run_id=run_id,
+            )
+        except Exception:
+            span.rollback()
+        else:
+            span.commit()
 
     def _engine(self) -> Engine:
         return create_engine(self._database_url, pool_pre_ping=True)

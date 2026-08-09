@@ -287,7 +287,12 @@ def test_a_non_matching_round_trip_rolls_the_hierarchy_back_and_commits_the_fail
     assert engine.disposed == 1
 
     # The whole hierarchy shares one savepoint, and that savepoint rolled back.
-    assert [savepoint.outcome for savepoint in connection.savepoints] == ["rollback"]
+    # The optional diagnostic span has its own savepoint, which commits on the
+    # normal refusal path and can roll back independently on span-storage loss.
+    assert [savepoint.outcome for savepoint in connection.savepoints] == [
+        "rollback",
+        "commit",
+    ]
     for statement in (
         "INSERT INTO documents",
         "INSERT INTO chapters",
@@ -508,10 +513,14 @@ def test_a_strict_prefix_is_refused_as_a_length_boundary_rather_than_a_mismatch(
     with pytest.raises(integrity_diagnostics.IntegrityRefused) as refusal:
         _publish(connection)
 
-    # Superseded with the savepoint topology: two blocks, both committing, and
-    # the hierarchy discarded by the savepoint inside the second.
+    # Superseded with the savepoint topology: two blocks, both committing, the
+    # hierarchy discarded by the first savepoint inside the second block, and
+    # the diagnostic span isolated by a second savepoint.
     assert engine.outcomes == ["commit", "commit"]
-    assert [savepoint.outcome for savepoint in connection.savepoints] == ["rollback"]
+    assert [savepoint.outcome for savepoint in connection.savepoints] == [
+        "rollback",
+        "commit",
+    ]
     assert connection.committed("INSERT INTO documents") == []
 
     evidence = engine.block_with("INSERT INTO processing_runs")
@@ -638,27 +647,10 @@ def test_publish_document_answers_a_refusal_with_its_own_typed_outcome(
     assert not hasattr(outcome, "failure")
 
 
-def test_a_failure_inside_the_refusal_evidence_transaction_is_an_ordinary_rollback(
+def test_bug_1d359231_source_span_failure_preserves_durable_refusal_run(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Bug 1d359231, closed: a refused publication with no record is unreachable.
-
-    This case used to have three possible endings, and the bad one was reachable:
-    the hierarchy transaction was already lost by the time the evidence
-    transaction ran, so a storage error there left a measured mismatch with
-    nothing on the record and a caller who could not tell it from a crash.
-
-    With the hierarchy discarded by a savepoint, the discard and the record are
-    the same transaction. A failure while writing the evidence therefore takes
-    the whole transaction with it: nothing is published *and* nothing is
-    recorded, which is the consistent reading -- the publication simply did not
-    happen. The caller gets an ordinary storage failure, which is honest,
-    because no refusal was ever committed.
-
-    What is gone is the third ending. There is no longer any interleaving in
-    which the hierarchy is discarded and its evidence is not, so a caller
-    holding an ``IntegrityRefusedPublication`` can rely on its span existing.
-    """
+    """Bug 1d359231: span storage loss cannot erase measured refusal evidence."""
 
     connection = _FakeConnection(reconstruction=LOSSY_TEXT, fail_on="INSERT INTO source_spans")
     engine = _install_engine(monkeypatch, connection)
@@ -667,23 +659,71 @@ def test_a_failure_inside_the_refusal_evidence_transaction_is_an_ordinary_rollba
         publish_document(_minimal_hierarchy(DOCUMENT_ID), _Mapper(), _repository())
     )
 
-    # No refusal is reported, because none was committed.
+    assert isinstance(outcome, IntegrityRefusedPublication)
+    assert not isinstance(outcome, RolledBackPublication)
+    assert outcome.references is None
+    assert outcome.canonical_version_refs is None
+    assert outcome.status == "integrity_refused"
+    assert outcome.source_sha256 == SOURCE_SHA256
+    assert outcome.reconstruction_sha256 == LOSSY_SHA256
+    assert outcome.diagnostic.span_id is not None
+
+    assert engine.block_with("INSERT INTO primary_sources").outcome == "commit"
+    evidence = engine.block_with("INSERT INTO processing_runs")
+    assert evidence.outcome == "commit"
+    assert connection.committed("INSERT INTO documents") == []
+    assert connection.committed("INSERT INTO chapters") == []
+    assert connection.committed("INSERT INTO paragraphs") == []
+    assert connection.committed("INSERT INTO semantic_chunks ") == []
+
+    run = evidence.one("INSERT INTO processing_runs")
+    assert run["status"] == "failed"
+    assert run["primary_source_id"] is not None
+    assert run["source_sha256"] == SOURCE_SHA256
+    assert run["reconstruction_sha256"] == LOSSY_SHA256
+    assert run["integrity_outcome"] == "mismatch"
+    assert run["first_difference_offset"] == MISMATCH_OFFSET
+    assert run["mismatch_span_id"] == outcome.diagnostic.span_id
+    assert run["diagnostic_authorization"] == publication_repository.DIAGNOSTIC_AUTHORIZATION
+    assert run["redaction_policy"] == publication_repository.DIAGNOSTIC_REDACTION_POLICY
+    assert run["operation_id"] == OPERATION_ID
+    assert run["document_id"] is None
+    assert run["chapter_id"] is None
+    assert run["chunk_id"] is None
+
+    assert connection.issued("INSERT INTO source_spans") != []
+    assert connection.committed("INSERT INTO source_spans") == []
+    assert [savepoint.outcome for savepoint in connection.savepoints] == [
+        "rollback",
+        "rollback",
+    ]
+
+
+def test_processing_run_insert_failure_is_still_an_ordinary_rollback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If the failed run itself cannot be stored, no refusal is claimed."""
+
+    connection = _FakeConnection(reconstruction=LOSSY_TEXT, fail_on="INSERT INTO processing_runs")
+    engine = _install_engine(monkeypatch, connection)
+
+    outcome = asyncio.run(
+        publish_document(_minimal_hierarchy(DOCUMENT_ID), _Mapper(), _repository())
+    )
+
     assert isinstance(outcome, RolledBackPublication)
     assert not isinstance(outcome, IntegrityRefusedPublication)
     assert outcome.references is None
     assert outcome.canonical_version_refs is None
     assert outcome.failure.stage == "repository_transaction"
+    assert outcome.failure.error_type == "RuntimeError"
+    assert "INSERT INTO processing_runs" in outcome.failure.message
 
-    # The original still stands on its own; everything else went down together.
-    # The run and the hierarchy were issued in the same block, and that block
-    # rolled back, so neither persists -- which is the property that matters and
-    # the one the old three-transaction shape could not provide.
     assert engine.block_with("INSERT INTO primary_sources").outcome == "commit"
     doomed = engine.block_with("INSERT INTO documents")
     assert doomed.outcome == "rollback"
-    assert doomed.issued("INSERT INTO processing_runs"), (
-        "the run must share the block it can be lost with, not a later one"
-    )
+    assert doomed.issued("INSERT INTO processing_runs")
+    assert connection.issued("INSERT INTO source_spans") == []
 
 
 # ----------------------------------------------------------------------

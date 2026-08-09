@@ -969,14 +969,18 @@ def test_a_non_matching_round_trip_is_recorded_truthfully_as_a_non_successful_ru
     # by a savepoint rather than by losing a whole transaction, so the evidence
     # is written by the same transaction that discarded it and the outcomes are
     # commit (the immutable original) and commit (the discard together with its
-    # record). What the discard did is asserted through the savepoint below,
-    # which is where the rollback now lives.
+    # record). What the discard did is asserted through the first savepoint
+    # below, which is where the rollback now lives; the second savepoint isolates
+    # the optional diagnostic span.
     #
     # The state is still not appended on this path: a SourceState asserts a
     # version a reader could restore, and the refused version was discarded, so
     # asserting one would be a claim about rows that do not exist.
     assert engine.outcomes == ["commit", "commit"]
-    assert [savepoint.outcome for savepoint in connection.savepoints] == ["rollback"]
+    assert [savepoint.outcome for savepoint in connection.savepoints] == [
+        "rollback",
+        "commit",
+    ]
     assert connection.committed("INSERT INTO documents") == []
     assert connection.committed("INSERT INTO processing_runs") != []
     assert connection.issued("INSERT INTO source_states") == []
