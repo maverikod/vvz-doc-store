@@ -59,5 +59,6 @@ branch_rules:
   - all local changes occur only on local; all registered CAS changes occur only on cas; main is transfer-only
   - never merge local directly with cas
   - deploy and verify from the active working branch before merging it into main
-  - never push main; report the ready commit and wait for user push confirmation
-  - after confirmation, pull main at the opposite site and merge main into its branch
+  - push the verified main commit, verify the remote ref, then pull it at the opposite site and
+    merge main into its branch
+  - never force-push or rewrite published history; stop and report failed synchronization

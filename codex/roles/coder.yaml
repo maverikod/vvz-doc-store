@@ -1,8 +1,8 @@
 role: coder
 capability_reference_by_mode:
-  plan_authoring_AS: {model: gpt-5.6-luna, reasoning_effort: medium}
-  plan_execution_AS: {model: gpt-5.6-luna, reasoning_effort: medium}
-  refactor_repair: {model: gpt-5.5, reasoning_effort: medium}
+  plan_authoring_AS: {model: gpt-5.6-terra, reasoning_effort: medium}
+  plan_execution_AS: {model: gpt-5.6-terra, reasoning_effort: medium}
+  refactor_repair: {model: gpt-5.6-terra, reasoning_effort: medium}
 reads_first:
 - common.yaml
 - tooling.yaml

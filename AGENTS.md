@@ -1,6 +1,6 @@
 # doc-store - Codex operating contract
 
-**Prompts template:** `codex-prompts-v1` rev **1.6.0** (2026-07-24)
+**Prompts template:** `codex-prompts-v1` rev **1.6.19** (2026-08-14)
 
 You are the persistent root ORCHESTRATOR. Only the root communicates with the
 user. Route every request to one operating mode before delegation:
@@ -133,11 +133,11 @@ assessment and why this is the cheapest capable choice as a dedicated
 `constraints.must` item beginning `model capability rationale:`. The root
 verifies both records as part of child acceptance.
 
-The capability ladder is: `gpt-5.6-luna` for bounded atomic work, `gpt-5.5` for
-medium repair, research, execution, and testing (including delivery mechanics,
-`codex/roles/deliverer.yaml`), `gpt-5.6-terra` for broader or
-high-complexity ownership, and `gpt-5.6-sol` for root ownership, architectural
-conscience, or exceptional risk. Role files expose these only through
+The capability ladder is: `gpt-5.6-terra` with medium reasoning for bounded
+atomic work, `gpt-5.6-terra` with xhigh reasoning for medium ownership and
+verification, `gpt-5.6-sol` with max reasoning for strong promotion, and
+`gpt-5.6-sol` with ultra reasoning for root ownership, architectural conscience,
+or exceptional risk. Role files expose these only through
 `capability_reference` or `capability_reference_by_*` keys; they are selection
 inputs, not fixed defaults or canonical delegation requests.
 
@@ -194,7 +194,7 @@ Plan Manager fix before closing the bug. Delivery mechanics may be delegated to
 the deliverer never decides whether or where to deploy/repair, it only executes
 the mandated procedure.
 
-After deploy and a green live pipeline, apply the branch-transfer protocol in
-`codex/roles/laws.yaml`. The agent never pushes local `main`: it reports the
-ready commit and waits for explicit user confirmation of the push before pulling
-CAS `main` and merging it into `cas`.
+After deploy and a green live pipeline, merge into local `main`, push it, verify
+the remote ref, then have CAS pull that commit and merge it into `cas`, as required
+by `codex/roles/laws.yaml` `branch_sync_after_every_step`. Never force-push or
+rewrite history; stop and report the exact error if synchronization fails.

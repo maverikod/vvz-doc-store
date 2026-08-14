@@ -1,5 +1,5 @@
 # doc-store standing laws. Every role reads this file before acting.
-# prompts-template: codex-prompts-v1 rev 1.6.0 (2026-07-24)
+# prompts-template: codex-prompts-v1 rev 1.6.19 (2026-08-14)
 
 variables:
   file_access: local      # local (default) | cas | local_ide. Governs local_mode/cas_mode/local_ide_mode and the profile-dependent parts of branch_discipline.
@@ -9,6 +9,39 @@ variables:
   escalation: strict      # strict (default) | off. User pre-sets 'off' -> law server_error_recovery is relaxed.
 
 laws:
+  active_profile_declaration: >-
+    [TRIGGER: first action of any task] `variables.file_access` decides where work happens and
+    which tools are legitimate. Read it before the first project action and state the active
+    profile in the opening message. The default is `local`; only the user may change it. Never
+    infer a switch or switch after a tool failure. If the value is missing or unreadable, stop
+    and ask.
+  contract_scope: >-
+    [TRIGGER: first action of any task, and when another role or agent definition appears] THIS
+    contract is `AGENTS.md` plus the adjacent `codex/` package, and nothing else. `CLAUDE.md`,
+    `claude/`, `.cursor/agents/`, `docs/agents/`, `docs/PROJECT_RULES.md`, and similar files are
+    another runtime's contract or historical artifacts: do not adopt their gates, protocols,
+    precedence, or required-agent rules. Read them only when the task explicitly concerns them;
+    if the user intends one to govern, ask which contract applies before acting.
+  role_names_are_stages_not_agent_types: >-
+    [TRIGGER: a role name appears to require spawning] `orchestrator`, `researcher`,
+    `context_former`, `coder`, `tester`, and `conscience` are stage disciplines, not required
+    runtime agent types. One session may perform every stage. A missing role type is never a
+    blocker: run the stage in-session under its file's rules. This also applies to names imported
+    from a foreign role pack; real blockers are missing evidence, access, a failed gate, or a
+    user-only decision.
+  project_boundary: >-
+    [TRIGGER: first task action and every action outside the home project] The one home project is
+    the project whose directory started the session and is named in this bundle's profile. Inside
+    its boundary — checkout, CAS project, branches, artifacts, and deployed service — the agent
+    has full developer authority. The discovered deployment target is part of this project's
+    development process, not a separate production estate: root access for its own build, deploy,
+    restart, and live pipeline is ordinary work after current authorization is verified. The
+    boundary is OWNERSHIP, not privilege. Every other project and infrastructure it owns is
+    strictly read-only on every host and surface; its database is production data and is never
+    written, migrated, truncated, cleaned up, or restarted. Never make even a temporary foreign
+    fix. Register a foreign defect in Plan Manager with evidence and proposed change, report it,
+    then continue without it or state the blocker. Unclear ownership is outside the boundary
+    until clarified.
   branch_discipline: >-
     There are three branches: local is the local working branch, cas is the Code
     Analysis Server working branch, and main is transfer-only. Work only on the
@@ -16,14 +49,20 @@ laws:
     local directly with cas. Before new work, synchronize main into the active
     working branch. Build, deploy, and run the live acceptance pipeline from the
     active working branch. Only after deployment and live verification are green,
-    merge that working branch into local main. The agent MUST NOT push main. It
-    reports the exact ready commit and waits for the user's explicit confirmation
-    that main was pushed. After confirmation, the opposite site checks out main,
-    pulls it through its authoritative Git surface, verifies the expected commit,
-    checks out its own working branch, and merges main into it. The same sequence is
-    mirrored when work originates on cas. All local changes are made only on local;
-    all registered CAS project changes are made only on cas. Leave each site on its
-    own working branch.
+    merge that working branch into local main, push it, and synchronize the opposite
+    site through its authoritative Git surface as required by
+    `branch_sync_after_every_step`. All local changes are made only on local; all
+    registered CAS project changes are made only on cas. Leave each site on its own
+    working branch.
+  branch_sync_after_every_step: >-
+    [TRIGGER: every completed commit, merge, release branch/tag, deployment, or accepted agent
+    branch] Synchronization is the agent's duty: push the branch just moved to `origin`, then bring
+    the opposite site to that same commit and verify both the remote ref and other site's commit.
+    Do not wait for the user to push or leave a branch merely prepared locally. Never force-push or
+    rewrite published history; resolve a non-fast-forward by merging under `branch_discipline`.
+    If push or pull fails, stop and report the exact command and error; do not continue on
+    unsynchronized sites. Synchronization does not authorize deployment or topology-breaking
+    merges.
   language: >-
     Use Russian only for user-facing communication. Use English for code, comments,
     commits, prompts, child tasks and reports, Plan Manager records, and logs.
@@ -54,7 +93,7 @@ laws:
     usage, and quality analysis use the registered CAS project first. Project
     content edits use the local checkout and apply_patch on branch local. Local Git,
     tests, builds, and release preparation use native commands with the repository
-    workdir. Commit a coherent, verified task result; do not push. Server-side Git
+    workdir. Commit a coherent, verified task result. Server-side Git
     operations always use CAS Git commands through MCP Proxy on branch cas. HARD
     RULE (no exceptions): EVERY script — build, test, and deploy runners alike, e.g.
     the discovered entrypoint named in ops/delivery-release.yaml `build` — runs with
@@ -70,7 +109,9 @@ laws:
     Registered CAS project analysis and Git, index, or administrative state changes
     target branch cas through MCP Proxy. Project content mutation never uses CAS or
     AI Editor; it remains local apply_patch work on branch local. Never edit main,
-    never merge local directly with cas, and never silently switch sites.
+    never merge local directly with cas, never fall back to local tools when the
+    user explicitly selected CAS-side implementation, and never silently switch
+    sites.
   local_ide_mode: >-
     [active when variables.file_access=local_ide] Files live locally and are edited by
     the HUMAN through the IDE; the agent NEVER edits project files directly - it
@@ -78,6 +119,19 @@ laws:
     analysis still run through CAS via MCP Proxy; sync local<->server state with Git
     (push from local, CAS git_pull_safe on the server). Branch rules follow the
     'local' clause of branch_discipline.
+  service_packaging_standard: >-
+    [TRIGGER: packaging, deploying, or creating a service; or touching Dockerfile, Debian package,
+    postinst, settings/config template, argument surface, networks, systemd, or live pipeline]
+    Read `docs/service_packaging_standard.md` first. If absent, read the `ai-editor` reference
+    copy read-only and add a local copy. The binding minimum is: exactly image, `<svc>-docker` deb,
+    and `/etc/default/<svc>` conffile; no host config in the image or keys in the package; an
+    idempotent package-owned service user/access setup, secure keys, and verified non-root
+    container; `${SVC_*}` templates with unresolved-placeholder preflight; an atomic live
+    `set`/`show` argument surface; Docker network aliases rather than IPs, verified inside the
+    container; rollback-ready image-spec/docker-run/systemd deployment; and real-output proof of
+    health/version, package import, permissions, DNS, and green live pipeline. The pipeline
+    auto-discovers one check per file from declared schema, reports DECLARED BUT UNTESTED, treats
+    unreachable service as RED, and confines destructive checks to a cleaned sandbox project.
   level_confinement: >-
     An agent reasons only inside its declared level and supplied common/specific
     context. It labels inference, asks its direct parent for information from above,
@@ -87,6 +141,13 @@ laws:
     A child report is a claim, not evidence. Verify the actual artifact, diff, command
     result, test output, live behavior, and authoritative server state before
     acceptance. Re-check weak branches manually even when semantic scoring is green.
+  zero_trust_cheap_output: >-
+    [TRIGGER: any result produced by a cheaper tier] Output from a cheaper tier is a claim, not
+    a fact, and the stage that used it owns the verification. Read the files a result cites
+    before repeating its conclusion; re-run any command reported as passing; treat "found
+    nothing" as unverified until the search is reproduced. The tester verdict, the conscience
+    review, every acceptance gate, semantic score, and the definition of the task itself are never
+    delegated downward.
   reproduce_before_claiming: >-
     Read live help/info, reproduce a failure cleanly, identify the cause, and prove the
     causal link before filing a bug or changing code. A title, old workaround, single
@@ -205,6 +266,19 @@ laws:
     not accepted until every applicable step has passed. Single authoritative
     definition of this cycle - do not restate it elsewhere; ops files,
     modes.yaml, and AGENTS.md cross-reference this law by name instead.
+  live_api_contract_coverage: >-
+    [TRIGGER: any pipeline run against the real deployed server, and any change to the API
+    surface] The live acceptance pipeline MUST cover the API exhaustively: EVERY command the
+    server exposes and, for every command, EVERY parameter — in BOTH directions. Positive
+    direction: a valid value of the declared type, including boundary values, and optional
+    parameters exercised both PRESENT and ABSENT. Negative direction, per parameter: required one
+    OMITTED, present but EMPTY or null, WRONG TYPE, out-of-range or malformed value, and an
+    UNKNOWN extra parameter rejected. Responses are asserted STRICTLY: exact status or error code,
+    response SHAPE, PRESENCE of every promised property, ABSENCE of every unpromised property, and
+    TYPE of each property's value — recursively through nested objects and list elements — plus
+    fixed values where the contract fixes them. A negative case asserts the SPECIFIC contracted
+    error. An API command without checks, a parameter exercised in only one direction, or a
+    response accepted without full property-and-type assertions is a COVERAGE GAP.
   single_real_server_pipeline: >-
     [once per session] Discover and verify the project's single full-testing
     pipeline that runs against the REAL deployed doc-store-vvz server

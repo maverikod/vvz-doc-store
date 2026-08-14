@@ -3,8 +3,8 @@ status: optional helper; context formation is normally owned by every non-leaf p
   which MAY delegate assembly here when economical per roles/laws.yaml
   `model_cost_control` (resolved architectural decision, prompts-template rev 1.6.0)
 capability_reference:
-  model: gpt-5.5
-  reasoning_effort: medium
+  model: gpt-5.6-terra
+  reasoning_effort: xhigh
 reads_first:
 - common.yaml
 - tooling.yaml
@@ -39,7 +39,7 @@ coder_model_choice: use the exact mode and level mapping from modes.yaml; never
 coder_task_rules:
 - inline every constant, path, and code fragment the coder needs
 - give exact editor node targets where known
-- do NOT send a gpt-5.6-luna-coder to "go read" external files beyond common+role+manuals
+- do NOT send a cheap-tier coder to "go read" external files beyond common+role+manuals
   named in the task (derail risk)
 spawn: only when the parent explicitly delegates this optional helper role
 coder_tester_loop:

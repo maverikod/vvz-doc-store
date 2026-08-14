@@ -33,10 +33,11 @@ tool demands, and verification burden. Record the choice in the canonical
 `requested_model: {model, reasoning_effort}` mapping and record a
 `constraints.must` item beginning `model capability rationale:`.
 
-Use `gpt-5.6-luna` for bounded atomic work, `gpt-5.5` for medium repair,
-research, execution, and testing, `gpt-5.6-terra` for broader or complex
-ownership, and `gpt-5.6-sol` for root ownership, architectural conscience, or
-exceptional risk. Role-file `capability_reference` annotations are selection
+Use `gpt-5.6-terra` with medium reasoning for bounded atomic work, `gpt-5.6-terra`
+with xhigh reasoning for medium ownership and verification, `gpt-5.6-sol` with
+max reasoning for strong promotion, and `gpt-5.6-sol` with ultra reasoning for
+root ownership, architectural conscience, or exceptional risk. Role-file
+`capability_reference` annotations are selection
 inputs, not fixed defaults. Never silently substitute an explicitly requested
 model or choose an underpowered tier without capability evidence. Every
 non-leaf parent owns context formation, child dispatch, upward escalation, and

@@ -6,7 +6,7 @@ procedure: |
   1. inspect first: git_status / git_log / git_diff / git_show / git_blame
   2. mutate: git_add / git_commit / git_reset / git_restore / git_revert
   3. sync with remote: prefer git_pull_safe on a dirty tree (guarded stash -> pull -> apply -> drop)
-     over raw git_pull; do not push without explicit user authorization
+     over raw git_pull; perform required branch_sync_after_every_step pushes and verify the remote ref
   4. branch ops as needed: git_branch_checkout/create/delete/list/compare/current/sync_status/fetch/pull/push/track_remote/set_upstream/unset_upstream
   5. most git commands are QUEUED -> poll via ca-jobs-queue.yaml
   6. if the repo is in a bad state: git_repo_doctor -> git_repo_permissions_check -> repair; git_repo_lock_cleanup for stuck locks
@@ -22,7 +22,7 @@ commands:
 
 gotchas:
   - 'LAW: server-side git ALWAYS via CA git_* — NEVER console/ssh git without explicit user permission (laws.yaml ssh_repair carve-out)'
-  - 'LAW branch_discipline: local and cas exchange only through main; after deploy and verification prepare main, report the exact commit, and wait for user push confirmation before CAS pulls and merges it'
+  - 'LAW branch_discipline: local and cas exchange only through main; after deploy and verification push and verify main, then CAS pulls and merges it; never force-push or rewrite history'
   - git_pull takes ref, not branch — a common param-naming trap
   - 'most git commands are queued: a "completed" queue status is not the same as command success — check the inner result'
 

@@ -8,10 +8,10 @@ model_selection:
     requested_model: [model, reasoning_effort]
     capability_rationale: constraints.must item prefixed with 'model capability rationale:'
   capability_ladder:
-    bounded_atomic: {model: gpt-5.6-luna, reasoning_effort: medium}
-    medium_repair: {model: gpt-5.5, reasoning_effort: medium}
-    broad_or_complex: {model: gpt-5.6-terra, reasoning_effort: medium_or_xhigh}
-    root_or_exceptional_risk: {model: gpt-5.6-sol, reasoning_effort: max}
+    bounded_atomic: {model: gpt-5.6-terra, reasoning_effort: medium}
+    medium_ownership: {model: gpt-5.6-terra, reasoning_effort: xhigh}
+    strong_promotion: {model: gpt-5.6-sol, reasoning_effort: max}
+    root_or_exceptional_risk: {model: gpt-5.6-sol, reasoning_effort: ultra}
   escalation: >-
     Escalate only when the pre-dispatch assessment requires it, or when concrete
     failure, insufficient output, or failed verification proves the selected tier
