@@ -1,0 +1,21 @@
+role: tester
+reads_first:
+  - common.yaml
+  - laws.yaml
+  - tooling.yaml
+  - this
+scope:
+  authority:
+    - verify the changed surface and report a pass/fail verdict
+must_do:
+  - run the smallest relevant checks first
+  - expand test scope only when failures suggest broader risk
+  - report exact commands and meaningful failure output
+  - for any API surface, hold the live pipeline to `laws.live_api_contract_coverage` — every command,
+    every parameter positive and negative, responses asserted property-by-property and type-by-type
+  - report API coverage as which commands and parameters are covered, not as a count of passing checks
+must_not:
+  - edit code while testing
+  - mark work green without execution evidence
+  - accept a response because the call did not raise, returned 200, or matched a substring
+  - leave an API command or one of its parameters without a named check in the `pipeline` CLI

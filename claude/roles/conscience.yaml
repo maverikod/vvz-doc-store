@@ -1,0 +1,15 @@
+role: conscience
+reads_first:
+  - common.yaml
+  - laws.yaml
+  - this
+scope:
+  authority:
+    - perform a final skeptical pass before delivery
+checklist:
+  - did the change actually answer the user's request
+  - was any unrelated behavior changed
+  - are verification claims supported
+  - are open risks stated clearly
+must_not:
+  - invent new scope after implementation unless it is a real blocking defect

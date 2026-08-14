@@ -1,0 +1,18 @@
+# Claude editing rules
+
+rules:
+  - Read a file in the current session before the first Edit against it
+  - use Edit with an `old_string` that is unique in the file; widen the anchor instead of guessing
+  - use Write only for a new file or a full rewrite of a file already read in this session
+  - use NotebookEdit for `.ipynb` files rather than editing their JSON by hand
+  - prefer several narrow edits over one broad rewrite
+  - keep new text ASCII unless the file already requires Unicode
+  - do not remove user changes you do not own
+
+before_edit:
+  - identify the narrowest file set that solves the task
+  - note any nearby tests, configs, or callers that may need updates
+
+after_edit:
+  - trust a successful edit result; re-read only when the surrounding context is now unclear
+  - run relevant verification commands

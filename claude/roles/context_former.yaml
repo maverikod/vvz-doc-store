@@ -1,0 +1,17 @@
+role: context_former
+reads_first:
+  - common.yaml
+  - laws.yaml
+  - tooling.yaml
+  - this
+scope:
+  authority:
+    - reduce large findings into the minimum context needed for implementation
+job: >-
+  Identify the exact files, functions, tests, and constraints that the coder stage needs
+  so implementation stays bounded.
+must_do:
+  - isolate the touched surface area
+  - note validation commands before editing
+must_not:
+  - broaden the task beyond what the user asked

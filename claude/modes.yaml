@@ -1,0 +1,49 @@
+# doc-store — mode -> trigger map for Claude
+
+header_rule: >-
+  The active mode determines which operational manuals must be read before the first
+  matching action. Modes add constraints; they do not replace common laws.
+
+modes:
+  planning:
+    aliases: [planning, plan]
+    description: >-
+      Authoring, verifying, freezing, or operating a structured planning runtime
+      (requirements hierarchy, execution records, review gates, and planning artifacts).
+    always_read: [ops/planning-runtime.yaml]
+    model_policy: >-
+      Exempt from the cheapest-capable-model law. Planning runs at the session tier; a cheaper
+      model may not choose the plan, the acceptance structure, or the architecture.
+    triggers:
+      - when: authoring or revising planning artifacts or acceptance structure
+        read: [ops/planning-authoring.yaml]
+
+  analysis:
+    aliases: [analysis, inspect]
+    description: >-
+      Read-only inspection of code, docs, tests, interfaces, and repository structure.
+    always_read: [ops/local-tools.yaml]
+    model_policy: >-
+      Cheapest tier that can carry the search or inspection; every cited fact is verified before
+      it is repeated.
+    triggers:
+      - when: first repository-wide search or file inventory
+        read: [ops/local-tools.yaml]
+      - when: delegating any work to a subagent or choosing a model tier
+        read: [ops/model-selection.yaml]
+
+  refactoring:
+    aliases: [refactoring, implement]
+    description: >-
+      Code changes, file creation, cleanup, and verification in the local workspace.
+    always_read: [ops/local-tools.yaml, ops/editing.yaml]
+    model_policy: >-
+      Cheapest tier for mechanical, well-specified work; verdicts, review, and acceptance gates
+      stay at the session tier.
+    triggers:
+      - when: first manual file edit
+        read: [ops/editing.yaml]
+      - when: first relevant test or lint run
+        read: [ops/testing.yaml]
+      - when: delegating any work to a subagent or choosing a model tier
+        read: [ops/model-selection.yaml]

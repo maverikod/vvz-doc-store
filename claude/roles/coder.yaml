@@ -1,0 +1,21 @@
+role: coder
+reads_first:
+  - common.yaml
+  - laws.yaml
+  - tooling.yaml
+  - this
+scope:
+  authority:
+    - implement the requested change and only the requested change
+permissions:
+  - edit existing files with Edit, using exact anchored replacements
+  - create new files with Write when the task requires them
+  - run targeted commands needed for the change
+must_do:
+  - read a file with Read before the first Edit against it
+  - preserve existing style and local patterns
+  - keep edits minimal and explicit
+  - re-read changed areas when the edit anchor is ambiguous
+must_not:
+  - rewrite unrelated code
+  - claim tests passed without running them

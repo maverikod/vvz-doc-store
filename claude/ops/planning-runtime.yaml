@@ -1,0 +1,6 @@
+# Planning runtime guidance
+
+rules:
+  - treat planning mode as structured planning-system work, not generic "think before code"
+  - keep planning artifacts, review states, and acceptance gates explicit
+  - if your project has no dedicated planner, document the local equivalent instead of removing the mode

@@ -1,0 +1,15 @@
+# Claude local tools guidance
+
+rules:
+  - prefer the dedicated tools over shell equivalents; use Glob for file discovery and Grep for content search
+  - fall back to `rg` through Bash only when a search needs flags the Grep tool does not expose
+  - issue independent reads and searches as parallel tool calls in a single message
+  - read a file region with Read (`offset`/`limit`) instead of piping it through the shell
+  - keep shell commands simple and inspectable, and use Bash for repository inspection and verification
+  - request escalation only when sandbox limits block required work
+
+patterns:
+  repository_scan: "Glob(pattern=\"<glob>\", path=\"<path>\")"
+  text_search: "Grep(pattern=\"<pattern>\", path=\"<path>\", output_mode=\"content\", -n=true)"
+  targeted_read: "Read(file_path=\"<file>\", offset=<start>, limit=<count>)"
+  shell_fallback: "rg -n \"<pattern>\" <path>"

@@ -1,0 +1,61 @@
+# Claude testing rules
+
+rules:
+  - run verification through the project `pipeline` CLI, never through a hand-rolled command list
+  - start with the most local check that covers the change
+  - widen scope only when required by the failure or dependency graph
+  - include exact commands in the final report when verification matters
+
+pipeline_cli:
+  name: pipeline
+  install: "pip install -e ."
+  run_all: "pipeline"
+  run_one: "pipeline <check-name>"
+  list_checks: "pipeline --list"
+  contract:
+    - the command name is identical in every project
+    - no arguments runs every test and every check
+    - a single argument runs only that named check
+  required_contexts:
+    - local verification before delivery
+    - after any deploy, executed against the real deployed server
+    - after a normal server start, as the smoke run
+  when_missing: >-
+    A project without this CLI, or a check that lives outside it, is a gap. Add the pipeline
+    package or fold the stray check into it as a named check instead of running it separately.
+
+api_contract_coverage:
+  law: laws.live_api_contract_coverage
+  scope: >-
+    Every command the project's API exposes, exercised through the `pipeline` CLI against the real
+    deployed server. The unit of coverage is the command-and-parameter, not the check count.
+  per_parameter:
+    - positive: valid value of the declared type, including boundary values
+    - optional_present_and_absent: optional parameters exercised in both states
+    - negative_missing: required parameter omitted
+    - negative_empty: parameter present but empty or null
+    - negative_type: value of the wrong type
+    - negative_value: out-of-range, malformed, or unsupported value
+    - negative_unknown: unexpected extra parameter is rejected
+  response_assertions:
+    - the exact status or error code
+    - the response shape
+    - every property the contract promises is present
+    - no property the contract does not promise is present
+    - the type of every property value, recursively through nested objects and list elements
+    - the value itself wherever the contract fixes it
+    - a negative case asserts the specific contracted error, not merely that the call failed
+  forbidden:
+    - accepting a response because the call did not raise or returned 200
+    - substring matching on a serialized response instead of structural assertions
+    - covering only the happy path of a command
+    - leaving an API command or one of its parameters without a named check
+  gap_rule: >-
+    An untested command, a parameter exercised in only one direction, or a loosely asserted
+    response is a gap. Close it inside the `pipeline` CLI as a new named check, never with a side
+    script, before the work is accepted.
+
+verdict:
+  pass: all chosen checks completed successfully
+  fail: at least one relevant check failed
+  blocked: verification could not run; report why

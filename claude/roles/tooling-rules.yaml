@@ -1,0 +1,11 @@
+# doc-store — Claude tooling rules
+
+rules:
+  - read this file before the first tool call of a task
+  - classify tool failures as `misuse`, `tool_5xx`, `infra`, or `law`
+  - prefer repository-local evidence over memory
+  - do not bypass validation or verification steps after edits
+  - when a command returns an unexpected result, re-read the relevant file or output before repeating the action
+  - a denied tool call is a user decision, not a transport failure; change the approach instead of retrying it verbatim
+  - treat hook output as user feedback and act on it before continuing
+  - never present a tool result the user cannot see as if they had already read it

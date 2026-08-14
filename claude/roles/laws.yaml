@@ -1,0 +1,282 @@
+# doc-store — standing laws for Claude
+
+variables:
+  file_access: local      # local (default) | cas | local_ide. Selects the active work site and
+                          # governs local_mode / cas_mode / local_ide_mode and the
+                          # profile-dependent parts of branch_discipline.
+  local_branch: local
+  cas_branch: cas
+  transfer_branch: main
+  verification: required
+
+laws:
+  active_profile_declaration: >-
+    [TRIGGER: first action of any task] `variables.file_access` decides where the work happens
+    and which tools are legitimate; it is not a hint. Read it before the first project read or
+    edit and state the active profile in your opening message. The default is `local`. Only the
+    user changes it — never infer a switch from the shape of a task, and never switch mid-task
+    because a tool failed. If the value is missing or unreadable, stop and ask; do not assume.
+  contract_scope: >-
+    [TRIGGER: first action of any task, and any time another role or agent definition turns up in
+    the repository] THIS contract is `CLAUDE.md` plus the `claude/` package next to it, and nothing
+    else. Project repositories still carry role packs from earlier systems — `.cursor/agents/*.md`,
+    `docs/agents/*`, `docs/PROJECT_RULES.md`, `AGENTS.md` and similar. They are historical
+    artifacts or another runtime's contract. Do NOT adopt one as your operating contract, do not
+    inherit its gates, its message protocol, its precedence rules, or its required-agent rules, and
+    do not cite it as the reason for an action. Read such a file only when the task is explicitly
+    about that file. If the user points you at one and means it to govern, say plainly that it is
+    outside this contract and ask which one applies before acting on it.
+  role_names_are_stages_not_agent_types: >-
+    [TRIGGER: any moment a role name looks like something that must be spawned] The role names in
+    this package — `orchestrator`, `researcher`, `context_former`, `coder`, `tester`, `conscience`
+    — are STAGE DISCIPLINES, not subagent types and not named agents that must exist in the
+    runtime. One session may carry every stage itself. NEVER halt, escalate, or refuse work because
+    a role name is not an available subagent type: that is not a blocker, it is the normal case.
+    Run the stage in-session under its own file's rules. This holds with special force for role
+    names imported from a foreign role pack (see `contract_scope`) — a missing
+    `orchestrator_tactical`, `planner_auto`, `coder_auto` or any other name from such a pack is
+    evidence that the pack does not apply here, not a reason to stop. Real blockers are missing
+    evidence, missing access, a failing gate, or a decision only the user can make; a missing agent
+    type is none of those.
+  project_boundary: >-
+    [TRIGGER: the first action of any task, and every action that reaches anything outside the home
+    project] The session has exactly ONE home project: the one whose directory the session was
+    started in, named in this bundle's project profile. Everything belonging to it is INSIDE the
+    boundary — its local checkout and branches, its registered CAS project, its build artifacts and
+    published packages, and its deployed service on the fleet host: containers, configuration,
+    data, logs, systemd units. Inside, you hold FULL developer authority and do not ask permission
+    to use it: read, edit, refactor, commit, build, publish, deploy, restart, reconfigure, wipe and
+    recreate state. The HOST IS NOT THE BOUNDARY. `root@192.168.254.26` is PART OF THE DEVELOPMENT
+    PROCESS, not a separate production estate: building, deploying, restarting, and running the
+    live acceptance pipeline there against the home project's own service is ordinary work and
+    needs no permission, `root` included. That same host also carries PRODUCTION DATABASES and the
+    live services of OTHER projects — which is exactly why the line is drawn per PROJECT and not
+    per host. Unattended action, root or not, is permitted ONLY over the home project's own
+    resources. OUTSIDE the boundary every other project is
+    STRICTLY READ-ONLY — on every host, through every surface: local checkouts, CAS projects, git
+    remotes, running services, containers, databases, configuration, deployed files. You may read,
+    search, analyze, reproduce, and diagnose as much as the task needs. You may NOT write: no file
+    edit, no commit, no branch, no build, no deploy, no restart, no migration, no configuration
+    change — not a one-line obviously-correct fix, not a "temporary" change you intend to revert,
+    and not even when the defect you found there is exactly what blocks your own work. A foreign
+    project's DATABASE on `root@192.168.254.26` is production data: read it only when the task needs it,
+    never write, never migrate, never truncate, never "clean up", and never restart the service
+    that owns it. Root access is not permission: the boundary is OWNERSHIP, not privilege, and a
+    credential that lets you write says nothing about whether you may — on that host the same
+    `root` shell reaches both your own service and someone else's production data, and only the
+    project boundary tells them apart. When the work appears to require a change outside,
+    the only legitimate move is to REGISTER it: file the bug or task in the plan manager against
+    that project with the reproduction, the evidence, and the exact proposed change; report it to
+    the user in the same message; then either continue without that change or state plainly that
+    you are blocked on it. Hunting bugs in another project is legitimate work and ends at that
+    registration. The same applies to shared infrastructure owned by another project — the proxy,
+    the analysis server, another team's database. If ownership of something is unclear, treat it as
+    outside the boundary and ask before touching it.
+  local_workspace_truth: >-
+    Under the default `local` profile the local checkout is the source of truth. Read files
+    locally, edit only in the workspace, and do not invent hidden remote state. Under `cas` the
+    registered server-side project is the source of truth instead, and this law yields to
+    `cas_mode`.
+  branch_discipline: >-
+    There are three branches: `local` is the local working branch, `cas` is the Code Analysis
+    Server working branch, and `main` is transfer-only. Work only on the branch belonging to the
+    active site. Never edit `main` directly and never merge `local` directly with `cas`. Before
+    new work, synchronize `main` into the active working branch. Build, deploy, and run the live
+    acceptance pipeline from the active working branch. Only after deployment and live
+    verification are green, merge that working branch into local `main`. Push `main` yourself and
+    then bring the opposite site to it — see `branch_sync_after_every_step`; waiting for the user
+    to push is no longer correct. The opposite site checks out `main`, pulls it through its
+    authoritative Git surface, verifies the expected commit, checks out its own working branch,
+    and merges `main` into it. The same sequence is mirrored when work originates on `cas`.
+    Leave each site on its own working branch.
+  branch_sync_after_every_step: >-
+    [TRIGGER: every completed step — a commit, a merge, a release branch or tag, a deployment, an
+    accepted agent branch] Keeping both sites on the same state is YOUR duty, not the user's.
+    After each step, synchronize: push the branch you just moved to `origin`, then bring the other
+    site to that same commit. The local checkout and the server-side project must never be left
+    holding different versions of the same branch. This holds no matter where you are working: on
+    the server, push and then pull the local side; locally, push and then pull the server side
+    through its authoritative Git surface. Do not stop at "prepared locally" and do not wait for
+    the user to run the push — the earlier rule that pushing is user-owned is WITHDRAWN. Verify
+    instead of assuming: after pushing, confirm the remote branch points at the expected commit;
+    after pulling, confirm the other site's tree is on that commit; report what was pushed, what
+    was pulled, and the resulting commit on both sides. NEVER force-push and never rewrite
+    published history: a rejected non-fast-forward is resolved by merging per `branch_discipline`,
+    not by overwriting the remote. If a push or pull fails — credentials, network, rejection —
+    stop there, report the exact command and its error, and do not continue work on top of
+    unsynchronized sites. Synchronization moves commits between sites; it never creates merges
+    outside the topology in `branch_discipline`, and it does not authorize deploying prompt
+    bundles or build artifacts anywhere.
+  parallel_agent_isolation: >-
+    [TRIGGER: launching more than one agent that may modify the repository at the same time]
+    Concurrent agents must never share a working tree or a branch. Give each parallel agent its
+    own git worktree (`git worktree add <path> -b <agent-branch>`) checked out to its own
+    dedicated branch, so their edits, indexes, and builds cannot collide over the shared `.git`.
+    The same branch may not be checked out in two worktrees at once. Each agent works, commits,
+    and verifies ONLY inside its own worktree. Integrate only after the work is ACCEPTED: merge
+    the agent branch into the active working branch (see `branch_discipline`), resolve conflicts
+    in the integration tree, re-run the `pipeline` on the merged result, and only then remove the
+    worktree (`git worktree remove`). A parallel agent whose work is rejected is discarded with
+    its worktree; nothing half-merged is left behind. Parallel writing agents are a standard
+    mode (see `subagent_policy`); this law is the git mechanics that make that mode safe. It
+    does not relax any verification gate — the `tester` and `conscience` gates and the
+    orchestrator's acceptance decision still apply to every merged result.
+  local_mode: >-
+    [active when variables.file_access=local — the default] Project reads, edits, tests, builds,
+    and release preparation use the local checkout on branch `local`. The Code Analysis Server
+    remains authoritative for its registered server-side project and for remote analysis. Commit
+    a coherent, verified task result; do not push. Server-side Git operations always use CAS Git
+    commands through MCP Proxy. HARD RULE (no exceptions): in this profile EVERY script — build,
+    test and deploy runners alike — and every file edit run with LOCAL tools on the local
+    checkout. MCP Proxy in this profile is used ONLY for code-analysis search and for
+    CAS-authoritative git sync: never to execute a build, test or deploy script, never to edit a
+    file, and never through an MCP terminal sandbox or host-exec path. That path is reserved for
+    a genuine CAS capability gap or an authorized real-host incident, not for ordinary work.
+  cas_mode: >-
+    [active when variables.file_access=cas] When the user explicitly selects server-side
+    implementation, all project reads, edits, verification, and Git target the registered CAS
+    project on branch `cas` through MCP Proxy. Local project tools must not be used as a
+    fallback: if the server-side path is unavailable, stop and escalate rather than silently
+    working locally.
+  local_ide_mode: >-
+    [active when variables.file_access=local_ide] Files live locally and are edited by the HUMAN
+    through the IDE. The agent NEVER edits project files directly — it delivers proposed patches
+    or diffs in its reports for the human to apply. Search and analysis still run through CAS via
+    MCP Proxy; local and server state are synchronized with Git. Branch rules follow the `local`
+    clause of `branch_discipline`.
+  no_assumption_policy: >-
+    Do not claim behavior, architecture intent, or test status without repository evidence.
+  inspect_before_edit: >-
+    Before changing a file, read the relevant sections and understand nearby code and local diffs.
+  patch_only_manual_edits: >-
+    Manual source edits should use patch-based updates so the change boundary stays explicit.
+  preserve_user_work: >-
+    Never overwrite or revert unrelated changes you did not make unless the user explicitly asks.
+  non_destructive_git: >-
+    Avoid destructive git commands unless the user explicitly requests them and the risk is clear.
+  escalation_first_error: >-
+    Stop on the first infrastructure or transport failure, capture the exact failing command and
+    error text, and escalate instead of retrying blindly.
+  reproduce_before_claiming: >-
+    Do not declare tooling broken from a single flaky run; first inspect usage and reproduce
+    cleanly unless the failure is already a hard infrastructure blocker.
+  editor_gate_no_bypass: >-
+    If validation or quality gates fail after an edit, fix the underlying issue or report the
+    blocker; do not bypass the gate just to force a write-through.
+  bugfix_acceptance_cycle: >-
+    [TRIGGER: any bug fix] The mandatory bug-fix algorithm is, in order: (1) REPRODUCE the
+    defect on the REAL DEPLOYED SERVER, on the real failing path — never from the bug report
+    alone and never against a mock or a stub; (2) IMMEDIATELY after that reproduction, ADD a
+    covering check for the defect to the project's `pipeline` CLI as a named check and RUN it
+    (`pipeline <check-name>`) against that same real server, and confirm it FAILS. The purpose of
+    this run is to CONFIRM THE REPRODUCTION — proof that the defect is visible THROUGH the
+    pipeline and not only by hand — it is NOT the testing step and it says nothing about any fix.
+    Nothing in the code may change until the pipeline has shown the defect RED; (3) FIND the root
+    cause in code; (4) PROVE the cause-to-symptom link with concrete evidence; (5) FIX the
+    defect with focused regression coverage; (6) TEST by running `pipeline` locally and confirm it is GREEN, i.e. the step-(2)
+    check now passes; (7) BUMP the project version by exactly +1 — MANDATORY before any
+    deployment; (8) BUILD the deployable image and package via `build.sh`; (9) DEPLOY via ssh
+    to `root@192.168.254.26` and, if the project ships a client, publish that client to PyPI at the same
+    version; (10) RUN `pipeline` against the real deployed server and SMOKE-TEST the original
+    bug path on the live system. This cycle is mandatory, not advisory. Work is not accepted
+    until every applicable step passes.
+  service_packaging_standard: >-
+    [TRIGGER: packaging or deploying a service; creating a new one; touching its Dockerfile, its
+    Debian package, `postinst`, the settings file, the config template, the argument surface, its
+    networks, its systemd unit, or its live pipeline] The house standard is
+    `docs/service_packaging_standard.md`, written from `ai-editor` as the reference
+    implementation; every project follows the same shape so that an operator who installed one
+    installed them all. READ that file before the first such change — if this project has no copy,
+    read the reference copy in the `ai-editor` project (reading another project is allowed,
+    writing is not — see `project_boundary`) and add a copy here. Its non-negotiable requirements,
+    binding even when the file is missing: (1) a service ships as THREE artefacts and nothing else
+    — the Docker image from `docker/build.sh`, the Debian package `<svc>-docker` from
+    `docker/build-deb.sh`, and `/etc/default/<svc>` shipped as a dpkg CONFFILE; the image carries
+    no host configuration and the package carries no secrets. (2) The PACKAGE owns identity and
+    access: an idempotent `postinst` creates the service user and group, the directories, and the
+    permission table; key material is never group-writable and never world-readable; the package
+    never ships keys, only the access rule it re-applies on every install; the container runs as
+    the service user, never as root, and that is verified with
+    `docker inspect <svc> --format '{{.Config.User}}'`. (3) Configuration is TEMPLATED, never
+    hand-edited: `${SVC_*}` placeholders resolved at container start, a preflight that refuses to
+    start while any placeholder is unresolved and names the missing variable, and a fresh install
+    that ends up fully configured and RUNNING — if a human must open an editor before the service
+    starts, the package is incomplete. Hosts, ports, protocols, every certificate path, the server
+    id, and the docker networks are placeholders, never literals. (4) Settings change through an
+    ARGUMENT SURFACE (`<svc>ctl set` / `show`), which writes the settings file, re-resolves the
+    config and recreates the container so the change is live; an unknown key or a malformed value
+    is rejected loudly with NOTHING written, because a partially applied settings change is worse
+    than a refused one; `show` prints effective values and where each came from. (5) Peers are
+    addressed by DOCKER NETWORK NAME and stable network alias — an IP address in a config is a
+    defect; the package ensures the networks exist, and resolution is verified from INSIDE the
+    container, not by reading the config. (6) Deployment is `image-spec` + `docker-run.sh` +
+    a systemd unit: point `image-spec` at the new tag and restart; keep the previous `image-spec`
+    and image on the host so rollback is one edit and one restart. (7) A deploy is NOT DONE UNTIL
+    IT IS PROVEN, with real output rather than reasoning: `health` over the real transport
+    reporting the expected version, an import check proving the application package is genuinely
+    inside the image, `stat` output matching the permission table, the container on its networks
+    resolving peers by name, and the live pipeline green against the deployed instance. (8) The
+    live pipeline is one check per file, auto-discovered; its coverage is driven by the server's
+    own declared schema and reports what is DECLARED BUT UNTESTED; it asserts real behaviour and
+    reports every divergence from the documentation; an unreachable deployed service is RED and
+    never "skipped"; checks register unconditionally; destructive checks use a dedicated sandbox
+    project, never real data, and clean up even when they fail — see `live_api_contract_coverage`
+    and `pipeline_cli_contract`. The standard's checklist for a new service is an acceptance gate,
+    not advice.
+  pipeline_cli_contract: >-
+    [TRIGGER: any verification, deploy, or server start] The project MUST ship a pipeline
+    package that becomes a plain CLI application after `pip install -e .`. The command is named
+    `pipeline` in every project without exception, so one invocation works across the whole
+    fleet. `pipeline` with no arguments runs the ENTIRE suite: every test and every check.
+    `pipeline <check-name>` runs ONLY that check, and `pipeline --list` enumerates the available
+    check names. This one command is the single verification entrypoint in every context: local
+    verification before delivery, the mandatory run against the real deployed server after any
+    deploy, and the smoke run after a normal server start. Never hand-roll a second runner, a
+    parallel script, or an ad-hoc command list for any of those contexts; a missing check is
+    added to this pipeline as a new named check. A project without this CLI has a gap that must
+    be closed before the work is accepted.
+  live_api_contract_coverage: >-
+    [TRIGGER: any pipeline run against the real deployed server, and any change to the API
+    surface] The live acceptance pipeline MUST cover the API exhaustively: EVERY command the
+    server exposes and, for every command, EVERY parameter — in BOTH directions. Positive
+    direction: a valid value of the declared type, including boundary values, and optional
+    parameters exercised both PRESENT and ABSENT. Negative direction, per parameter: required one
+    OMITTED, present but EMPTY or null, WRONG TYPE, out-of-range or malformed value, and an
+    UNKNOWN extra parameter rejected. Responses are asserted STRICTLY. It is never enough that a
+    call did not raise, returned HTTP 200, or that some substring appears in a serialized body.
+    Every check asserts the exact status or error code, the response SHAPE, the PRESENCE of every
+    property the contract promises, the ABSENCE of every property it does not, and the TYPE of
+    each property's value — recursing into nested objects and into list elements — plus the value
+    itself wherever the contract fixes it. A negative case asserts the SPECIFIC contracted error,
+    not merely that the call failed. An API command with no check, a parameter exercised in only
+    one direction, or a response accepted without full property-and-type assertions is a COVERAGE
+    GAP; close it by adding named checks to the `pipeline` CLI before the work is accepted. Report
+    coverage against the API surface — which commands and parameters are covered — never as a
+    count of checks that passed. See `ops/testing.yaml` for the per-parameter and per-response
+    matrix.
+  cheapest_capable_model: >-
+    [TRIGGER: any delegation or model choice outside `planning` mode] Push work down to the
+    cheapest model tier that can plausibly carry it, and never to a tier that cannot. Tier order
+    is `claude-haiku-4-5` -> `claude-sonnet-5` -> `claude-opus-5` -> `claude-fable-5`; within a
+    tier, lower `effort` before raising the tier. State what the task requires before choosing;
+    do not pick a tier by habit. On failure, move up exactly one tier once, then escalate — never
+    re-run the same tier on the same failure. `planning` mode is exempt: task framing, mode
+    routing, acceptance structure, and architectural decisions run at the session tier, because a
+    cheap model must not choose the plan. See `ops/model-selection.yaml`.
+  zero_trust_cheap_output: >-
+    [TRIGGER: any result produced by a cheaper tier] Output from a cheaper tier is a claim, not a
+    fact, and the stage that delegated the work owns the verification. Read the files a result
+    cites before repeating its conclusion; re-run any command reported as passing; treat "found
+    nothing" as unverified until the search is reproduced; never forward a cheap-tier summary to
+    the user as an established finding. The `tester` verdict, the `conscience` review, every
+    acceptance gate, and the definition of the task itself are never delegated downward. If
+    verifying costs more attention than doing the work at the higher tier, the cheap tier was the
+    wrong choice — say so and move up rather than skipping verification.
+  verify_before_delivery: >-
+    Verify through the `pipeline` CLI. Run the narrowest covering check first
+    (`pipeline <check-name>`), then full `pipeline` before delivery. If verification cannot run,
+    say so plainly.
+  exact_failure_reporting: >-
+    When a command or test fails, report the exact failing command and the important error details.
+  artifact_language: >-
+    Keep prompts, code comments, and repository artifacts in English unless the project requires another language.

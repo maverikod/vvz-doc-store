@@ -1,0 +1,49 @@
+# doc-store — Claude tooling contract
+
+template_version: v1.6.19
+
+meta:
+  workspace: local
+  preferred_search: Grep
+  read_tool: Read
+  edit_tool: Edit
+  write_tool: Write
+  notebook_tool: NotebookEdit
+  shell_tool: Bash
+  search_tools:
+    - Glob
+    - Grep
+  planning_tools:
+    - task/todo tracking for multi-step work
+    - plan mode for approval-gated changes
+  parallelism: >-
+    Independent tool calls belong in one message; dependent calls must wait for the
+    previous result.
+
+manuals:
+  modes: modes.yaml
+  rules: roles/tooling-rules.yaml
+  local_tools: ops/local-tools.yaml
+  editing: ops/editing.yaml
+  testing: ops/testing.yaml
+  model_selection: ops/model-selection.yaml
+
+triggers:
+  - when: before the first tool call of the task
+    read: [rules]
+  - when: before the first repository search or shell inspection
+    read: [local_tools]
+  - when: before the first manual file edit
+    read: [editing]
+  - when: before the first verification command
+    read: [testing]
+  - when: the task declares a mode
+    read: [modes]
+  - when: before delegating work to a subagent or choosing a model tier
+    read: [model_selection]
+
+errors:
+  misuse: wrong params or command usage -> read help/rules, correct once if safe, otherwise escalate
+  tool_5xx: service-side internal failure -> stop and surface the failing call
+  infra: sandbox, transport, session, or connection failure -> stop on first occurrence and escalate
+  law: never hide or hand-wave tool errors; classify them and report them precisely

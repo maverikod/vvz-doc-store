@@ -1,0 +1,70 @@
+# Claude model selection and zero-trust verification
+
+principle: >-
+  Outside `planning` mode, push work down to the cheapest tier that can plausibly carry it,
+  and trust nothing that tier produces until it is verified against repository evidence.
+  Cheap-and-verified is the target; cheap-and-assumed is a law violation.
+
+mode_gate:
+  planning: >-
+    Do not downgrade. Mode routing, task framing, acceptance structure, and architectural
+    decisions run at the session tier. A cheap model may not choose the plan.
+  analysis: cheapest tier that can carry the search or inspection; verify every cited fact.
+  refactoring: cheapest tier for mechanical work; verdicts and review stay at the session tier.
+
+tiers:
+  order: [haiku, sonnet, opus, fable]
+  haiku:
+    id: claude-haiku-4-5
+    relative_cost: 1x
+    context: 200K
+    fits: >-
+      Mechanical, well-specified, easily checkable work: file inventory, single-pattern search,
+      formatting, renames with an exact target, extracting fields from a known structure.
+  sonnet:
+    id: claude-sonnet-5
+    relative_cost: 3x
+    context: 1M
+    fits: >-
+      Bounded research across several files, routine implementation against a settled design,
+      test authoring for a defined surface.
+  opus:
+    id: claude-opus-5
+    relative_cost: 5x
+    context: 1M
+    fits: >-
+      The session default. Ambiguous tasks, cross-cutting change, anything where a wrong answer
+      is expensive to detect.
+  fable:
+    id: claude-fable-5
+    relative_cost: 10x
+    context: 1M
+    fits: >-
+      Reserved. Only on explicit user request or a problem that has already defeated the session tier.
+
+selection_rule:
+  - state what the task actually requires before choosing a tier; do not pick by habit
+  - start at the lowest tier whose `fits` description covers the task
+  - one step up on failure, then escalate; never re-run the same tier on the same failure
+  - effort is the second lever: within a tier, lower effort before raising the tier
+  - a task that cannot be specified precisely enough to check is not a candidate for a cheap tier
+
+zero_trust:
+  law: >-
+    Output from a cheaper tier is a claim, not a fact. The stage that delegated the work owns
+    the verification and the consequences of accepting it.
+  required_checks:
+    - read the files a cheap-tier result cites before repeating its conclusion
+    - re-run any command whose result is being reported as a pass
+    - treat "found nothing" from a cheap tier as unverified until the search is reproduced
+    - never forward a cheap-tier summary to the user as an established finding
+  never_delegate_downward:
+    - the `tester` pass/fail verdict
+    - the `conscience` final review
+    - any acceptance gate or delivery decision
+    - the choice of what the task is
+
+false_economy_guard: >-
+  If verifying a cheap-tier result costs more attention than doing the work at the higher tier,
+  the cheap tier was the wrong choice. Say so plainly and move up; do not defend the choice by
+  skipping verification.

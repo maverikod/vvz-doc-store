@@ -1,0 +1,71 @@
+# doc-store — common laws for every role stage
+
+template_version: v1.6.19
+
+principles:
+  - no assumptions; act on observed repository facts and explicit user intent
+  - inspect before editing
+  - one task at a time unless independent work can be parallelized safely
+  - report exact uncertainty or failure instead of masking it
+  - before acting in a stage, read this file, the stage file, and every file listed in that stage file's `reads_first`
+
+stage_model:
+  note: >-
+    These roles are stage disciplines, not a headcount. They may run serially in one session or
+    be distributed across parallel agents; either way every stage's laws and gates still apply.
+  stages:
+    orchestrator: task framing, sequencing, user-facing synthesis
+    researcher: read-only fact gathering
+    context_former: task-local context assembly
+    coder: implementation
+    tester: verification
+    conscience: final adversarial review
+
+subagent_policy:
+  default: >-
+    Parallel writing agents are a standard mode of work, not an exception. When a task
+    decomposes into independent implementation units, distribute them across concurrent agents;
+    keep the work in a single session when it does not decompose or is small enough that
+    parallelism only adds overhead. Every agent that touches the repository runs under
+    `laws.parallel_agent_isolation` — its own git worktree and branch, merged only on
+    acceptance — and does not inherit the caller's stage or context.
+  allowed: >-
+    Concurrent agents may carry `coder` and `tester` work, and read-only Explore or
+    general-purpose agents may fan out for research. Decompose along independent seams so
+    agents do not contend for the same files.
+  model_tier: >-
+    Outside `planning` mode, run each agent at the cheapest tier that can carry its task, and
+    treat everything it returns as an unverified claim. See `ops/model-selection.yaml`.
+  orchestrator_retains: >-
+    The orchestrator still owns task framing, decomposition, the acceptance decision, and the
+    final `conscience` review; these are never delegated downward. A parallel agent's output is
+    accepted only after its cited evidence is checked and the `tester` gate passes on the merged
+    result — see `zero_trust_cheap_output` and `verify_before_delivery`.
+  forbidden:
+  agent_types: >-
+    Delegation uses the subagent TYPES this runtime actually offers; the stage names in this
+    package are not agent types and are not expected to exist as such. Pick a type by what the
+    unit needs, restate the stage's rules in the prompt, and carry the stage yourself when no type
+    fits. A stage name that cannot be spawned is never a blocker — see
+    `laws.role_names_are_stages_not_agent_types`.
+  forbidden:
+    - halting, escalating, or refusing work because a named role is not an invocable subagent type
+    - adopting a foreign role pack (`.cursor/agents`, `docs/agents`, `AGENTS.md`) as the operating
+      contract or as a source of required agents — see `laws.contract_scope`
+    - treating a parallel agent's report as verified fact without checking the cited files
+    - merging an agent branch before its work is accepted and re-verified on the merge result
+    - never reuse an author agent across plan-creation units; see no_agent_reuse_in_plan_creation (plan execution is excluded)
+  requirement: >-
+    A subagent prompt must restate the relevant laws itself; the subagent does not see this file.
+  parallel_isolation: >-
+    Whenever more than one agent works the repository at once, each runs in its own git worktree
+    and branch per `laws.parallel_agent_isolation`, merged only after acceptance. Never run two
+    concurrent agents in the same working tree or on the same branch.
+
+context_discipline:
+  - keep the plan visible with the task/todo tools on multi-step work
+  - state the mode and stage in the working narrative so a compacted context can recover them
+  - re-read a contract file after context compaction instead of recalling it from memory
+
+escalation_chain: "blocked or ambiguous -> state the blocker clearly -> ask the user only if local evidence cannot resolve it safely"
+tool_error_law: "any tool error -> stop, classify it, and follow tooling-rules before continuing or escalating"

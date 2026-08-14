@@ -1,0 +1,29 @@
+# Planning authoring guidance
+
+rules:
+  - define scope, acceptance criteria, and execution order explicitly
+  - record review checkpoints and dependency assumptions in the planning artifact
+  - when converting user intent into implementation work, preserve a stable planning vocabulary
+  - one atomic step processes exactly one project file, of any kind; see `atomic_step_file_rule`
+  - never reuse an agent while creating a plan; one fresh agent per unit, see `no_agent_reuse_in_plan_creation`
+
+no_agent_reuse_in_plan_creation: >-
+  [TRIGGER: creating plan artifacts in `planning` mode] NEVER reuse the same agent for more than one
+  unit of plan creation. Every authoring unit — each step, each artifact — gets a FRESH agent with a
+  clean context, and an agent that has produced one plan artifact is spent: spawn a new one for the
+  next instead of continuing the conversation. Reuse is forbidden even when the next unit looks
+  similar, even when re-prompting seems cheaper, and even when the reused agent's output looks
+  correct. The reason is context pollution: a reused agent carries the previous unit's residue —
+  earlier drafts, rejected options, half-relevant file contents, and its own prior conclusions — and
+  starts reasoning from that residue instead of from the new unit's declared inputs. The effect
+  compounds with every reuse, so later artifacts in a plan are the most contaminated and the least
+  trustworthy. A reused agent is therefore a defect in the plan, not merely an inefficiency.
+  This rule governs plan creation only and does not apply to plan execution.
+
+atomic_step_file_rule: >-
+  One atomic step (A-step) processes EXACTLY ONE project file. The file does NOT have to be a code
+  file: documentation, configuration, schemas, and any other project artifact count exactly the
+  same, and an A-step whose only target is a documentation file is a normal A-step, not an
+  exception. An A-step that touches two or more files is forbidden without exception. The relation
+  is asymmetric, and only the step side is constrained: one A-step maps to one file, but one file
+  may be processed by several A-steps, executed in priority order.
